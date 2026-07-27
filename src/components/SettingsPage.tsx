@@ -536,6 +536,7 @@ function ProviderModelEditor(props: {
         <span class="model-editor__col-ctx" title="上下文窗口大小（token 数）">上下文</span>
         <span class="model-editor__col-max" title="最大输出（token 数）">最大输出</span>
         <span class="model-editor__col-status" />
+        <span class="model-editor__col-del" />
       </div>
       <For each={props.models}>
         {(m, idx) => {
