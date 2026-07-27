@@ -353,14 +353,23 @@ export default function SettingsPage(props: {
                                 if (e.key === "Enter") handleSaveProviderName();
                                 if (e.key === "Escape") { setEditingProviderId(null); }
                               }}
-                              ref={(el) => { el?.focus(); el?.select(); }}
+                              ref={(el) => {
+                                if (!el) return;
+                                // 延迟聚焦：等 input 完全挂载到文档流后再 focus，
+                                // 否则 onClick 结束时浏览器会把焦点还给 body，触发立即 blur。
+                                setTimeout(() => { el.focus(); el.select(); }, 0);
+                              }}
                             />
                           }
                         >
                           <span
                             class="provider-card__name provider-card__name--editable"
                             title="点击编辑名称"
-                            onClick={() => { setEditingProviderId(prov().id); setTempName(prov().name); }}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setEditingProviderId(prov().id);
+                              setTempName(prov().name);
+                            }}
                           >{prov().name}</span>
                         </Show>
                         <span class="provider-card__format">{prov().apiFormat}</span>
