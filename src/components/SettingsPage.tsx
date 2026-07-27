@@ -349,14 +349,18 @@ export default function SettingsPage(props: {
                               value={tempName()}
                               onInput={(e) => setTempName(e.currentTarget.value)}
                               onBlur={handleSaveProviderName}
-                              onKeyDown={(e) => { if (e.key === "Enter") handleSaveProviderName(); }}
-                              autofocus
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") handleSaveProviderName();
+                                if (e.key === "Escape") { setEditingProviderId(null); }
+                              }}
+                              ref={(el) => { el?.focus(); el?.select(); }}
                             />
                           }
                         >
                           <span
-                            class="provider-card__name"
-                            onDblClick={() => { setEditingProviderId(prov().id); setTempName(prov().name); }}
+                            class="provider-card__name provider-card__name--editable"
+                            title="点击编辑名称"
+                            onClick={() => { setEditingProviderId(prov().id); setTempName(prov().name); }}
                           >{prov().name}</span>
                         </Show>
                         <span class="provider-card__format">{prov().apiFormat}</span>

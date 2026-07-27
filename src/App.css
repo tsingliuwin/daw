@@ -7450,6 +7450,19 @@ button.lm-select-trigger:hover:not(:disabled) {
   font-weight: 700;
   color: var(--text-primary);
 }
+/* 可编辑名称：单击进入编辑，hover 有提示 */
+.provider-card__name--editable {
+  cursor: text;
+  border-radius: 3px;
+  padding: 1px 4px;
+  margin-left: -4px;
+  transition: background 0.12s;
+}
+.provider-card__name--editable:hover {
+  background: var(--bg-hover);
+  outline: 1px dashed var(--border-strong);
+  outline-offset: 1px;
+}
 .provider-card__format {
   font-size: 11px;
   color: var(--text-dim);
