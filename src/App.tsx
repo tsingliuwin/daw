@@ -449,35 +449,37 @@ export default function App() {
   const activeStreaming = () => streamingTaskId() != null && streamingTaskId() === activeTaskId();
 
   return (
-    <div class="app-root">
-      <TitleBar
-        consoleOpen={consoleOpen()}
-        onToggleConsole={() => setConsoleOpen(!consoleOpen())}
-        leftOpen={leftOpen()}
-        onToggleLeft={() => setLeftOpen(!leftOpen())}
-        busy={busy()}
-        onOpenSettings={() => setSettingsOpen(true)}
-      />
+    <div class="app-shell">
+      {/* 左侧栏：通顶（高度 = 整个窗口），顶部的 logo/折叠按钮与右侧窗口按钮在同一水平线 */}
+      <Show when={leftOpen()}>
+        <LeftNav
+          workspaces={workspaces()}
+          currentWorkspacePath={currentWorkspace().path}
+          onSelectWorkspace={(path) => {
+            const ws = workspaces().find((w) => w.path === path);
+            if (ws) changeWorkspace(ws);
+          }}
+          tasks={tasks()}
+          selectedTaskId={activeTaskId() ?? undefined}
+          onSelectTask={selectTask}
+          onDeleteTask={deleteTask}
+          onNewChat={newChat}
+          busy={busy()}
+          leftOpen={leftOpen()}
+          onToggleLeft={() => setLeftOpen(!leftOpen())}
+        />
+      </Show>
 
-      <div class="app-main">
-        <Show when={leftOpen()}>
-          <LeftNav
-            workspaces={workspaces()}
-            currentWorkspacePath={currentWorkspace().path}
-            onSelectWorkspace={(path) => {
-              const ws = workspaces().find((w) => w.path === path);
-              if (ws) changeWorkspace(ws);
-            }}
-            tasks={tasks()}
-            selectedTaskId={activeTaskId() ?? undefined}
-            onSelectTask={selectTask}
-            onDeleteTask={deleteTask}
-            onNewChat={newChat}
-            busy={busy()}
-            leftOpen={leftOpen()}
-            onToggleLeft={() => setLeftOpen(!leftOpen())}
-          />
-        </Show>
+      {/* 右侧容器：标题栏（只占右侧宽度）+ 主区 + 日志抽屉 */}
+      <div class="app-right">
+        <TitleBar
+          consoleOpen={consoleOpen()}
+          onToggleConsole={() => setConsoleOpen(!consoleOpen())}
+          leftOpen={leftOpen()}
+          onToggleLeft={() => setLeftOpen(!leftOpen())}
+          busy={busy()}
+          onOpenSettings={() => setSettingsOpen(true)}
+        />
 
         <main class="app-content">
           <Show

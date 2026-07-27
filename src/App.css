@@ -6810,10 +6810,13 @@ button.lm-select-trigger:hover:not(:disabled) {
    导致界面空白。下面补齐这些类，全部复用上方已定义的设计变量。
    =========================================================================== */
 
-/* ---------- 顶层布局（App.tsx）---------- */
-.app-root {
+/* ---------- 顶层布局（App.tsx）----------
+   通顶布局：LeftNav 直接顶到窗口顶部（高度 100vh），右侧 app-right 内含
+   TitleBar + 主区 + 日志抽屉。LeftNav 的 ln-top-bar 与 TitleBar 同高，使
+   左侧 logo/折叠按钮与右侧窗口按钮处在同一水平线。 */
+.app-shell {
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   height: 100vh;
   width: 100vw;
   overflow: hidden;
@@ -6822,10 +6825,12 @@ button.lm-select-trigger:hover:not(:disabled) {
   position: relative;
 }
 
-.app-main {
+/* 右侧容器：标题栏（只占右侧宽度，不通顶）+ 主区 + 日志抽屉 */
+.app-right {
   flex: 1;
   display: flex;
-  flex-direction: row;
+  flex-direction: column;
+  min-width: 0;
   min-height: 0;
   overflow: hidden;
 }
@@ -6944,12 +6949,34 @@ button.lm-select-trigger:hover:not(:disabled) {
 .left-nav {
   width: var(--left-width, 248px);
   flex-shrink: 0;
-  height: 100%;
+  height: 100vh; /* 通顶：高度 = 整个窗口，与右侧 app-right 平齐 */
   display: flex;
   flex-direction: column;
   background-color: var(--bg-surface);
   border-right: 1px solid var(--border-faint);
   overflow: hidden;
+}
+
+/* 顶部条：logo + 折叠按钮。高度与 TitleBar 一致（30px），并作为窗口拖拽区，
+   使左侧 logo/折叠按钮与右侧最小化/最大化/关闭按钮在同一水平线。 */
+.left-nav .ln-top-bar {
+  height: 30px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  border-bottom: 1px solid var(--border-faint);
+  user-select: none;
+  -webkit-app-region: drag;
+}
+.left-nav .ln-top-bar .ln-arrow-btn,
+.left-nav .ln-top-bar button {
+  -webkit-app-region: no-drag;
+}
+.left-nav .ln-logo-box {
+  display: flex;
+  align-items: center;
 }
 
 /* 工作区选择区 */
