@@ -7595,7 +7595,15 @@ button.lm-select-trigger:hover:not(:disabled) {
 .model-editor__col-id { flex: 1; min-width: 0; }
 .model-editor__col-ctx { width: 90px; flex-shrink: 0; text-align: right; }
 .model-editor__col-max { width: 90px; flex-shrink: 0; text-align: right; }
-.model-editor__col-status { width: 22px; flex-shrink: 0; }
+.model-editor__col-status { width: 30px; flex-shrink: 0; }
+/* 状态图标不被挤压，带文字的 pill 需要空间 */
+.model-editor__row .mt-status {
+  flex-shrink: 0;
+  width: auto;
+  min-width: 14px;
+  padding: 0 4px;
+  font-size: 11px;
+}
 /* 模型 id 输入：占主要空间但不无限宽 */
 .model-id-input {
   flex: 1;
