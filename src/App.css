@@ -5210,8 +5210,10 @@ button.lm-select-trigger:hover:not(:disabled) {
   background: var(--bg-hover);
   color: var(--text-primary);
 }
-/* 发送按钮：蓝色圆角，和首页 home-composer__send 风格一致 */
+/* 发送按钮：蓝色圆角，和首页 home-composer__send 风格一致。
+   margin-left:auto 确保靠右（space-between 在 Show 控制流下可能不稳定）。 */
 .chat-composer__send {
+  margin-left: auto;
   width: 32px;
   height: 32px;
   display: flex;
