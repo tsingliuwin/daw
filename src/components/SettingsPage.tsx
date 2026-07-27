@@ -248,8 +248,8 @@ export default function SettingsPage(props: {
               onClick={() => setActiveTab("modelSettings")}
             >模型服务商</button>
           </div>
-          {/* 共用品牌区（不带设置按钮——已经在设置页里了） */}
-          <BrandFooter />
+          {/* 共用品牌区：返回按钮等同右上角关闭，免去鼠标移动 */}
+          <BrandFooter onCloseSettings={props.onClose} />
         </nav>
 
         <main class="settings-content">
