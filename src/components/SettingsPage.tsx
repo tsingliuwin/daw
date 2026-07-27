@@ -1,4 +1,4 @@
-import { For, Show, createSignal, onMount } from "solid-js";
+import { Index, Show, createSignal, onMount } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
 import { logError } from "../lib/logger";
 import { currentTheme, setCurrentTheme, currentZoom, setCurrentZoom, type Theme } from "../lib/theme";
@@ -326,13 +326,18 @@ export default function SettingsPage(props: {
               </div>
 
               <div class="provider-list">
-                <For each={currentProviders()} fallback={<div class="empty-hint">尚未配置任何服务商，点击右上角添加。</div>}>
-                  {(prov) => (
-                    <div class="provider-card" classList={{ active: prov.id === selectedProvider() }}>
-                      <div class="provider-card__head" onClick={() => setSelectedProvider(prev => prev === prov.id ? "" : prov.id)}>
-                        <span class="provider-card__chevron">{prov.id === selectedProvider() ? "▼" : "▶"}</span>
+                <Index each={currentProviders()} fallback={<div class="empty-hint">尚未配置任何服务商，点击右上角添加。</div>}>
+                  {(provAcc) => {
+                    // Index 按"位置"key，内容更新时只就地改 DOM 不重建，输入框不会失焦。
+                    // provAcc 是 Accessor——在事件回调里现取（prov()）保证拿到最新值，
+                    // 而不是闭包里的快照。
+                    const prov = () => provAcc();
+                    return (
+                    <div class="provider-card" classList={{ active: prov().id === selectedProvider() }}>
+                      <div class="provider-card__head" onClick={() => setSelectedProvider(prev => prev === prov().id ? "" : prov().id)}>
+                        <span class="provider-card__chevron">{prov().id === selectedProvider() ? "▼" : "▶"}</span>
                         <Show
-                          when={editingProviderId() !== prov.id}
+                          when={editingProviderId() !== prov().id}
                           fallback={
                             <input
                               class="provider-name-input"
@@ -346,31 +351,31 @@ export default function SettingsPage(props: {
                         >
                           <span
                             class="provider-card__name"
-                            onDblClick={() => { setEditingProviderId(prov.id); setTempName(prov.name); }}
-                          >{prov.name}</span>
+                            onDblClick={() => { setEditingProviderId(prov().id); setTempName(prov().name); }}
+                          >{prov().name}</span>
                         </Show>
-                        <span class="provider-card__format">{prov.apiFormat}</span>
+                        <span class="provider-card__format">{prov().apiFormat}</span>
                         <span class="provider-card__spacer" />
                         <label class="provider-enable-toggle" title="启用前需全部模型测试通过">
                           <input
                             type="checkbox"
-                            checked={prov.enabled}
-                            onChange={(e) => handleToggleProviderEnabled(prov, e.currentTarget.checked)}
+                            checked={prov().enabled}
+                            onChange={(e) => handleToggleProviderEnabled(prov(), e.currentTarget.checked)}
                           />
                           <span>启用</span>
                         </label>
                       </div>
 
-                      <Show when={prov.id === selectedProvider()}>
+                      <Show when={prov().id === selectedProvider()}>
                         <div class="provider-card__body">
                           {/* Base URL 单行 */}
                           <div class="provider-field provider-field--full">
                             <label>Base URL <span class="provider-field__hint">填到 /v1 为止，多余路径会自动去除</span></label>
                             <input
                               class="settings-input"
-                              value={prov.endpoint}
+                              value={prov().endpoint}
                               placeholder="https://api.openai.com/v1"
-                              onInput={(e) => updateProviderProperty(prov.id, "endpoint", e.currentTarget.value)}
+                              onInput={(e) => updateProviderProperty(prov().id, "endpoint", e.currentTarget.value)}
                             />
                           </div>
                           {/* API Key + API 格式 两列并排 */}
@@ -380,18 +385,18 @@ export default function SettingsPage(props: {
                               <div class="provider-field__password-wrap">
                                 <input
                                   class="settings-input"
-                                  type={showApiKeys()[prov.id] ? "text" : "password"}
-                                  value={prov.apiKey}
+                                  type={showApiKeys()[prov().id] ? "text" : "password"}
+                                  value={prov().apiKey}
                                   placeholder="sk-..."
-                                  onInput={(e) => updateProviderProperty(prov.id, "apiKey", e.currentTarget.value)}
+                                  onInput={(e) => updateProviderProperty(prov().id, "apiKey", e.currentTarget.value)}
                                 />
                                 <button
                                   class="provider-field__eye-btn"
                                   type="button"
-                                  title={showApiKeys()[prov.id] ? "隐藏" : "显示"}
-                                  onClick={() => toggleApiKey(prov.id)}
+                                  title={showApiKeys()[prov().id] ? "隐藏" : "显示"}
+                                  onClick={() => toggleApiKey(prov().id)}
                                 >
-                                  <Show when={showApiKeys()[prov.id]} fallback={
+                                  <Show when={showApiKeys()[prov().id]} fallback={
                                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:15px;height:15px">
                                       <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>
                                     </svg>
@@ -407,9 +412,9 @@ export default function SettingsPage(props: {
                               <label>API 格式 <span class="provider-field__hint">openai 兼容 / anthropic=claude</span></label>
                               <Select
                                 width="100%"
-                                value={prov.apiFormat}
+                                value={prov().apiFormat}
                                 options={API_FORMAT_OPTIONS}
-                                onChange={(v) => updateProviderProperty(prov.id, "apiFormat", v)}
+                                onChange={(v) => updateProviderProperty(prov().id, "apiFormat", v)}
                               />
                             </div>
                           </div>
@@ -417,30 +422,31 @@ export default function SettingsPage(props: {
                           <div class="provider-field provider-field--full">
                             <label>模型列表 <span class="provider-field__hint">测试全绿后才能启用</span></label>
                             <ProviderModelEditor
-                              models={prov.models || []}
-                              testEntries={modelTests()[prov.id] || {}}
-                              onChange={(models) => updateProviderProperty(prov.id, "models", models)}
+                              models={prov().models || []}
+                              testEntries={modelTests()[prov().id] || {}}
+                              onChange={(models) => updateProviderProperty(prov().id, "models", models)}
                             />
                           </div>
 
                           <div class="provider-actions">
                             <button
                               class="settings-secondary-btn"
-                              disabled={batchTesting(prov.id)}
-                              onClick={() => handleTestModelConnection(prov)}
+                              disabled={batchTesting(prov().id)}
+                              onClick={() => handleTestModelConnection(prov())}
                             >
-                              {batchTesting(prov.id) ? `测试中 ${batchProgress()?.current}/${batchProgress()?.total}` : "测试连通性"}
+                              {batchTesting(prov().id) ? `测试中 ${batchProgress()?.current}/${batchProgress()?.total}` : "测试连通性"}
                             </button>
                             <button
                               class="settings-danger-btn"
-                              onClick={() => { if (confirm(`删除服务商「${prov.name}」？`)) handleDeleteProvider(prov.id); }}
+                              onClick={() => { if (confirm(`删除服务商「${prov().name}」？`)) handleDeleteProvider(prov().id); }}
                             >删除</button>
                           </div>
                         </div>
                       </Show>
                     </div>
-                  )}
-                </For>
+                    );
+                  }}
+                </Index>
               </div>
 
               {/* 添加新 provider 表单 */}
@@ -538,37 +544,38 @@ function ProviderModelEditor(props: {
         <span class="model-editor__col-status" />
         <span class="model-editor__col-del" />
       </div>
-      <For each={props.models}>
-        {(m, idx) => {
-          const entry = () => props.testEntries[m.id];
+      <Index each={props.models}>
+        {(mAcc, idx) => {
+          const m = () => mAcc();
+          const entry = () => props.testEntries[m().id];
           return (
             <div class="model-editor__row">
               <input
                 class="settings-input model-id-input"
                 placeholder="如 gpt-4o"
-                value={m.id}
-                onInput={(e) => update(idx(), { id: e.currentTarget.value })}
+                value={m().id}
+                onInput={(e) => update(idx, { id: e.currentTarget.value })}
               />
               <input
                 class="settings-input model-ctx-input"
                 type="number"
                 title="上下文窗口大小（token 数）"
-                value={m.contextWindow}
-                onInput={(e) => update(idx(), { contextWindow: parseInt(e.currentTarget.value || "0", 10) || 0 })}
+                value={m().contextWindow}
+                onInput={(e) => update(idx, { contextWindow: parseInt(e.currentTarget.value || "0", 10) || 0 })}
               />
               <input
                 class="settings-input model-max-input"
                 type="number"
                 title="最大输出 token 数（单次回复上限）"
-                value={m.maxTokens ?? 64000}
-                onInput={(e) => update(idx(), { maxTokens: parseInt(e.currentTarget.value || "0", 10) || 0 })}
+                value={m().maxTokens ?? 64000}
+                onInput={(e) => update(idx, { maxTokens: parseInt(e.currentTarget.value || "0", 10) || 0 })}
               />
               <ModelStatusIcon status={entry()?.status} errorTip={entry()?.msg} />
-              <button class="model-remove-btn" title="删除模型" onClick={() => remove(idx())}>✕</button>
+              <button class="model-remove-btn" title="删除模型" onClick={() => remove(idx)}>✕</button>
             </div>
           );
         }}
-      </For>
+      </Index>
       <button class="settings-secondary-btn model-add-btn" onClick={add}>+ 添加模型</button>
     </div>
   );
