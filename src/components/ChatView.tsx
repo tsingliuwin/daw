@@ -1,0 +1,954 @@
+import { For, Index, Show, Switch, Match, createSignal, createEffect, createMemo, onMount, onCleanup, untrack } from "solid-js";
+import type { ChatMessage, Segment, TokenUsage, ModelOption } from "../lib/types";
+import { modelKeyOf, modelIdOfKey } from "../lib/types";
+import { derivePanelMetrics, fmtCap, fmtPct } from "../lib/metrics";
+import ToolSegment from "./ToolSegment";
+import MessageText from "./MessageText";
+
+type ReasoningSeg = Extract<Segment, { type: "reasoning" }>;
+type TextSeg = Extract<Segment, { type: "text" }>;
+type ErrorSeg = Extract<Segment, { type: "error" }>;
+const asReasoning = (s: Segment): ReasoningSeg | null => (s.type === "reasoning" ? s : null);
+const asText = (s: Segment): TextSeg | null => (s.type === "text" ? s : null);
+const asError = (s: Segment): ErrorSeg | null => (s.type === "error" ? s : null);
+
+/**
+ * 对话模式主区：消息流（上）+ 段内嵌 + 底部常驻输入框。
+ *
+ * 相比 lakemind：
+ *  - 去掉 onOpenInSqlPanel / onAddFile / onAddFolder 等 prop 及对应 UI。
+ *  - 内部渲染把 ChartSegment 段移除（aioa 无 chart 段），ToolSegment 换成新版，
+ *    MessageText 换成纯文本版（只接收 text）。
+ *  - 保留：消息流渲染（按 segment 顺序：reasoning 折叠 → tool 段 → text markdown）、
+ *    贴底滚动、token 容量条（用 derivePanelMetrics）、模型选择器、优先级选择器、
+ *    确认模式选择器、底部输入框、Stop 按钮、onSend/onStop/onConfirmTool 回调。
+ */
+export default function ChatView(props: {
+  taskId: string;
+  messages: ChatMessage[];
+  workspace: string;
+  taskName: string;
+  onSend: (prompt: string) => void;
+  /** Abort the running stream (stop button). */
+  onStop?: () => void;
+  /** Token usage from the last LLM response (for context window display). */
+  tokenUsage?: TokenUsage | null;
+  /** Current model's context window size (from settings.json). */
+  contextWindow?: number;
+  onDelete?: () => void;
+  availableModels: ModelOption[];
+  selectedModel: string;
+  onSelectModel: (model: string) => void;
+  selectedPriority: string;
+  onSelectPriority: (priority: string) => void;
+  selectedConfirm: string;
+  onSelectConfirm: (mode: string) => void;
+  /** 用户对 awaiting 状态的工具做出确认/取消决定。 */
+  onConfirmTool: (toolCallId: string, approved: boolean) => void;
+  /** 该对话是否正在流式输出（由父级 streamingTaskId 派生）。 */
+  streaming: boolean;
+}) {
+  const [modelDropdownOpen, setModelDropdownOpen] = createSignal(false);
+  const [priorityDropdownOpen, setPriorityDropdownOpen] = createSignal(false);
+  const [confirmDropdownOpen, setConfirmDropdownOpen] = createSignal(false);
+
+  const [chatWidth, setChatWidth] = createSignal<number>(
+    parseInt(localStorage.getItem("chat_width") || "800")
+  );
+
+  const startDraggingChatWidth = (e: MouseEvent) => {
+    e.preventDefault();
+    document.body.classList.add("dragging-active");
+    const stream = scrollEl;
+    if (!stream) return;
+    const rect = stream.getBoundingClientRect();
+    const centerX = rect.left + rect.width / 2;
+    const onMouseMove = (moveEvent: MouseEvent) => {
+      const deltaFromCenter = Math.abs(moveEvent.clientX - centerX);
+      const newWidth = Math.max(400, Math.min(rect.width - 48, deltaFromCenter * 2));
+      setChatWidth(newWidth);
+      localStorage.setItem("chat_width", String(newWidth));
+    };
+    const onMouseUp = () => {
+      document.body.classList.remove("dragging-active");
+      window.removeEventListener("mousemove", onMouseMove);
+      window.removeEventListener("mouseup", onMouseUp);
+    };
+    window.addEventListener("mousemove", onMouseMove);
+    window.addEventListener("mouseup", onMouseUp);
+  };
+
+  // 把可选模型按 provider 分组，避免同名模型 id 跨 provider 混淆。
+  const groupedModels = createMemo(() => {
+    const map = new Map<string, { providerName: string; models: ModelOption[] }>();
+    for (const m of props.availableModels) {
+      const g = map.get(m.providerId) ?? { providerName: m.providerName, models: [] };
+      g.models.push(m);
+      map.set(m.providerId, g);
+    }
+    return [...map.values()];
+  });
+
+  let modelRef: HTMLDivElement | undefined;
+  let priorityRef: HTMLDivElement | undefined;
+  let confirmRef: HTMLDivElement | undefined;
+
+  const handleClickOutside = (e: MouseEvent) => {
+    if (modelRef && !modelRef.contains(e.target as Node)) setModelDropdownOpen(false);
+    if (priorityRef && !priorityRef.contains(e.target as Node)) setPriorityDropdownOpen(false);
+    if (confirmRef && !confirmRef.contains(e.target as Node)) setConfirmDropdownOpen(false);
+  };
+
+  onMount(() => {
+    document.addEventListener("mousedown", handleClickOutside);
+    onCleanup(() => document.removeEventListener("mousedown", handleClickOutside));
+  });
+
+  const [input, setInput] = createSignal("");
+  const [busy, setBusy] = createSignal(false);
+  const [showConfirm, setShowConfirm] = createSignal(false);
+  const [copiedMessageId, setCopiedMessageId] = createSignal<string | null>(null);
+
+  const handleCopyMessage = async (msg: ChatMessage) => {
+    const textToCopy = getMessageCopyText(msg);
+    try {
+      await navigator.clipboard.writeText(textToCopy);
+      setCopiedMessageId(msg.id);
+      setTimeout(() => {
+        if (copiedMessageId() === msg.id) setCopiedMessageId(null);
+      }, 1500);
+    } catch {}
+  };
+
+  const displayTitle = createMemo(() => {
+    if (props.taskName && !props.taskName.endsWith("...")) return props.taskName;
+    const firstMsg = props.messages.find((m) => m.role === "user");
+    if (firstMsg) {
+      for (const seg of firstMsg.segments) {
+        const ts = asText(seg);
+        if (ts) return ts.text.trim().replace(/\n/g, " ");
+      }
+    }
+    return props.taskName || "对话";
+  });
+
+  // 流式输出状态：发送瞬间的本地 busy 与父级 streaming 合成。
+  const isStreaming = createMemo(() => busy() || props.streaming);
+
+  createEffect(() => {
+    props.messages;
+    props.taskName;
+    setShowConfirm(false);
+  });
+
+  // 折叠状态。
+  const [openReasoningIds, setOpenReasoningIds] = createSignal<Set<string>>(new Set());
+  const [manualReasoningIds, setManualReasoningIds] = createSignal<Set<string>>(new Set());
+  const [expandedToolIds, setExpandedToolIds] = createSignal<Set<string>>(new Set());
+  const [manualToolIds, setManualToolIds] = createSignal<Set<string>>(new Set());
+
+  function toggleReasoning(segId: string) {
+    setManualReasoningIds((prev) => new Set(prev).add(segId));
+    setOpenReasoningIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(segId)) next.delete(segId); else next.add(segId);
+      return next;
+    });
+  }
+
+  function toggleTool(segId: string) {
+    setManualToolIds((prev) => new Set(prev).add(segId));
+    setExpandedToolIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(segId)) next.delete(segId); else next.add(segId);
+      return next;
+    });
+  }
+
+  // ── 计时：按墙钟连续走表 ──
+  const [now, setNow] = createSignal(Date.now());
+  let streamStart = 0;
+
+  createEffect(() => {
+    if (isStreaming()) {
+      if (streamStart === 0) streamStart = Date.now();
+    } else {
+      streamStart = 0;
+    }
+  });
+
+  const metrics = createMemo(() =>
+    derivePanelMetrics(props.tokenUsage ?? null, {
+      contextWindow: props.contextWindow ?? 128000,
+      nowMs: now(),
+      runStartMs: streamStart > 0 ? streamStart : undefined,
+      streaming: isStreaming(),
+    }),
+  );
+  const capPct = createMemo(() => metrics()?.capacity.pct ?? 0);
+
+  onMount(() => {
+    const handle = setInterval(() => {
+      const t = Date.now();
+      setNow(t);
+      if (isStreaming() && streamStart > 0) {
+        const bt = document.getElementById("chat-bottom-timer");
+        if (bt) bt.textContent = String(Math.floor((t - streamStart) / 1000));
+      }
+      const lm = props.messages[props.messages.length - 1];
+      if (lm && lm.role === "assistant" && isStreaming()) {
+        const s = lm.segments[lm.segments.length - 1];
+        if (s && s.type === "reasoning" && s.startTime != null) {
+          const el = document.getElementById(`rs-timer-${s.id}`);
+          if (el) el.textContent = fmtMs(t - s.startTime);
+        }
+        if (s && s.type === "tool" && s.status === "running" && s.startTime != null) {
+          const el = document.getElementById(`tool-timer-${s.id}`);
+          if (el) el.textContent = fmtMs(t - s.startTime);
+        }
+      }
+    }, 100);
+    onCleanup(() => clearInterval(handle));
+  });
+
+  let scrollEl: HTMLDivElement | undefined;
+
+  // ── 贴底滚动 ──
+  const [stickToBottom, setStickToBottom] = createSignal(true);
+  const [showScrollDown, setShowScrollDown] = createSignal(false);
+  let isProgrammaticScroll = false;
+  let userScrollTop = 0;
+  let lastWheelTs = 0;
+
+  const handleScroll = (e: Event) => {
+    if (isProgrammaticScroll) return;
+    const el = e.currentTarget as HTMLDivElement;
+    if (performance.now() - lastWheelTs < 200) userScrollTop = el.scrollTop;
+    const diff = el.scrollHeight - el.scrollTop - el.clientHeight;
+    const nearBottom = diff <= 30;
+    if (!nearBottom) {
+      setStickToBottom(false);
+    } else if (!isStreaming()) {
+      setStickToBottom(true);
+      stopScrollLock();
+    }
+    setShowScrollDown(!nearBottom);
+  };
+
+  const handleWheel = (e: WheelEvent) => {
+    lastWheelTs = performance.now();
+    if (scrollEl) userScrollTop = scrollEl.scrollTop;
+    if (e.deltaY < 0) {
+      setStickToBottom(false);
+      startScrollLock();
+    } else if (e.deltaY > 0 && scrollEl) {
+      const diff = scrollEl.scrollHeight - scrollEl.scrollTop - scrollEl.clientHeight;
+      if (diff <= 30) {
+        setStickToBottom(true);
+        stopScrollLock();
+      }
+    }
+  };
+
+  function stickScrollToBottom() {
+    if (!scrollEl) return;
+    isProgrammaticScroll = true;
+    scrollEl.scrollTop = scrollEl.scrollHeight;
+    requestAnimationFrame(() => { isProgrammaticScroll = false; });
+  }
+
+  function smoothStickToBottom() {
+    if (!scrollEl) return;
+    const el = scrollEl;
+    isProgrammaticScroll = true;
+    el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+    let t: ReturnType<typeof setTimeout>;
+    const clear = () => {
+      isProgrammaticScroll = false;
+      el.removeEventListener("scrollend", clear);
+      clearTimeout(t);
+    };
+    el.addEventListener("scrollend", clear);
+    t = setTimeout(clear, 600);
+  }
+
+  createEffect(() => {
+    props.messages;
+    isStreaming();
+    if (scrollEl && untrack(stickToBottom)) stickScrollToBottom();
+  });
+
+  // 对抗 WKWebView 原生滚动锚定的 rAF 锁。
+  let rafLocked = false;
+  function startScrollLock() {
+    if (rafLocked) return;
+    rafLocked = true;
+    const tick = () => {
+      if (!scrollEl || !rafLocked) return;
+      isProgrammaticScroll = false;
+      if (untrack(stickToBottom)) { rafLocked = false; return; }
+      if (scrollEl.scrollTop !== userScrollTop) {
+        isProgrammaticScroll = true;
+        scrollEl.scrollTop = userScrollTop;
+      }
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  }
+  function stopScrollLock() {
+    rafLocked = false;
+    isProgrammaticScroll = false;
+  }
+  createEffect(() => {
+    isStreaming();
+    if (!untrack(isStreaming)) stopScrollLock();
+  });
+  onCleanup(() => stopScrollLock());
+
+  // 切换对话时重置折叠状态。
+  let prevTaskId: string | undefined;
+  createEffect(() => {
+    const currentId = props.taskId;
+    if (currentId === prevTaskId) return;
+    prevTaskId = currentId;
+    stopScrollLock();
+    setOpenReasoningIds(new Set<string>());
+    setExpandedToolIds(new Set<string>());
+    setManualReasoningIds(new Set<string>());
+    setManualToolIds(new Set<string>());
+    setStickToBottom(true);
+    stickScrollToBottom();
+  });
+
+  function lastAssistantId(): string | undefined {
+    const msgs = props.messages;
+    if (msgs.length === 0) return undefined;
+    const last = msgs[msgs.length - 1];
+    return last.role === "assistant" ? last.id : undefined;
+  }
+
+  const activeReasoningId = createMemo(() => {
+    const id = lastAssistantId();
+    if (!id) return undefined;
+    const msg = props.messages.find((m) => m.id === id);
+    if (!msg) return undefined;
+    const segs = msg.segments;
+    const last = segs[segs.length - 1];
+    return isStreaming() && last && last.type === "reasoning" ? last.id : undefined;
+  });
+
+  createEffect(() => {
+    const id = lastAssistantId();
+    if (!id) return;
+    const msg = props.messages.find((m) => m.id === id);
+    if (!msg) return;
+    const segs = msg.segments;
+    const last = segs[segs.length - 1];
+    const activeId = isStreaming() && last && last.type === "reasoning" ? last.id : undefined;
+    const manual = manualReasoningIds();
+    setOpenReasoningIds((prev) => {
+      const next = new Set(prev);
+      for (const s of segs) {
+        if (s.type !== "reasoning") continue;
+        if (manual.has(s.id)) continue;
+        if (s.id === activeId) next.add(s.id); else next.delete(s.id);
+      }
+      return next;
+    });
+  });
+
+  createEffect(() => {
+    const id = lastAssistantId();
+    if (!id) return;
+    const msg = props.messages.find((m) => m.id === id);
+    if (!msg) return;
+    const running = new Set(
+      msg.segments
+        .filter((s): s is Extract<Segment, { type: "tool" }> => s.type === "tool")
+        .filter((s) => s.status === "running")
+        .map((s) => s.id),
+    );
+    const awaiting = new Set(
+      msg.segments
+        .filter((s): s is Extract<Segment, { type: "tool" }> => s.type === "tool")
+        .filter((s) => s.status === "awaiting")
+        .map((s) => s.id),
+    );
+    const expanded0 = untrack(expandedToolIds);
+    let changed = false;
+    const next = new Set(expanded0);
+    for (const r of running) { if (!next.has(r)) { next.add(r); changed = true; } }
+    for (const a of awaiting) { if (!next.has(a)) { next.add(a); changed = true; } }
+    if (changed) setExpandedToolIds(next);
+
+    const manual = manualToolIds();
+    const expanded = untrack(expandedToolIds);
+    const toCollapse: string[] = [];
+    for (const s of msg.segments) {
+      if (s.type !== "tool" || running.has(s.id) || awaiting.has(s.id)) continue;
+      if (!manual.has(s.id) && expanded.has(s.id)) toCollapse.push(s.id);
+    }
+    if (toCollapse.length > 0) {
+      setExpandedToolIds((prev) => {
+        const next = new Set(prev);
+        for (const c of toCollapse) next.delete(c);
+        return next;
+      });
+    }
+  });
+
+  async function send() {
+    const text = input().trim();
+    if (!text || isStreaming()) return;
+    setInput("");
+    setBusy(true);
+    setStickToBottom(true);
+    try {
+      await props.onSend(text);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function onKeydown(e: KeyboardEvent) {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      void send();
+    }
+  }
+
+  return (
+    <div class="chat-view">
+      <div class="chat-header">
+        <div style="display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0;">
+          <span class="chat-header__title">{displayTitle()}</span>
+          <span class="chat-header__ws" title={`当前工作区: ${props.workspace}`}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 12px; height: 12px; flex-shrink: 0; color: var(--text-dim);">
+              <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+            </svg>
+            <span class="ws-text">{props.workspace}</span>
+          </span>
+        </div>
+        <Show
+          when={showConfirm()}
+          fallback={
+            <button
+              class="header-close-btn"
+              title="删除该对话"
+              onClick={() => {
+                if (props.messages.length > 0) setShowConfirm(true);
+                else props.onDelete?.();
+              }}
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="width: 10px; height: 10px;">
+                <polyline points="3 6 5 6 21 6"></polyline>
+                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+              </svg>
+            </button>
+          }
+        >
+          <div style="display: flex; align-items: center; gap: 8px; font-size: 12px; background: var(--bg-hover); padding: 4px 10px; border-radius: 6px; border: 1px solid var(--border-faint);">
+            <span style="color: var(--accent-red); font-weight: 500;">确定删除？</span>
+            <button
+              onClick={() => { setShowConfirm(false); props.onDelete?.(); }}
+              style="background: var(--accent-red); color: white; border: none; padding: 2px 8px; border-radius: 4px; cursor: pointer; font-size: 11px; font-weight: 500;"
+            >确定</button>
+            <button
+              onClick={() => setShowConfirm(false)}
+              style="background: transparent; color: var(--text-secondary); border: 1px solid var(--border-strong); padding: 2px 8px; border-radius: 4px; cursor: pointer; font-size: 11px; font-weight: 500;"
+            >取消</button>
+          </div>
+        </Show>
+      </div>
+      <div class="chat-stream" ref={scrollEl} onScroll={handleScroll} onWheel={handleWheel}>
+        <div
+          class="chat-stream-inner"
+          style={{
+            width: `${chatWidth()}px`,
+            "max-width": "100%",
+            margin: "0 auto",
+            position: "relative",
+            display: "flex",
+            "flex-direction": "column",
+            gap: "16px",
+            height: props.messages.length > 0 ? "auto" : "100%",
+            "justify-content": props.messages.length > 0 ? "flex-start" : "center"
+          }}
+        >
+          <div class="chat-resizer-l" onMouseDown={(e) => startDraggingChatWidth(e)} />
+          <div class="chat-resizer-r" onMouseDown={(e) => startDraggingChatWidth(e)} />
+
+          <Show
+            when={props.messages.length > 0}
+            fallback={<div class="chat-empty">开始对话，用自然语言完成请假、报销、审批等办公流程。</div>}
+          >
+            <Index each={props.messages}>
+              {(msg) => (
+                <div class={`chat-msg chat-msg--${msg().role}`}>
+                  <div class="chat-msg__body">
+                    <Index each={msg().segments}>
+                      {(seg) => {
+                        const rs = () => asReasoning(seg());
+                        const ts = () => asText(seg());
+                        const es = () => asError(seg());
+                        const reasoningMs = createMemo<number | undefined>(() => {
+                          if (seg().id === activeReasoningId() && rs()?.startTime != null) {
+                            return now() - rs()!.startTime!;
+                          }
+                          return rs()?.elapsedMs;
+                        });
+                        return (
+                          <Switch>
+                            <Match when={seg().type === "error" && es()}>
+                              <div class="chat-terminal-error">
+                                <span class="chat-terminal-error__icon">
+                                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="width: 14px; height: 14px;">
+                                    <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z" />
+                                    <line x1="12" y1="9" x2="12" y2="13" />
+                                    <line x1="12" y1="17" x2="12.01" y2="17" />
+                                  </svg>
+                                </span>
+                                <span class="chat-terminal-error__text">{es()!.text}</span>
+                              </div>
+                            </Match>
+                            <Match when={seg().type === "reasoning"}>
+                              <div class="chat-reasoning">
+                                <div class="chat-reasoning__header" onClick={() => toggleReasoning(seg().id)}>
+                                  <span class="chat-reasoning__icon">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="width: 14px; height: 14px;">
+                                      <path d="M9.5 2A2.5 2.5 0 0 1 12 4.5v15a2.5 2.5 0 0 1-4.96-.44 2.5 2.5 0 0 1 0-3.12 3 3 0 0 1 0-4.88 2.5 2.5 0 0 1 0-3.12A2.5 2.5 0 0 1 9.5 2Z" />
+                                      <path d="M14.5 2A2.5 2.5 0 0 0 12 4.5v15a2.5 2.5 0 0 0 4.96-.44 2.5 2.5 0 0 0 0-3.12 3 3 0 0 0 0-4.88 2.5 2.5 0 0 0 0-3.12A2.5 2.5 0 0 0 14.5 2Z" />
+                                    </svg>
+                                  </span>
+                                  <span class="chat-reasoning__label">思考过程</span>
+                                  <Show when={reasoningMs() != null}>
+                                    <span style="color: var(--text-dim); margin-left: 2px;">· <span id={`rs-timer-${seg().id}`}>{fmtMs(reasoningMs()!)}</span></span>
+                                  </Show>
+                                  <span class="chat-reasoning__toggle" classList={{ "chat-reasoning__toggle--open": openReasoningIds().has(seg().id) }}>
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="width: 10px; height: 10px; transition: transform 0.15s ease;">
+                                      <polyline points="9 18 15 12 9 6"></polyline>
+                                    </svg>
+                                  </span>
+                                </div>
+                                <Show when={openReasoningIds().has(seg().id) && rs()}>
+                                  <ReasoningBody text={rs()!.text} />
+                                </Show>
+                              </div>
+                            </Match>
+                            <Match when={seg().type === "tool"}>
+                              <Show when={seg()}>
+                                {(s) => (
+                                  <ToolSegment
+                                    seg={s()}
+                                    expanded={expandedToolIds().has(s().id)}
+                                    onToggle={toggleTool}
+                                    onConfirm={(approved) => props.onConfirmTool(s().id, approved)}
+                                  />
+                                )}
+                              </Show>
+                            </Match>
+                            <Match when={seg().type === "text" && ts()}>
+                              <div class="chat-msg__text">
+                                <Show when={msg().role === "assistant"} fallback={ts()!.text}>
+                                  <MessageText text={ts()!.text} />
+                                </Show>
+                              </div>
+                            </Match>
+                          </Switch>
+                        );
+                      }}
+                    </Index>
+                    <Show when={!(msg().role === "assistant" && isStreaming() && msg().id === props.messages[props.messages.length - 1]?.id)}>
+                      <div class="chat-msg__actions">
+                        <span class="chat-msg__time">{formatTime(msg().ts)}</span>
+                        <button
+                          class="chat-msg__copy-btn"
+                          title={copiedMessageId() === msg().id ? "已复制" : "复制"}
+                          onClick={() => handleCopyMessage(msg())}
+                        >
+                          <Show
+                            when={copiedMessageId() === msg().id}
+                            fallback={
+                              <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                              </svg>
+                            }
+                          >
+                            <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--accent-green, #10b981)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+                              <polyline points="20 6 9 17 4 12"></polyline>
+                            </svg>
+                          </Show>
+                        </button>
+                      </div>
+                    </Show>
+                  </div>
+                </div>
+              )}
+            </Index>
+
+            {/* Busy / streaming indicator */}
+            <Show when={isStreaming()}>
+              <div class="chat-msg chat-msg--assistant">
+                <div class="chat-msg__body">
+                  <div class="chat-agent-status">
+                    <span class="agent-status__timer">⏱ 已工作 <span id="chat-bottom-timer">{Math.floor((now() - streamStart) / 1000)}</span> 秒</span>
+                  </div>
+                </div>
+              </div>
+            </Show>
+          </Show>
+        </div>
+      </div>
+
+      <Show when={showScrollDown()}>
+        <button
+          class="chat-view__scroll-down"
+          onClick={() => { setStickToBottom(true); smoothStickToBottom(); }}
+          title="回到底部"
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="width: 14px; height: 14px;">
+            <line x1="12" y1="5" x2="12" y2="19"></line>
+            <polyline points="19 12 12 19 5 12"></polyline>
+          </svg>
+        </button>
+      </Show>
+
+      <div class="chat-composer">
+        <div
+          class="chat-composer-inner"
+          style={{
+            width: "100%",
+            "max-width": `${chatWidth()}px`,
+            margin: "0 auto",
+            display: "flex",
+            "flex-direction": "column"
+          }}
+        >
+          <div class="chat-composer__box">
+            <textarea
+              class="chat-composer__input"
+              placeholder="输入你的需求（Enter 发送 · Shift+Enter 换行）…"
+              value={input()}
+              onInput={(e) => setInput(e.currentTarget.value)}
+              onkeydown={onKeydown}
+              disabled={isStreaming()}
+              rows={2}
+            />
+            <div class="chat-composer__toolbar">
+              <div style="display: flex; align-items: center; gap: 10px; min-width: 0; flex-shrink: 1;">
+                {/* Token usage indicator */}
+                <div class="token-usage-wrap">
+                  <div
+                    class="token-usage-pill"
+                    classList={{
+                      "token-usage-pill--warn": capPct() >= 70 && capPct() < 90,
+                      "token-usage-pill--danger": capPct() >= 90,
+                    }}
+                    title="上下文容量"
+                  >
+                    <span class="battery-icon-wrapper">
+                      <svg class="battery-icon" viewBox="0 0 24 12" fill="none" stroke="currentColor" stroke-width="1.5">
+                        <rect x="1" y="1" width="18" height="10" rx="2" />
+                        <path d="M20 4v4" stroke-linecap="round" />
+                        <Show when={capPct() > 0}>
+                          <rect
+                            x="2.5"
+                            y="2.5"
+                            width={15 * (capPct() / 100)}
+                            height="7"
+                            rx="1"
+                            fill="currentColor"
+                            stroke="none"
+                          />
+                        </Show>
+                      </svg>
+                    </span>
+                  </div>
+                  <div class="token-usage-panel">
+                    <Show
+                      when={metrics()}
+                      fallback={<div class="token-usage-panel__empty">暂无用量数据</div>}
+                    >
+                      {(m) => (
+                        <>
+                          <div class="token-usage-panel__header">
+                            <span class="token-usage-panel__title">上下文容量</span>
+                            <span class="token-usage-panel__capacity">
+                              {fmtCap(m().capacity.peak)}/{fmtCap(m().capacity.ctx)} ({fmtPct(m().capacity.pct)})
+                            </span>
+                          </div>
+                          <div class="token-usage-panel__bar">
+                            <div
+                              class="token-usage-panel__bar-fill"
+                              style={{
+                                width: `${Math.max(0, Math.min(100, m().capacity.pct))}%`,
+                                background: m().capacity.pct >= 90 ? "var(--accent-red)" : m().capacity.pct >= 70 ? "var(--accent-amber)" : "var(--accent-blue)",
+                              }}
+                            />
+                          </div>
+                          <div class="token-usage-panel__list">
+                            <div class="token-usage-panel__item">
+                              <span class="token-usage-panel__dot token-usage-panel__dot--msg" />
+                              <span class="token-usage-panel__label">消息</span>
+                              <span class="token-usage-panel__value">{fmtPct(m().composition.messages.pct)}</span>
+                            </div>
+                            <div class="token-usage-panel__item">
+                              <span class="token-usage-panel__dot token-usage-panel__dot--tools" />
+                              <span class="token-usage-panel__label">系统工具</span>
+                              <span class="token-usage-panel__value">{fmtPct(m().composition.tools.pct)}</span>
+                            </div>
+                            <div class="token-usage-panel__item">
+                              <span class="token-usage-panel__dot token-usage-panel__dot--preamble" />
+                              <span class="token-usage-panel__label">系统提示词</span>
+                              <span class="token-usage-panel__value">{fmtPct(m().composition.preamble.pct)}</span>
+                            </div>
+                          </div>
+                          <div class="token-usage-panel__spacer" />
+                          <div class="token-usage-panel__item token-usage-panel__item--highlight">
+                            <span class="token-usage-panel__dot token-usage-panel__dot--hitrate" />
+                            <span class="token-usage-panel__label">平均缓存命中率</span>
+                            <span class="token-usage-panel__value token-usage-panel__value--green">
+                              {fmtPct(m().cumulative.hitRate)}
+                            </span>
+                          </div>
+                        </>
+                      )}
+                    </Show>
+                  </div>
+                </div>
+
+                {/* Model Selector Dropdown */}
+                <div class="dropdown-wrapper" ref={modelRef} style="position: relative;">
+                  <button
+                    class="chat-composer__pill-btn select-btn chat-composer__model-btn"
+                    onClick={() => setModelDropdownOpen(!modelDropdownOpen())}
+                  >
+                    <span class="btn-prefix">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="width: 12px; height: 12px;">
+                        <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41" />
+                        <circle cx="12" cy="12" r="4" />
+                      </svg>
+                    </span>
+                    <span>{props.selectedModel ? modelIdOfKey(props.selectedModel) : "选择模型"}</span>
+                    <span class="btn-caret">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="width: 8px; height: 8px;">
+                        <polyline points="6 9 12 15 18 9"></polyline>
+                      </svg>
+                    </span>
+                  </button>
+                  <Show when={modelDropdownOpen()}>
+                    <div class="custom-dropdown-list">
+                      <Show
+                        when={props.availableModels.length > 0}
+                        fallback={
+                          <div class="dropdown-item muted" style="font-size: 11px; pointer-events: none; padding: 6px 12px;">
+                            无可用模型
+                          </div>
+                        }
+                      >
+                        <For each={groupedModels()}>
+                          {(group) => (
+                            <>
+                              <div class="dropdown-group-label">{group.providerName}</div>
+                              <For each={group.models}>
+                                {(m) => {
+                                  const isSelected = () => modelKeyOf(m) === props.selectedModel;
+                                  return (
+                                    <button
+                                      class="dropdown-item"
+                                      classList={{ selected: isSelected() }}
+                                      title={`${m.providerName} · ${m.modelId}`}
+                                      onClick={() => { props.onSelectModel(modelKeyOf(m)); setModelDropdownOpen(false); }}
+                                    >
+                                      {m.modelId}
+                                    </button>
+                                  );
+                                }}
+                              </For>
+                            </>
+                          )}
+                        </For>
+                      </Show>
+                    </div>
+                  </Show>
+                </div>
+
+                {/* Priority Selector Dropdown */}
+                <div class="dropdown-wrapper" ref={priorityRef} style="position: relative;">
+                  <button
+                    class="chat-composer__pill-btn select-btn chat-composer__priority-btn"
+                    onClick={() => setPriorityDropdownOpen(!priorityDropdownOpen())}
+                  >
+                    <span class="btn-prefix">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 12px; height: 12px;">
+                        <path d="M9.5 2A2.5 2.5 0 0 1 12 4.5v15a2.5 2.5 0 0 1-4.96-.44 2.5 2.5 0 0 1 0-3.12 3 3 0 0 1 0-4.88 2.5 2.5 0 0 1 0-3.12A2.5 2.5 0 0 1 9.5 2Z" />
+                        <path d="M14.5 2A2.5 2.5 0 0 0 12 4.5v15a2.5 2.5 0 0 0 4.96-.44 2.5 2.5 0 0 0 0-3.12 3 3 0 0 0 0-4.88 2.5 2.5 0 0 0 0-3.12A2.5 2.5 0 0 0 14.5 2Z" />
+                      </svg>
+                    </span>
+                    <span>{props.selectedPriority}</span>
+                    <span class="btn-caret">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="width: 8px; height: 8px;">
+                        <polyline points="6 9 12 15 18 9"></polyline>
+                      </svg>
+                    </span>
+                  </button>
+                  <Show when={priorityDropdownOpen()}>
+                    <div class="custom-dropdown-list fit-trigger">
+                      <button class="dropdown-item" onClick={() => { props.onSelectPriority("最高"); setPriorityDropdownOpen(false); }}>最高</button>
+                      <button class="dropdown-item" onClick={() => { props.onSelectPriority("均衡"); setPriorityDropdownOpen(false); }}>均衡</button>
+                      <button class="dropdown-item" onClick={() => { props.onSelectPriority("最快"); setPriorityDropdownOpen(false); }}>最快</button>
+                    </div>
+                  </Show>
+                </div>
+
+                {/* Confirmation Mode Selector Dropdown */}
+                <div class="dropdown-wrapper" ref={confirmRef} style="position: relative;">
+                  <button
+                    class="chat-composer__pill-btn select-btn chat-composer__confirm-btn"
+                    onClick={() => setConfirmDropdownOpen(!confirmDropdownOpen())}
+                  >
+                    <span class="btn-prefix">
+                      {props.selectedConfirm === "自动执行" ? (
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 12px; height: 12px;">
+                          <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
+                        </svg>
+                      ) : (
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 12px; height: 12px;">
+                          <path d="M9 11V6a2 2 0 0 1 4 0v5"></path>
+                          <path d="M13 6a2 2 0 0 1 4 0v5"></path>
+                          <path d="M17 6a2 2 0 0 1 4 0v8a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15"></path>
+                        </svg>
+                      )}
+                    </span>
+                    <span>{props.selectedConfirm}</span>
+                    <span class="btn-caret">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="width: 8px; height: 8px;">
+                        <polyline points="6 9 12 15 18 9"></polyline>
+                      </svg>
+                    </span>
+                  </button>
+                  <Show when={confirmDropdownOpen()}>
+                    <div class="custom-dropdown-list fit-trigger">
+                      <button class="dropdown-item" onClick={() => { props.onSelectConfirm("变更前确认"); setConfirmDropdownOpen(false); }}>
+                        <span class="btn-prefix">
+                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 13px; height: 13px;">
+                            <path d="M9 11V6a2 2 0 0 1 4 0v5"></path>
+                            <path d="M13 6a2 2 0 0 1 4 0v5"></path>
+                            <path d="M17 6a2 2 0 0 1 4 0v8a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15"></path>
+                          </svg>
+                        </span> 变更前确认
+                      </button>
+                      <button class="dropdown-item" onClick={() => { props.onSelectConfirm("自动执行"); setConfirmDropdownOpen(false); }}>
+                        <span class="btn-prefix">
+                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 13px; height: 13px;">
+                            <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
+                          </svg>
+                        </span> 自动执行
+                      </button>
+                    </div>
+                  </Show>
+                </div>
+
+                <Show
+                  when={isStreaming()}
+                  fallback={
+                    <button
+                      class="chat-composer__send-square"
+                      disabled={!input().trim()}
+                      onClick={() => void send()}
+                      title="发送"
+                    >
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="width: 14px; height: 14px;">
+                        <line x1="12" y1="19" x2="12" y2="5"></line>
+                        <polyline points="5 12 12 5 19 12"></polyline>
+                      </svg>
+                    </button>
+                  }
+                >
+                  <button
+                    class="chat-composer__send-square chat-composer__stop"
+                    onClick={() => props.onStop?.()}
+                    title="停止生成"
+                  >
+                    <svg viewBox="0 0 24 24" fill="currentColor" style="width: 12px; height: 12px;">
+                      <rect x="6" y="6" width="12" height="12" rx="2" />
+                    </svg>
+                  </button>
+                </Show>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * 思考过程内容区：自带独立的贴底滚动管理（保留 lakemind 实现）。
+ */
+function ReasoningBody(props: { text: string }) {
+  let bodyRef: HTMLDivElement | undefined;
+  const [stick, setStick] = createSignal(true);
+  let lastScrollHeight = 0;
+
+  createEffect(() => {
+    props.text;
+    if (bodyRef && untrack(stick)) bodyRef.scrollTop = bodyRef.scrollHeight;
+  });
+
+  const handleScroll = () => {
+    if (!bodyRef) return;
+    const currentScrollHeight = bodyRef.scrollHeight;
+    if (currentScrollHeight !== lastScrollHeight) {
+      lastScrollHeight = currentScrollHeight;
+      return;
+    }
+    const diff = bodyRef.scrollHeight - bodyRef.scrollTop - bodyRef.clientHeight;
+    setStick(diff <= 15);
+  };
+
+  const handleWheel = (e: WheelEvent) => {
+    if (!bodyRef) return;
+    const el = bodyRef;
+    if (e.deltaY < 0) {
+      setStick(false);
+      if (el.scrollTop > 0) e.stopPropagation();
+    } else if (e.deltaY > 0) {
+      if (el.scrollHeight - el.scrollTop - el.clientHeight > 1) e.stopPropagation();
+    }
+  };
+
+  return (
+    <div class="chat-reasoning__body" ref={bodyRef} onScroll={handleScroll} onWheel={handleWheel}>
+      {props.text}
+    </div>
+  );
+}
+
+function fmtMs(ms: number): string {
+  if (ms < 1000) return `${ms}ms`;
+  return `${(ms / 1000).toFixed(1)}s`;
+}
+
+function formatTime(ts: number): string {
+  const d = new Date(ts);
+  const h = d.getHours().toString().padStart(2, '0');
+  const m = d.getMinutes().toString().padStart(2, '0');
+  return `${h}:${m}`;
+}
+
+function getMessageCopyText(msg: ChatMessage): string {
+  const texts = msg.segments
+    .filter((s) => s.type === "text")
+    .map((s) => (s as any).text);
+  if (texts.length > 0) return texts.join("\n");
+  return msg.segments
+    .map((s) => {
+      if (s.type === "text" || s.type === "reasoning" || s.type === "error") return (s as any).text;
+      return "";
+    })
+    .filter(Boolean)
+    .join("\n");
+}
