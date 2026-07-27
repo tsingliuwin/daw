@@ -5210,34 +5210,36 @@ button.lm-select-trigger:hover:not(:disabled) {
   background: var(--bg-hover);
   color: var(--text-primary);
 }
-.chat-composer__send-square {
-  width: 28px;
-  height: 28px;
+/* 发送按钮：蓝色圆角，和首页 home-composer__send 风格一致 */
+.chat-composer__send {
+  width: 32px;
+  height: 32px;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: var(--text-primary);
+  background: var(--accent-blue);
   border: none;
-  color: var(--bg-surface);
-  border-radius: 8px;
+  color: #fff;
+  border-radius: var(--radius-sm);
   cursor: pointer;
-  transition: opacity 0.12s, background-color 0.12s;
+  transition: background 0.15s, opacity 0.15s;
   flex-shrink: 0;
 }
-.chat-composer__send-square svg {
-  width: 14px;
-  height: 14px;
+.chat-composer__send svg {
   display: block;
   flex-shrink: 0;
 }
-.chat-composer__send-square:hover:not(:disabled) {
-  opacity: 0.85;
-}
-.chat-composer__send-square:disabled {
-  background: rgba(255, 255, 255, 0.08);
+.chat-composer__send:hover:not(:disabled) { background: var(--accent-blue-hover); }
+.chat-composer__send:disabled {
+  background: var(--border-strong);
   color: var(--text-dim);
   cursor: not-allowed;
 }
+/* 停止生成按钮：红色 */
+.chat-composer__send--stop {
+  background: var(--accent-red);
+}
+.chat-composer__send--stop:hover { background: #c53030; }
 /* Token usage pill (capsule button style) in the composer. */
 .token-usage-pill {
   background: rgba(255, 255, 255, 0.03);

@@ -854,20 +854,20 @@ export default function ChatView(props: {
                   when={isStreaming()}
                   fallback={
                     <button
-                      class="chat-composer__send-square"
+                      class="chat-composer__send"
                       disabled={!input().trim()}
                       onClick={() => void send()}
                       title="发送"
                     >
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="width: 14px; height: 14px;">
-                        <line x1="12" y1="19" x2="12" y2="5"></line>
-                        <polyline points="5 12 12 5 19 12"></polyline>
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 16px; height: 16px;">
+                        <line x1="22" y1="2" x2="11" y2="13"></line>
+                        <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
                       </svg>
                     </button>
                   }
                 >
                   <button
-                    class="chat-composer__send-square chat-composer__stop"
+                    class="chat-composer__send chat-composer__send--stop"
                     onClick={() => props.onStop?.()}
                     title="停止生成"
                   >
