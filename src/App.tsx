@@ -6,7 +6,7 @@ import { modelKeyOf, modelIdOfKey, providerIdOfKey } from "./lib/types";
 import { appendDelta, pushToolCall, mergeToolResult, normalizeMessage, newSegmentId } from "./lib/chat";
 import { mergeUsage } from "./lib/metrics";
 import { logsSignal, logError, installAppLogListener, clearLogsStore } from "./lib/logger";
-import { persistTheme, currentTheme, type Theme } from "./lib/theme";
+import { persistTheme, currentTheme, loadThemeFromBackend, type Theme } from "./lib/theme";
 import TitleBar from "./components/TitleBar";
 import LeftNav from "./components/LeftNav";
 import ChatView from "./components/ChatView";
@@ -189,6 +189,9 @@ export default function App() {
       const saved = localStorage.getItem("ws_collapsed");
       if (saved) setCollapsedWs(JSON.parse(saved));
     } catch { /* best-effort */ }
+
+    // 从后端 config 表恢复主题（ui.theme）。
+    void loadThemeFromBackend();
 
     // 安装 agent-event 监听器：聚合 reasoning/text/tool_call/tool_result/usage/
     // done/error 流进当前 assistant 消息的 segments。

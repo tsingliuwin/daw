@@ -1,25 +1,32 @@
 import { createSignal, createEffect } from "solid-js";
+import { invoke } from "@tauri-apps/api/core";
 
 export type Theme = "geek-dark" | "classic-dark" | "light";
 
-const THEME_KEY = "aioa_theme";
+// 主题存在后端 config 表（~/.aioa/aioa.db），key = ui.theme。
+// 不用 localStorage——webview 的 localStorage 跨窗口不共享、清缓存会丢；
+// 后端 config 表是单一数据源，重启/跨窗口一致。
+const THEME_CONFIG_KEY = "ui.theme";
 
-// 启动时从 localStorage 恢复主题，默认 geek-dark。
-function loadTheme(): Theme {
+export const [currentTheme, setCurrentTheme] = createSignal<Theme>("geek-dark");
+
+/** 启动时从后端 config 恢复主题。在 App onMount 里调用。 */
+export async function loadThemeFromBackend() {
   try {
-    const saved = localStorage.getItem(THEME_KEY);
-    if (saved === "geek-dark" || saved === "classic-dark" || saved === "light") return saved;
-  } catch { /* localStorage 不可用时静默回退默认 */ }
-  return "geek-dark";
+    const saved = await invoke<string | null>("get_app_config", { key: THEME_CONFIG_KEY });
+    if (saved === "geek-dark" || saved === "classic-dark" || saved === "light") {
+      setCurrentTheme(saved);
+    }
+  } catch { /* 后端不可用时静默用默认 */ }
 }
 
-export const [currentTheme, setCurrentTheme] = createSignal<Theme>(loadTheme());
-
-// 持久化包装：切主题时写回 localStorage，重启后保持。
-export const persistTheme = (t: Theme) => {
+/** 切主题 + 写回后端 config 表。 */
+export function persistTheme(t: Theme) {
   setCurrentTheme(t);
-  try { localStorage.setItem(THEME_KEY, t); } catch { /* ignore */ }
-};
+  invoke("set_app_config", { key: THEME_CONFIG_KEY, value: t }).catch(() => {
+    /* 持久化失败不阻断切换——当前会话仍生效，仅下次启动回默认 */
+  });
+}
 export const [currentZoom, setCurrentZoom] = createSignal<number>(100);
 
 /** Logo path for the current theme: white logo on dark themes, dark logo on light. */
