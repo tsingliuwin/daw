@@ -7823,7 +7823,8 @@ input[type="number"] {
 .home-composer__selectors {
   display: flex;
   gap: 4px;
-  flex-wrap: wrap;
+  align-items: center;
+  margin-left: auto; /* 整组靠右 */
   min-width: 0;
   flex-shrink: 1;
 }
@@ -7847,7 +7848,6 @@ input[type="number"] {
 
 .home-composer__send {
   flex-shrink: 0;
-  margin-left: auto;
   width: 32px;
   height: 32px;
   border-radius: var(--radius-sm);

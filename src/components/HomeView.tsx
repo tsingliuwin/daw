@@ -122,47 +122,45 @@ export default function HomeView(props: {
             onKeyDown={onKeydown}
           />
           <div class="home-composer__toolbar">
-            {/* 选择器区：工作区 / 模型 / 优先级 / 确认模式 */}
+            {/* 选择器区 + 发送按钮一起靠右 */}
             <div class="home-composer__selectors">
               <Select
-                width="180px"
+                width="150px"
                 value={props.selectedWorkspacePath}
                 options={workspaceOptions()}
                 onChange={onWorkspaceChange}
               />
               <Select
-                width="200px"
+                width="160px"
                 value={props.selectedModel}
                 options={modelOptions()}
                 onChange={props.onSelectModel}
                 disabled={!hasModels()}
               />
               <Select
-                width="92px"
+                width="70px"
                 value={props.selectedPriority}
                 options={PRIORITY_OPTIONS}
                 onChange={props.onSelectPriority}
               />
               <Select
-                width="130px"
+                width="110px"
                 value={props.selectedConfirm}
                 options={CONFIRM_OPTIONS}
                 onChange={props.onSelectConfirm}
               />
+              <button
+                class="home-composer__send"
+                title="发送（Enter）"
+                disabled={!canSend()}
+                onClick={() => submit()}
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 16px; height: 16px;">
+                  <line x1="22" y1="2" x2="11" y2="13"></line>
+                  <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+                </svg>
+              </button>
             </div>
-
-            {/* 发送按钮 */}
-            <button
-              class="home-composer__send"
-              title="发送（Enter）"
-              disabled={!canSend()}
-              onClick={() => submit()}
-            >
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 18px; height: 18px;">
-                <line x1="22" y1="2" x2="11" y2="13"></line>
-                <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
-              </svg>
-            </button>
           </div>
         </div>
 
