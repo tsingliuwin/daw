@@ -148,11 +148,12 @@ export default function SettingsPage(props: {
     if (batchProgress()?.providerKey === providerKey) setBatchProgress(null);
   };
 
-  /** 所有模型测试通过（全绿）才允许启用该 provider。 */
+  /** 所有（非空 id 的）模型测试通过（全绿）才允许启用该 provider。 */
   const providerValidated = (providerKey: string, models: ModelItem[]): boolean => {
-    if (!models.length) return false;
+    const real = models.filter((m) => m.id.trim());
+    if (!real.length) return false;
     const entries = modelTests()[providerKey] || {};
-    return models.every((m) => entries[m.id]?.status === "success");
+    return real.every((m) => entries[m.id]?.status === "success");
   };
 
   const batchTesting = (providerKey: string): boolean => batchProgress()?.providerKey === providerKey;
@@ -194,9 +195,13 @@ export default function SettingsPage(props: {
   const handleTestNewProviderConnection = () =>
     runBatchModelTest(NEW_PROVIDER_TEST_KEY, newProviderEndpoint(), newProviderApiKey(), newProviderFormat(), newProviderModels());
 
-  // 启用门禁：只有全绿通过才允许 enabled=true。
+  // 启用门禁：首次启用要求所有（非空 id 的）模型测试通过。
+  // 已启用的 provider 增删模型后再勾选不会被拦截——用户可以先用着，新模型按需测。
   const handleToggleProviderEnabled = (prov: ModelProvider, enabled: boolean) => {
-    if (enabled && !providerValidated(prov.id, prov.models || [])) {
+    const realModels = (prov.models || []).filter((m) => m.id.trim());
+    const wasEnabled = prov.enabled;
+    // 要启用、且当前不是已启用状态（首次启用或从禁用切回）→ 检查全绿
+    if (enabled && !wasEnabled && !providerValidated(prov.id, realModels)) {
       alert("请先点击「测试连通性」并确保全部模型测试通过后再启用。");
       return;
     }

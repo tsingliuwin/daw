@@ -113,6 +113,7 @@ export default function App() {
           for (const prov of loaded.providers) {
             if (prov.enabled && prov.models) {
               for (const m of prov.models) {
+                if (!m.id || !m.id.trim()) continue; // 跳过空 id 的模型行（未填完）
                 const opt: ModelOption = {
                   providerId: prov.id,
                   providerName: prov.name || prov.id,
