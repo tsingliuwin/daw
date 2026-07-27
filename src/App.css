@@ -7499,4 +7499,151 @@ button.lm-select-trigger:hover:not(:disabled) {
 .mt-status.error { background: var(--accent-red-bg); color: var(--accent-red); }
 
 
+/* ===========================================================================
+   HomeView —— 首页/欢迎页（居中大输入框）
+   =========================================================================== */
+.home-view {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: var(--bg-base);
+  overflow-y: auto;
+  padding: 24px;
+}
+.home-view__inner {
+  width: 100%;
+  max-width: 720px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 28px;
+}
+
+/* 品牌区 */
+.home-view__brand {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+.home-view__logo {
+  width: 64px;
+  height: 64px;
+  object-fit: contain;
+}
+.home-view__title {
+  margin: 0;
+  font-size: 28px;
+  font-weight: 700;
+  color: var(--text-primary);
+  letter-spacing: -0.5px;
+}
+.home-view__subtitle {
+  margin: 0;
+  font-size: 13.5px;
+  color: var(--text-secondary);
+  text-align: center;
+  line-height: 1.5;
+}
+
+/* 居中输入框 */
+.home-composer {
+  width: 100%;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-card);
+  padding: 14px 16px 10px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.28);
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.home-composer:focus-within {
+  border-color: var(--accent-blue);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.28), 0 0 0 3px rgba(59, 130, 246, 0.12);
+}
+.home-composer__input {
+  width: 100%;
+  background: transparent;
+  border: none;
+  outline: none;
+  resize: none;
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: 15px;
+  line-height: 1.6;
+  min-height: 72px;
+  max-height: 240px;
+}
+.home-composer__input::placeholder { color: var(--text-dim); }
+
+.home-composer__toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.home-composer__selectors {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+/* Select 触发器在首页里收窄成 pill 风格 */
+.home-composer__selectors .lm-select-wrapper .lm-select-trigger {
+  background: var(--bg-pill-outer);
+  border: 1px solid var(--border-faint);
+  border-radius: var(--radius-pill);
+  padding: 5px 12px;
+  font-size: 12px;
+  height: auto;
+  min-height: 30px;
+}
+.home-composer__selectors .lm-select-wrapper .lm-select-label {
+  font-size: 12px;
+}
+
+.home-composer__send {
+  flex-shrink: 0;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-sm);
+  background: var(--accent-blue);
+  border: none;
+  color: #fff;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s, opacity 0.15s;
+}
+.home-composer__send:hover:not(:disabled) { background: var(--accent-blue-hover); }
+.home-composer__send:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* 示例/引导区 */
+.home-view__examples {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  min-height: 20px;
+}
+.home-view__config-btn {
+  background: transparent;
+  border: 1px solid var(--border-strong);
+  color: var(--text-secondary);
+  border-radius: var(--radius-sm);
+  padding: 7px 16px;
+  font-size: 12.5px;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s;
+}
+.home-view__config-btn:hover {
+  border-color: var(--accent-blue);
+  color: var(--accent-blue);
+}
+
+
+
 

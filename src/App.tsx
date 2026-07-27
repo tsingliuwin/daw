@@ -9,6 +9,7 @@ import { logsSignal, logError, installAppLogListener, clearLogsStore } from "./l
 import TitleBar from "./components/TitleBar";
 import LeftNav from "./components/LeftNav";
 import ChatView from "./components/ChatView";
+import HomeView from "./components/HomeView";
 import SettingsPage from "./components/SettingsPage";
 
 /**
@@ -49,6 +50,15 @@ export default function App() {
     const id = activeTaskId();
     if (!id) return null;
     return tasks().find((t) => t.id === id) ?? null;
+  });
+
+  // 「已进入对话流」的判定：选中的 task 必须存在且有至少一条消息。
+  // 满足时主区渲染 ChatView；否则渲染 HomeView 欢迎页（首次进入、点了「新建对话」
+  // 但还没发消息、删光所有对话等情况都会落到 HomeView）。
+  const chatTask = createMemo(() => {
+    const t = activeTask();
+    if (!t) return null;
+    return (t.messages?.length ?? 0) > 0 ? t : null;
   });
 
   // 加载 settings.json → 收集所有 enabled provider 下的模型为可选项。
@@ -254,9 +264,10 @@ export default function App() {
           setActiveTaskId(migrated[0].id);
         }
       } else {
-        // 该工作区还没有任何对话——直接新建一个，让用户一进来就能看到对话框，
-        // 而不是停在"点击新建对话"的空状态。
-        newChat();
+        // 该工作区没有任何对话：activeTaskId 保持 null，主区渲染 HomeView 欢迎页。
+        // 用户在首页发出第一条消息时再新建 task（submitFromHome），避免预生成一堆
+        // 空对话污染左侧列表。
+        setActiveTaskId(null);
       }
     } catch (err) {
       logError("ui", "Failed to load workspace tasks", err);
@@ -303,8 +314,8 @@ export default function App() {
         const visible = remaining.filter((t) => (t.messages?.length ?? 0) > 0).sort((a, b) => b.createdAt - a.createdAt);
         setActiveTaskId(visible.length > 0 ? visible[0].id : remaining[0].id);
       } else {
-        // 最后一个对话也被删了——新建一个，避免落回空状态。
-        newChat();
+        // 最后一个对话也被删了：回到首页（HomeView），让用户重新开始。
+        setActiveTaskId(null);
       }
     }
     try {
@@ -312,6 +323,36 @@ export default function App() {
     } catch (err) {
       logError("ui", "Failed to delete task", err);
     }
+  }
+
+  // 首页发送：若当前已选中一个空对话（点「新建对话」后回到首页的情况）就复用它，
+  // 否则新建一个，然后立即发送第一条消息。
+  function submitFromHome(prompt: string) {
+    if (availableModels().length === 0) {
+      alert("请先在设置中配置并启用大模型服务商及模型。");
+      setSettingsOpen(true);
+      return;
+    }
+    // 复用当前选中的空对话（有 id 但无消息），避免连续「新建」堆出多个空对话。
+    const cur = activeTask();
+    if (cur && (cur.messages?.length ?? 0) === 0) {
+      void sendChatMessage(prompt);
+      return;
+    }
+    const id = `task-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    const name = prompt.trim().replace(/\n/g, " ").slice(0, 40) || "新对话";
+    const newTask: QueryTask = {
+      id,
+      name,
+      createdAt: Date.now(),
+      messages: [],
+      saved: false,
+      modelId: selectedModel() || undefined,
+    };
+    setTasks((prev) => [newTask, ...prev]);
+    setActiveTaskId(id);
+    // 切到 ChatView 后再发送（sendChatMessage 依赖 activeTaskId 已就绪）。
+    void sendChatMessage(prompt);
   }
 
   // ChatView 发送消息：追加 user 消息 → 触发后端 agent 循环。
@@ -440,14 +481,20 @@ export default function App() {
 
         <main class="app-content">
           <Show
-            when={activeTask()}
+            when={chatTask()}
             fallback={
-              <div class="app-empty">
-                <div class="app-empty__hint">
-                  <p>选择左侧的对话，或点击「新建对话」开始。</p>
-                  <button class="app-empty__btn" onClick={newChat}>+ 新建对话</button>
-                </div>
-              </div>
+              <HomeView
+                workspace={currentWorkspace().name || currentWorkspace().path}
+                availableModels={availableModels()}
+                selectedModel={selectedModel()}
+                onSelectModel={handleSelectModel}
+                selectedPriority={selectedPriority()}
+                onSelectPriority={setSelectedPriority}
+                selectedConfirm={selectedConfirm()}
+                onSelectConfirm={setSelectedConfirm}
+                onSubmit={submitFromHome}
+                onOpenSettings={() => setSettingsOpen(true)}
+              />
             }
           >
             {(task) => (
