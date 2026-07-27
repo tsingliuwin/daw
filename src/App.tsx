@@ -254,7 +254,9 @@ export default function App() {
           setActiveTaskId(migrated[0].id);
         }
       } else {
-        setActiveTaskId(null);
+        // 该工作区还没有任何对话——直接新建一个，让用户一进来就能看到对话框，
+        // 而不是停在"点击新建对话"的空状态。
+        newChat();
       }
     } catch (err) {
       logError("ui", "Failed to load workspace tasks", err);
@@ -296,8 +298,14 @@ export default function App() {
     const remaining = tasks().filter((t) => t.id !== id);
     setTasks(remaining);
     if (activeTaskId() === id) {
-      const visible = remaining.filter((t) => (t.messages?.length ?? 0) > 0).sort((a, b) => b.createdAt - a.createdAt);
-      setActiveTaskId(visible.length > 0 ? visible[0].id : null);
+      if (remaining.length > 0) {
+        // 选中相邻的下一个（或上一个）对话，优先有内容的。
+        const visible = remaining.filter((t) => (t.messages?.length ?? 0) > 0).sort((a, b) => b.createdAt - a.createdAt);
+        setActiveTaskId(visible.length > 0 ? visible[0].id : remaining[0].id);
+      } else {
+        // 最后一个对话也被删了——新建一个，避免落回空状态。
+        newChat();
+      }
     }
     try {
       await invoke("delete_task", { taskId: id });
