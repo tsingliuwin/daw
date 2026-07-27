@@ -7717,7 +7717,7 @@ button.lm-select-trigger:hover:not(:disabled) {
   color: var(--text-primary);
 }
 
-/* ▶/▼ 折叠三角 */
+/* ▶/▼ 折叠三角（移到 header 最右侧，新建按钮之后） */
 .ln-ws-toggle {
   display: inline-flex;
   align-items: center;
@@ -7726,13 +7726,15 @@ button.lm-select-trigger:hover:not(:disabled) {
   height: 14px;
   flex-shrink: 0;
   color: var(--text-dim);
+  font-size: 9px;
   transition: transform 0.15s;
+  margin-left: 2px;
 }
 .ln-ws-toggle--collapsed {
-  transform: rotate(-90deg);
+  transform: rotate(0deg);
 }
 
-/* 工作区名 */
+/* 工作区名（撑满中间，把右侧按钮顶到右边） */
 .ln-ws-name {
   flex: 1;
   min-width: 0;

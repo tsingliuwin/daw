@@ -96,7 +96,6 @@ export default function LeftNav(props: {
               return (
                 <div class="ln-workspace-group">
                   <div class="ln-ws-header" onClick={() => props.onToggleWorkspace(ws.path)}>
-                    <span class="ln-ws-toggle">{collapsed() ? "▶" : "▼"}</span>
                     <span class="ln-ws-name">{ws.name}</span>
                     <button
                       class="ln-ws-new"
@@ -104,6 +103,7 @@ export default function LeftNav(props: {
                       onClick={(e) => { e.stopPropagation(); props.onNewTask(ws.path); }}
                       disabled={props.busy}
                     >+</button>
+                    <span class="ln-ws-toggle" classList={{ "ln-ws-toggle--collapsed": collapsed() }}>{collapsed() ? "▶" : "▼"}</span>
                   </div>
                   <Show when={!collapsed()}>
                     <For each={tasks()} fallback={<div class="empty-hint">暂无任务</div>}>
