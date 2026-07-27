@@ -526,7 +526,7 @@ function ProviderModelEditor(props: {
     props.onChange(next);
   };
   const remove = (idx: number) => props.onChange(props.models.filter((_, i) => i !== idx));
-  const add = () => props.onChange([...props.models, { id: "", contextWindow: 128000, maxTokens: 4096 }]);
+  const add = () => props.onChange([...props.models, { id: "", contextWindow: 256000, maxTokens: 64000 }]);
 
   return (
     <div class="model-editor">
@@ -560,7 +560,7 @@ function ProviderModelEditor(props: {
                 class="settings-input model-max-input"
                 type="number"
                 title="最大输出 token 数（单次回复上限）"
-                value={m.maxTokens ?? 4096}
+                value={m.maxTokens ?? 64000}
                 onInput={(e) => update(idx(), { maxTokens: parseInt(e.currentTarget.value || "0", 10) || 0 })}
               />
               <ModelStatusIcon status={entry()?.status} errorTip={entry()?.msg} />
