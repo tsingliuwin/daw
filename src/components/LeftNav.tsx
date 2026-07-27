@@ -58,6 +58,28 @@ export default function LeftNav(props: {
         </div>
       </div>
 
+      {/* 新建任务快捷按钮（常驻顶部，不依赖具体工作区展开态） */}
+      <div class="ln-quick-actions">
+        <button
+          class="ln-action-btn"
+          title="新建任务"
+          onClick={() => {
+            // 归属第一个工作区（首启必有 DefaultProject）；后续可让用户选目标工作区。
+            const wsPath = props.workspaces[0]?.path;
+            if (wsPath) props.onNewTask(wsPath);
+          }}
+          disabled={props.busy || props.workspaces.length === 0}
+        >
+          <span class="action-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="12" y1="5" x2="12" y2="19"></line>
+              <line x1="5" y1="12" x2="19" y2="12"></line>
+            </svg>
+          </span>
+          <span class="action-label">新建任务</span>
+        </button>
+      </div>
+
       {/* 任务区：按工作区折叠分组 */}
       <div class="ln-section-header">
         <span class="section-title">任务</span>
