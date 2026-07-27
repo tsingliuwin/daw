@@ -467,6 +467,7 @@ export default function App() {
           busy={busy()}
           leftOpen={leftOpen()}
           onToggleLeft={() => setLeftOpen(!leftOpen())}
+          onOpenSettings={() => setSettingsOpen(true)}
         />
       </Show>
 
@@ -478,7 +479,6 @@ export default function App() {
           leftOpen={leftOpen()}
           onToggleLeft={() => setLeftOpen(!leftOpen())}
           busy={busy()}
-          onOpenSettings={() => setSettingsOpen(true)}
         />
 
         <main class="app-content">
