@@ -248,8 +248,15 @@ export default function SettingsPage(props: {
               onClick={() => setActiveTab("modelSettings")}
             >模型服务商</button>
           </div>
-          {/* 共用品牌区：返回按钮等同右上角关闭，免去鼠标移动 */}
-          <BrandFooter onCloseSettings={props.onClose} />
+          {/* 共用品牌区：主题切换 + 返回首页（等同右上角关闭，免去鼠标移动） */}
+          <BrandFooter
+            onToggleTheme={() => {
+              const next: Theme = currentTheme() === "light" ? "geek-dark" : "light";
+              setCurrentTheme(next);
+            }}
+            isDarkTheme={currentTheme() !== "light"}
+            onCloseSettings={props.onClose}
+          />
         </nav>
 
         <main class="settings-content">
