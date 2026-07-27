@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { logError } from "../lib/logger";
 import { currentTheme, setCurrentTheme, currentZoom, setCurrentZoom, type Theme } from "../lib/theme";
 import BrandFooter from "./BrandFooter";
+import Select from "./Select";
 
 // ---------------------------------------------------------------------------
 // Provider / settings model. 镜像后端 settings.json 结构
@@ -41,7 +42,12 @@ interface ModelTestEntry {
 
 type SettingsTab = "general" | "modelSettings";
 
-const API_FORMATS: ModelProvider["apiFormat"][] = ["openai", "anthropic", "responses"];
+// 供 Select 组件用：value 是后端格式名，label 是更友好的展示。
+const API_FORMAT_OPTIONS = [
+  { value: "openai", label: "openai（兼容/OpenAI）" },
+  { value: "anthropic", label: "anthropic（Claude）" },
+  { value: "responses", label: "responses（OpenAI Responses）" },
+] as const;
 
 /**
  * 设置页。相比 lakemind 大幅瘦身：
@@ -399,13 +405,12 @@ export default function SettingsPage(props: {
                             </div>
                             <div class="provider-field provider-field--half">
                               <label>API 格式 <span class="provider-field__hint">openai 兼容 / anthropic=claude</span></label>
-                              <select
-                                class="settings-select"
+                              <Select
+                                width="100%"
                                 value={prov.apiFormat}
-                                onChange={(e) => updateProviderProperty(prov.id, "apiFormat", e.currentTarget.value)}
-                              >
-                                <For each={API_FORMATS}>{(f) => <option value={f}>{f}</option>}</For>
-                              </select>
+                                options={API_FORMAT_OPTIONS}
+                                onChange={(v) => updateProviderProperty(prov.id, "apiFormat", v)}
+                              />
                             </div>
                           </div>
 
@@ -475,9 +480,12 @@ export default function SettingsPage(props: {
                       </div>
                       <div class="provider-field provider-field--half">
                         <label>API 格式 <span class="provider-field__hint">openai 兼容 / anthropic=claude</span></label>
-                        <select class="settings-select" value={newProviderFormat()} onChange={(e) => setNewProviderFormat(e.currentTarget.value as ModelProvider["apiFormat"])}>
-                          <For each={API_FORMATS}>{(f) => <option value={f}>{f}</option>}</For>
-                        </select>
+                        <Select
+                          width="100%"
+                          value={newProviderFormat()}
+                          options={API_FORMAT_OPTIONS}
+                          onChange={(v) => setNewProviderFormat(v as ModelProvider["apiFormat"])}
+                        />
                       </div>
                     </div>
                     <div class="provider-field provider-field--full">
