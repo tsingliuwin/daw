@@ -70,13 +70,10 @@ export default function TitleBar(props: {
               </button>
             </div>
           }>
-            <span class="tb-logo" data-tauri-drag-region><img src={logoSrc()} alt="AI OA" style="width: 14px; height: 14px; object-fit: contain; vertical-align: middle;" /></span>
-            <span class="tb-brand" data-tauri-drag-region>AI OA</span>
-
-            {/* Sidebar toggle button (Windows/Linux) */}
+            {/* 侧边栏折叠后只保留展开按钮（logo 和品牌名跟随左侧栏一起隐藏，
+                避免顶部重复出现 "AI OA"）。 */}
             <button
               class="ln-arrow-btn"
-              style="margin-left: 8px;"
               classList={{ active: props.leftOpen }}
               title={props.leftOpen ? "隐藏侧边栏" : "显示侧边栏"}
               onClick={() => props.onToggleLeft()}
