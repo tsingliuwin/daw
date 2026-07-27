@@ -526,10 +526,17 @@ function ProviderModelEditor(props: {
     props.onChange(next);
   };
   const remove = (idx: number) => props.onChange(props.models.filter((_, i) => i !== idx));
-  const add = () => props.onChange([...props.models, { id: "", contextWindow: 128000 }]);
+  const add = () => props.onChange([...props.models, { id: "", contextWindow: 128000, maxTokens: 4096 }]);
 
   return (
     <div class="model-editor">
+      {/* 表头 */}
+      <div class="model-editor__head">
+        <span class="model-editor__col-id">模型 ID</span>
+        <span class="model-editor__col-ctx" title="上下文窗口大小（token 数）">上下文</span>
+        <span class="model-editor__col-max" title="最大输出（token 数）">最大输出</span>
+        <span class="model-editor__col-status" />
+      </div>
       <For each={props.models}>
         {(m, idx) => {
           const entry = () => props.testEntries[m.id];
@@ -537,7 +544,7 @@ function ProviderModelEditor(props: {
             <div class="model-editor__row">
               <input
                 class="settings-input model-id-input"
-                placeholder="模型 id，如 gpt-4o"
+                placeholder="如 gpt-4o"
                 value={m.id}
                 onInput={(e) => update(idx(), { id: e.currentTarget.value })}
               />
@@ -547,6 +554,13 @@ function ProviderModelEditor(props: {
                 title="上下文窗口大小（token 数）"
                 value={m.contextWindow}
                 onInput={(e) => update(idx(), { contextWindow: parseInt(e.currentTarget.value || "0", 10) || 0 })}
+              />
+              <input
+                class="settings-input model-max-input"
+                type="number"
+                title="最大输出 token 数（单次回复上限）"
+                value={m.maxTokens ?? 4096}
+                onInput={(e) => update(idx(), { maxTokens: parseInt(e.currentTarget.value || "0", 10) || 0 })}
               />
               <ModelStatusIcon status={entry()?.status} errorTip={entry()?.msg} />
               <button class="model-remove-btn" title="删除模型" onClick={() => remove(idx())}>✕</button>

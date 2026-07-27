@@ -7581,13 +7581,34 @@ button.lm-select-trigger:hover:not(:disabled) {
   margin-bottom: 6px;
 }
 .model-editor__row:last-of-type { margin-bottom: 0; }
-/* 模型 id 输入：占主要空间 */
+/* 表头：列标签，和行内输入对齐 */
+.model-editor__head {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin-bottom: 6px;
+  padding: 0 2px;
+  font-size: 10.5px;
+  color: var(--text-dim);
+  font-weight: 500;
+}
+.model-editor__col-id { flex: 1; min-width: 0; }
+.model-editor__col-ctx { width: 90px; flex-shrink: 0; text-align: right; }
+.model-editor__col-max { width: 90px; flex-shrink: 0; text-align: right; }
+.model-editor__col-status { width: 22px; flex-shrink: 0; }
+/* 模型 id 输入：占主要空间但不无限宽 */
 .model-id-input {
   flex: 1;
   min-width: 0;
 }
 /* 上下文窗口输入：收窄，固定宽度 */
 .model-ctx-input {
+  width: 90px;
+  flex-shrink: 0;
+  text-align: right;
+}
+/* 最大输出输入：和上下文同宽 */
+.model-max-input {
   width: 90px;
   flex-shrink: 0;
   text-align: right;
