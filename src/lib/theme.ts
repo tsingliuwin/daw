@@ -2,7 +2,24 @@ import { createSignal, createEffect } from "solid-js";
 
 export type Theme = "geek-dark" | "classic-dark" | "light";
 
-export const [currentTheme, setCurrentTheme] = createSignal<Theme>("geek-dark");
+const THEME_KEY = "aioa_theme";
+
+// 启动时从 localStorage 恢复主题，默认 geek-dark。
+function loadTheme(): Theme {
+  try {
+    const saved = localStorage.getItem(THEME_KEY);
+    if (saved === "geek-dark" || saved === "classic-dark" || saved === "light") return saved;
+  } catch { /* localStorage 不可用时静默回退默认 */ }
+  return "geek-dark";
+}
+
+export const [currentTheme, setCurrentTheme] = createSignal<Theme>(loadTheme());
+
+// 持久化包装：切主题时写回 localStorage，重启后保持。
+export const persistTheme = (t: Theme) => {
+  setCurrentTheme(t);
+  try { localStorage.setItem(THEME_KEY, t); } catch { /* ignore */ }
+};
 export const [currentZoom, setCurrentZoom] = createSignal<number>(100);
 
 /** Logo path for the current theme: white logo on dark themes, dark logo on light. */

@@ -1,7 +1,7 @@
 import { Index, Show, createSignal, onMount } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
 import { logError } from "../lib/logger";
-import { currentTheme, setCurrentTheme, currentZoom, setCurrentZoom, type Theme } from "../lib/theme";
+import { currentTheme, persistTheme, currentZoom, setCurrentZoom, type Theme } from "../lib/theme";
 import BrandFooter from "./BrandFooter";
 import Select from "./Select";
 
@@ -271,7 +271,7 @@ export default function SettingsPage(props: {
           <BrandFooter
             onToggleTheme={() => {
               const next: Theme = currentTheme() === "light" ? "geek-dark" : "light";
-              setCurrentTheme(next);
+              persistTheme(next);
             }}
             isDarkTheme={currentTheme() !== "light"}
             onCloseSettings={props.onClose}
@@ -290,7 +290,7 @@ export default function SettingsPage(props: {
                   <select
                     class="settings-select"
                     value={currentTheme()}
-                    onChange={(e) => setCurrentTheme(e.currentTarget.value as Theme)}
+                    onChange={(e) => persistTheme(e.currentTarget.value as Theme)}
                   >
                     <option value="geek-dark">极客深色</option>
                     <option value="classic-dark">经典深色</option>
