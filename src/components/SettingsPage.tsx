@@ -359,7 +359,7 @@ export default function SettingsPage(props: {
                         <div class="provider-card__body">
                           {/* Base URL 单行 */}
                           <div class="provider-field provider-field--full">
-                            <label>Base URL <span class="provider-field__hint">不含 /chat/completions</span></label>
+                            <label>Base URL <span class="provider-field__hint">填到 /v1 为止，多余路径会自动去除</span></label>
                             <input
                               class="settings-input"
                               value={prov.endpoint}
@@ -398,7 +398,7 @@ export default function SettingsPage(props: {
                               </div>
                             </div>
                             <div class="provider-field provider-field--half">
-                              <label>API 格式 <span class="provider-field__hint">OpenAI 兼容选 openai</span></label>
+                              <label>API 格式 <span class="provider-field__hint">openai 兼容 / anthropic=claude</span></label>
                               <select
                                 class="settings-select"
                                 value={prov.apiFormat}
@@ -452,7 +452,7 @@ export default function SettingsPage(props: {
                       <input class="settings-input" value={newProviderName()} placeholder="例如：OpenAI 官方" onInput={(e) => setNewProviderName(e.currentTarget.value)} />
                     </div>
                     <div class="provider-field provider-field--full">
-                      <label>Base URL <span class="provider-field__hint">不含 /chat/completions</span></label>
+                      <label>Base URL <span class="provider-field__hint">填到 /v1 为止，多余路径会自动去除</span></label>
                       <input class="settings-input" value={newProviderEndpoint()} placeholder="https://api.openai.com/v1" onInput={(e) => setNewProviderEndpoint(e.currentTarget.value)} />
                     </div>
                     <div class="provider-field-row">
@@ -474,7 +474,7 @@ export default function SettingsPage(props: {
                         </div>
                       </div>
                       <div class="provider-field provider-field--half">
-                        <label>API 格式 <span class="provider-field__hint">OpenAI 兼容选 openai</span></label>
+                        <label>API 格式 <span class="provider-field__hint">openai 兼容 / anthropic=claude</span></label>
                         <select class="settings-select" value={newProviderFormat()} onChange={(e) => setNewProviderFormat(e.currentTarget.value as ModelProvider["apiFormat"])}>
                           <For each={API_FORMATS}>{(f) => <option value={f}>{f}</option>}</For>
                         </select>
