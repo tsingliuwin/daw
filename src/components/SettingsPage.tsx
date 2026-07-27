@@ -233,8 +233,8 @@ export default function SettingsPage(props: {
 
   return (
     <div class="settings-page">
-      <div class="settings-header">
-        <h2 class="settings-title">设置</h2>
+      <div class="settings-header" data-tauri-drag-region>
+        <h2 class="settings-title" data-tauri-drag-region>设置</h2>
         <button class="settings-close-btn" title="关闭" onClick={props.onClose}>✕</button>
       </div>
       <div class="settings-body">
