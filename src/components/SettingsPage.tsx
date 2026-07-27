@@ -339,7 +339,11 @@ export default function SettingsPage(props: {
                     const prov = () => provAcc();
                     return (
                     <div class="provider-card" classList={{ active: prov().id === selectedProvider() }}>
-                      <div class="provider-card__head" onClick={() => setSelectedProvider(prev => prev === prov().id ? "" : prov().id)}>
+                      <div class="provider-card__head" onClick={() => {
+                        // 正在编辑名称时，点击 header 不折叠（避免编辑中误触收起）
+                        if (editingProviderId()) return;
+                        setSelectedProvider(prev => prev === prov().id ? "" : prov().id);
+                      }}>
                         <span class="provider-card__chevron">{prov().id === selectedProvider() ? "▼" : "▶"}</span>
                         <Show
                           when={editingProviderId() !== prov().id}
