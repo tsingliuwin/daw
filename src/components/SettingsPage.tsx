@@ -310,7 +310,13 @@ export default function SettingsPage(props: {
                   <h3 class="settings-section-title">模型服务商</h3>
                   <p class="settings-section-desc">配置 LLM provider。每个模型测试通过（全绿）后才能启用。</p>
                 </div>
-                <button class="settings-primary-btn" onClick={() => setIsAddingProvider(true)}>+ 添加服务商</button>
+                <button class="settings-add-btn" onClick={() => setIsAddingProvider(true)}>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                    <line x1="12" y1="5" x2="12" y2="19"></line>
+                    <line x1="5" y1="12" x2="19" y2="12"></line>
+                  </svg>
+                  添加服务商
+                </button>
               </div>
 
               <div class="provider-list">
