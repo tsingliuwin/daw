@@ -7815,17 +7815,22 @@ input[type="number"] {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-top: 4px;
 }
 .home-composer__selectors {
   display: flex;
-  gap: 8px;
+  gap: 4px;
   flex-wrap: wrap;
+  min-width: 0;
+  flex-shrink: 1;
 }
-/* Select 触发器在首页里收窄成 pill 风格 */
+/* Select 触发器对齐对话页 chat-composer__pill-btn 风格：透明背景、无边框、pill 圆角 */
 .home-composer__selectors .lm-select-wrapper .lm-select-trigger {
-  background: var(--bg-pill-outer);
-  border: 1px solid var(--border-faint);
+  background: rgba(255, 255, 255, 0.03);
+  border: none;
   border-radius: var(--radius-pill);
   padding: 5px 12px;
   font-size: 12px;
@@ -7842,8 +7847,9 @@ input[type="number"] {
 
 .home-composer__send {
   flex-shrink: 0;
-  width: 36px;
-  height: 36px;
+  margin-left: auto;
+  width: 32px;
+  height: 32px;
   border-radius: var(--radius-sm);
   background: var(--accent-blue);
   border: none;
