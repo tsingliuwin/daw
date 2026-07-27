@@ -37,6 +37,9 @@ export default function App() {
   // 后续 toggleWorkspace 触发的懒加载据此去重。
   const loadedWs = new Set<string>();
   const [activeTaskId, setActiveTaskId] = createSignal<string | null>(null);
+  // 首页选中的工作区 path：新建任务的归属工作区由此决定（onMount 时设为
+  // workspace.last / DefaultProject / 第一个工作区）。Select 组件的 value。
+  const [homeWorkspacePath, setHomeWorkspacePath] = createSignal<string>("");
   // 当前正在流式输出的任务 id。start_agent_task 是 fire-and-forget
   // （tokio::spawn 后立即返回），真正的流式通过 agent-event 异步回来，
   // streamingTaskId 用于在流式期间锁定输入、显示 Stop 按钮。
@@ -303,6 +306,9 @@ export default function App() {
           list.find((w) => w.path === "DefaultProject") ||
           list[0];
 
+        // 首页工作区下拉默认选中 last 工作区。
+        setHomeWorkspacePath(lastWs.path);
+
         const lastArr = tasksByWorkspace()[lastWs.path] ?? [];
         if (lastArr.length > 0) {
           setActiveTaskId(lastArr[0].id); // 已按 createdAt 倒序，第 0 条即最新
@@ -348,24 +354,40 @@ export default function App() {
     setActiveTaskId(id);
   }
 
-  // 在指定工作区下新建空任务：生成 uuid、加入 tasksByWorkspace、自动展开该工作区、选中。
-  function newTask(wsPath: string) {
-    const id = `task-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-    const newT: Task = {
-      id,
-      name: "新任务",
-      createdAt: Date.now(),
-      messages: [],
-      saved: false,
-      modelId: selectedModel() || undefined,
-    };
-    setTasksByWorkspace((prev) => ({
-      ...prev,
-      [wsPath]: [newT, ...(prev[wsPath] ?? [])],
-    }));
-    // 自动展开该工作区（若已展开则不变）。
-    setCollapsedWs((prev) => (prev[wsPath] ? { ...prev, [wsPath]: false } : prev));
-    setActiveTaskId(id);
+  // 「新建任务」按钮：只跳回首页（HomeView），不创建空任务。真正建任务发生在
+  // submitTaskFromHome 中（用户敲下第一条消息后）。LeftNav 顶部按钮与工作区 header
+  // 「+」都走这里。
+  function goToHome() {
+    setActiveTaskId(null);
+  }
+
+  // 切换首页选中的工作区（首页工作区下拉 onChange 触发）。
+  function selectWorkspace(path: string) {
+    setHomeWorkspacePath(path);
+  }
+
+  // 首页「选择新文件夹...」：打开原生目录选择器 → 用文件夹名注册工作区 →
+  // 刷新 workspaces → 设为首页选中工作区，并懒加载该工作区的任务列表。
+  async function selectNewFolder() {
+    try {
+      const path = await invoke<string | null>("select_directory");
+      if (!path) return; // 用户取消
+      // 从路径提取末段作为工作区名（兼容 Windows 反斜杠与 POSIX 斜杠）。
+      const segs = path.replace(/\\/g, "/").split("/").filter(Boolean);
+      const name = segs.length > 0 ? segs[segs.length - 1] : path;
+      await invoke("add_workspace", { name, path });
+      const list = await invoke<Workspace[]>("load_workspaces");
+      if (list && list.length > 0) {
+        setWorkspaces(list);
+        const newWs = list.find((w) => w.path === path);
+        if (newWs) {
+          setHomeWorkspacePath(newWs.path);
+          await loadWorkspaceTasks(newWs.path);
+        }
+      }
+    } catch (err) {
+      logError("ui", "Failed to select new folder as workspace", err);
+    }
   }
 
   async function deleteTask(id: string) {
@@ -396,22 +418,16 @@ export default function App() {
     }
   }
 
-  // 首页发送：若当前已选中一个空任务（点「新建任务」后回到首页的情况）就复用它，
-  // 否则在 activeTask 所在工作区（或第一个工作区）新建一个，然后立即发送第一条消息。
+  // 首页发送：用首页选中的工作区（homeWorkspacePath，回退到第一个工作区）作为
+  // 任务归属，新建 task + 立即发送第一条消息。「新建任务」按钮不再预先建空任务，
+  // 所以这里没有「复用空任务」分支了。
   function submitTaskFromHome(prompt: string) {
     if (availableModels().length === 0) {
       alert("请先在设置中配置并启用大模型服务商及模型。");
       setSettingsOpen(true);
       return;
     }
-    // 复用当前选中的空任务（有 id 但无消息），避免连续「新建」堆出多个空任务。
-    const cur = activeTask();
-    if (cur && (cur.messages?.length ?? 0) === 0) {
-      void sendTaskMessage(prompt);
-      return;
-    }
-    const wsPath =
-      (cur && findTaskWorkspace(cur.id)) || workspaces()[0]?.path;
+    const wsPath = homeWorkspacePath() || workspaces()[0]?.path;
     if (!wsPath) return;
     const id = `task-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
     const name = prompt.trim().replace(/\n/g, " ").slice(0, 40) || "新任务";
@@ -551,7 +567,7 @@ export default function App() {
           onToggleWorkspace={toggleWorkspace}
           onSelectTask={selectTask}
           onDeleteTask={deleteTask}
-          onNewTask={newTask}
+          onNewTask={goToHome}
           busy={busy()}
           leftOpen={leftOpen()}
           onToggleLeft={() => setLeftOpen(!leftOpen())}
@@ -579,7 +595,10 @@ export default function App() {
             when={chatTask()}
             fallback={
               <HomeView
-                workspace={activeWorkspaceName()}
+                workspaces={workspaces()}
+                selectedWorkspacePath={homeWorkspacePath()}
+                onSelectWorkspace={selectWorkspace}
+                onSelectNewFolder={selectNewFolder}
                 availableModels={availableModels()}
                 selectedModel={selectedModel()}
                 onSelectModel={handleSelectModel}

@@ -7638,6 +7638,10 @@ button.lm-select-trigger:hover:not(:disabled) {
 }
 .home-composer__selectors .lm-select-wrapper .lm-select-label {
   font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 120px;
 }
 
 .home-composer__send {

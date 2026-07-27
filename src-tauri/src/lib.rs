@@ -46,6 +46,7 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .manage(AppState::default())
         .setup(|_app| {
             // Hand the AppHandle to the logging layer so it can emit to the
@@ -68,6 +69,7 @@ pub fn run() {
             commands::save_settings_json,
             commands::get_system_preamble,
             commands::read_directory,
+            commands::select_directory,
             commands::load_workspaces,
             commands::add_workspace,
             commands::remove_workspace,

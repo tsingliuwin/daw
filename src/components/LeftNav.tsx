@@ -24,8 +24,8 @@ export default function LeftNav(props: {
   onToggleWorkspace: (wsPath: string) => void;
   onSelectTask: (id: string) => void;
   onDeleteTask: (id: string) => void;
-  /** 在指定工作区下新建任务。 */
-  onNewTask: (wsPath: string) => void;
+  /** 新建任务：跳回首页（不预建空任务），发送内容时才真正建任务。 */
+  onNewTask: () => void;
   busy?: boolean;
   leftOpen: boolean;
   onToggleLeft: () => void;
@@ -58,17 +58,13 @@ export default function LeftNav(props: {
         </div>
       </div>
 
-      {/* 新建任务快捷按钮（常驻顶部，不依赖具体工作区展开态） */}
+      {/* 新建任务快捷按钮（常驻顶部，只跳回首页，不预建空任务） */}
       <div class="ln-quick-actions">
         <button
           class="ln-action-btn"
           title="新建任务"
-          onClick={() => {
-            // 归属第一个工作区（首启必有 DefaultProject）；后续可让用户选目标工作区。
-            const wsPath = props.workspaces[0]?.path;
-            if (wsPath) props.onNewTask(wsPath);
-          }}
-          disabled={props.busy || props.workspaces.length === 0}
+          onClick={() => props.onNewTask()}
+          disabled={props.busy}
         >
           <span class="action-icon">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -100,7 +96,7 @@ export default function LeftNav(props: {
                     <button
                       class="ln-ws-new"
                       title="新建任务"
-                      onClick={(e) => { e.stopPropagation(); props.onNewTask(ws.path); }}
+                      onClick={(e) => { e.stopPropagation(); props.onNewTask(); }}
                       disabled={props.busy}
                     >+</button>
                     <span class="ln-ws-toggle" classList={{ "ln-ws-toggle--collapsed": collapsed() }}>{collapsed() ? "▶" : "▼"}</span>

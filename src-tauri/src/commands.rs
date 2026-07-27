@@ -141,6 +141,23 @@ pub async fn load_workspaces() -> Result<Vec<Workspace>, String> {
     Ok(list)
 }
 
+/// Open a native directory picker (tauri-plugin-dialog) and return the chosen
+/// path, or `None` if the user cancelled. Used by the home screen's "选择新文件夹
+/// 作为工作区" entry to register a new workspace.
+#[tauri::command]
+pub async fn select_directory(app: tauri::AppHandle) -> Result<Option<String>, String> {
+    use tauri_plugin_dialog::DialogExt;
+    let (tx, rx) = tokio::sync::oneshot::channel::<Option<String>>();
+    app.dialog()
+        .file()
+        .set_title("选择工作区文件夹")
+        .pick_folder(move |folder| {
+            let path = folder.and_then(|f| f.into_path().ok()).map(|p| p.to_string_lossy().to_string());
+            let _ = tx.send(path);
+        });
+    rx.await.map_err(|e| format!("目录选择器通道失败: {e}"))
+}
+
 #[tauri::command]
 pub async fn add_workspace(name: String, path: String) -> Result<(), String> {
     let conn = db::get_db_conn()?;

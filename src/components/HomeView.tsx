@@ -1,7 +1,10 @@
 import { Show, createMemo, createSignal } from "solid-js";
-import type { ModelOption } from "../lib/types";
+import type { ModelOption, Workspace } from "../lib/types";
 import { logoSrc } from "../lib/theme";
 import Select from "./Select";
+
+/** 工作区下拉末尾「选择新文件夹...」项的占位 value（不会是合法路径）。 */
+const NEW_FOLDER_VALUE = "__new_folder__";
 
 /**
  * 首页/欢迎页：居中的大输入框。
@@ -12,9 +15,21 @@ import Select from "./Select";
  *
  * 复用 App 已有的模型/优先级/确认模式选择器状态：首页就能选好模型，发出去的就是
  * 选中的那个，避免进了任务页才发现模型不对。
+ *
+ * 工具栏新增「工作区」下拉（与模型/优先级/确认模式并列）：列出历史工作区 +
+ * 末尾「选择新文件夹...」入口（调后端 select_directory）。新任务归属 = 此处选中的
+ * 工作区路径（由 App 通过 selectedWorkspacePath/onSelectWorkspace/onSelectNewFolder
+ * 注入）。
  */
 export default function HomeView(props: {
-  workspace: string;
+  /** 历史工作区列表（App 注入）。 */
+  workspaces: Workspace[];
+  /** 当前首页选中的工作区 path。 */
+  selectedWorkspacePath: string;
+  /** 选择某个历史工作区时触发。 */
+  onSelectWorkspace: (path: string) => void;
+  /** 点击「选择新文件夹...」时触发（App 调 select_directory + add_workspace）。 */
+  onSelectNewFolder: () => void;
   availableModels: ModelOption[];
   selectedModel: string;
   onSelectModel: (model: string) => void;
@@ -39,6 +54,21 @@ export default function HomeView(props: {
       label: m.modelId,
     })),
   );
+
+  // 工作区选项 = 历史工作区 + 末尾「选择新文件夹...」特殊项。
+  const workspaceOptions = createMemo(() => [
+    ...props.workspaces.map((ws) => ({ value: ws.path, label: ws.name })),
+    { value: NEW_FOLDER_VALUE, label: "选择新文件夹..." },
+  ]);
+
+  // 工作区下拉变化：特殊项 → 打开目录选择器；普通项 → 切换首页选中工作区。
+  function onWorkspaceChange(value: string) {
+    if (value === NEW_FOLDER_VALUE) {
+      props.onSelectNewFolder();
+    } else {
+      props.onSelectWorkspace(value);
+    }
+  }
 
   const PRIORITY_OPTIONS = [
     { value: "均衡", label: "均衡" },
@@ -92,8 +122,14 @@ export default function HomeView(props: {
             onKeyDown={onKeydown}
           />
           <div class="home-composer__toolbar">
-            {/* 选择器区：模型 / 优先级 / 确认模式 */}
+            {/* 选择器区：工作区 / 模型 / 优先级 / 确认模式 */}
             <div class="home-composer__selectors">
+              <Select
+                width="180px"
+                value={props.selectedWorkspacePath}
+                options={workspaceOptions()}
+                onChange={onWorkspaceChange}
+              />
               <Select
                 width="200px"
                 value={props.selectedModel}
