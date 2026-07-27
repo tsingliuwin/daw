@@ -374,11 +374,15 @@ export default function SettingsPage(props: {
                         </Show>
                         <span class="provider-card__format">{prov().apiFormat}</span>
                         <span class="provider-card__spacer" />
-                        <label class="provider-enable-toggle" title="启用前需全部模型测试通过">
+                        <label
+                          class="provider-enable-toggle"
+                          title="启用前需全部模型测试通过"
+                          onClick={(e) => e.stopPropagation()}
+                        >
                           <input
                             type="checkbox"
                             checked={prov().enabled}
-                            onChange={(e) => handleToggleProviderEnabled(prov(), e.currentTarget.checked)}
+                            onChange={(e) => { e.stopPropagation(); handleToggleProviderEnabled(prov(), e.currentTarget.checked); }}
                           />
                           <span>启用</span>
                         </label>
