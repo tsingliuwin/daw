@@ -7648,6 +7648,18 @@ button.lm-select-trigger:hover:not(:disabled) {
 }
 .model-remove-btn:hover { color: var(--accent-red); background: var(--accent-red-bg); }
 
+/* 隐藏 number 输入框的浏览器默认 spinner（上下箭头），深色主题下不协调且 OA 场景
+   直接键盘输入更方便。作用于模型编辑器的上下文/最大输出输入框。 */
+input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+input[type="number"] {
+  -moz-appearance: textfield; /* Firefox */
+  appearance: textfield;
+}
+
 .new-provider-card {
   border: 1px dashed var(--border-strong);
   border-radius: var(--radius-card);
