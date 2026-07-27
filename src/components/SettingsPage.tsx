@@ -323,7 +323,7 @@ export default function SettingsPage(props: {
                 <For each={currentProviders()} fallback={<div class="empty-hint">尚未配置任何服务商，点击右上角添加。</div>}>
                   {(prov) => (
                     <div class="provider-card" classList={{ active: prov.id === selectedProvider() }}>
-                      <div class="provider-card__head" onClick={() => setSelectedProvider(prov.id)}>
+                      <div class="provider-card__head" onClick={() => setSelectedProvider(prev => prev === prov.id ? "" : prov.id)}>
                         <span class="provider-card__chevron">{prov.id === selectedProvider() ? "▼" : "▶"}</span>
                         <Show
                           when={editingProviderId() !== prov.id}
