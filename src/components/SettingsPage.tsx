@@ -233,10 +233,15 @@ export default function SettingsPage(props: {
     clearModelTests(NEW_PROVIDER_TEST_KEY);
   };
 
+  // 名称编辑刚结束的时间戳——用于阻止紧随其后的 click 冒泡到 header 触发折叠。
+  // 时序：mousedown→input 失焦(onBlur→这里设 timestamp)→mouseup→click 冒泡到 header。
+  // header onClick 检查这个时间戳，200ms 内的 click 视为编辑收尾，不折叠。
+  let nameEditClosedAt = 0;
   const handleSaveProviderName = () => {
     const val = tempName().trim();
     if (val && editingProviderId()) updateProviderProperty(editingProviderId()!, "name", val);
     setEditingProviderId(null);
+    nameEditClosedAt = Date.now();
   };
 
   // 选中 provider（如果只有一个或刚切过来）。
@@ -340,8 +345,9 @@ export default function SettingsPage(props: {
                     return (
                     <div class="provider-card" classList={{ active: prov().id === selectedProvider() }}>
                       <div class="provider-card__head" onClick={() => {
-                        // 正在编辑名称时，点击 header 不折叠（避免编辑中误触收起）
-                        if (editingProviderId()) return;
+                        // 编辑名称刚结束（onBlur 触发）后的 200ms 内，紧随的 click 冒泡
+                        // 不应折叠面板——否则点 input 外侧就会收起。
+                        if (Date.now() - nameEditClosedAt < 200) return;
                         setSelectedProvider(prev => prev === prov().id ? "" : prov().id);
                       }}>
                         <span class="provider-card__chevron">{prov().id === selectedProvider() ? "▼" : "▶"}</span>
