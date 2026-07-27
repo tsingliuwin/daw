@@ -387,19 +387,15 @@ export default function SettingsPage(props: {
                         <label
                           class="provider-enable-toggle"
                           title="启用前需全部模型测试通过"
-                          onClick={(e) => e.stopPropagation()}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            e.preventDefault();
+                            handleToggleProviderEnabled(prov(), !prov().enabled);
+                          }}
                         >
-                          <input
-                            type="checkbox"
-                            checked={prov().enabled}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              // 阻止 native checkbox 的自动切换——视觉状态完全由
-                              // checked={prov().enabled} 数据驱动，这样弹窗拦截时
-                              // checkbox 不会先翻成选中再被"撤回"。
-                              e.preventDefault();
-                              handleToggleProviderEnabled(prov(), !prov().enabled);
-                            }}
+                          <span
+                            class="provider-enable-switch"
+                            classList={{ "provider-enable-switch--on": prov().enabled }}
                           />
                           <span>启用</span>
                         </label>
