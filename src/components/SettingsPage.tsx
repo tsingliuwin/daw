@@ -392,7 +392,14 @@ export default function SettingsPage(props: {
                           <input
                             type="checkbox"
                             checked={prov().enabled}
-                            onChange={(e) => { e.stopPropagation(); handleToggleProviderEnabled(prov(), e.currentTarget.checked); }}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              // 阻止 native checkbox 的自动切换——视觉状态完全由
+                              // checked={prov().enabled} 数据驱动，这样弹窗拦截时
+                              // checkbox 不会先翻成选中再被"撤回"。
+                              e.preventDefault();
+                              handleToggleProviderEnabled(prov(), !prov().enabled);
+                            }}
                           />
                           <span>启用</span>
                         </label>
