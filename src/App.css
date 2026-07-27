@@ -7267,12 +7267,18 @@ button.lm-select-trigger:hover:not(:disabled) {
   overflow: hidden;
 }
 .settings-nav {
-  width: 200px;
+  width: 248px; /* 与主界面 LeftNav 同宽，视觉统一 */
   flex-shrink: 0;
-  padding: 16px 12px;
+  display: flex;
+  flex-direction: column;
   border-right: 1px solid var(--border-faint);
   background: var(--bg-surface);
+  overflow: hidden;
+}
+.settings-nav__items {
+  flex: 1;
   overflow-y: auto;
+  padding: 16px 12px;
 }
 .settings-nav-item {
   display: block;

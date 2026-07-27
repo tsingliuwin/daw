@@ -2,6 +2,7 @@ import { For, Show, createSignal, onMount } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
 import { logError } from "../lib/logger";
 import { currentTheme, setCurrentTheme, currentZoom, setCurrentZoom, type Theme } from "../lib/theme";
+import BrandFooter from "./BrandFooter";
 
 // ---------------------------------------------------------------------------
 // Provider / settings model. 镜像后端 settings.json 结构
@@ -235,16 +236,20 @@ export default function SettingsPage(props: {
       </div>
       <div class="settings-body">
         <nav class="settings-nav">
-          <button
-            class="settings-nav-item"
-            classList={{ active: activeTab() === "general" }}
-            onClick={() => setActiveTab("general")}
-          >通用</button>
-          <button
-            class="settings-nav-item"
-            classList={{ active: activeTab() === "modelSettings" }}
-            onClick={() => setActiveTab("modelSettings")}
-          >模型服务商</button>
+          <div class="settings-nav__items">
+            <button
+              class="settings-nav-item"
+              classList={{ active: activeTab() === "general" }}
+              onClick={() => setActiveTab("general")}
+            >通用</button>
+            <button
+              class="settings-nav-item"
+              classList={{ active: activeTab() === "modelSettings" }}
+              onClick={() => setActiveTab("modelSettings")}
+            >模型服务商</button>
+          </div>
+          {/* 共用品牌区（不带设置按钮——已经在设置页里了） */}
+          <BrandFooter />
         </nav>
 
         <main class="settings-content">
