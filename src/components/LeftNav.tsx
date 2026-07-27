@@ -1,6 +1,6 @@
 import { For, Show, createMemo } from "solid-js";
 import type { Workspace, QueryTask } from "../lib/types";
-import { logoSrc } from "../lib/theme";
+import { logoSrc, currentTheme } from "../lib/theme";
 import BrandFooter from "./BrandFooter";
 
 const isMac = typeof navigator !== "undefined" && navigator.userAgent.includes("Mac");
@@ -27,6 +27,8 @@ export default function LeftNav(props: {
   onToggleLeft: () => void;
   /** 打开设置页。底部品牌区右侧的设置按钮触发。 */
   onOpenSettings: () => void;
+  /** 快捷切换主题（深色 ↔ 浅色）。底部品牌区主题按钮触发。 */
+  onToggleTheme: () => void;
 }) {
   const currentWorkspace = createMemo(
     () => props.workspaces.find((w) => w.path === props.currentWorkspacePath) ?? props.workspaces[0],
@@ -115,7 +117,11 @@ export default function LeftNav(props: {
         </For>
       </div>
 
-      <BrandFooter onOpenSettings={props.onOpenSettings} />
+      <BrandFooter
+        onToggleTheme={props.onToggleTheme}
+        isDarkTheme={currentTheme() !== "light"}
+        onOpenSettings={props.onOpenSettings}
+      />
     </div>
   );
 }

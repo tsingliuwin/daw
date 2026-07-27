@@ -6,6 +6,7 @@ import { modelKeyOf, modelIdOfKey, providerIdOfKey } from "./lib/types";
 import { appendDelta, pushToolCall, mergeToolResult, normalizeMessage, newSegmentId } from "./lib/chat";
 import { mergeUsage } from "./lib/metrics";
 import { logsSignal, logError, installAppLogListener, clearLogsStore } from "./lib/logger";
+import { setCurrentTheme, currentTheme, type Theme } from "./lib/theme";
 import TitleBar from "./components/TitleBar";
 import LeftNav from "./components/LeftNav";
 import ChatView from "./components/ChatView";
@@ -468,6 +469,11 @@ export default function App() {
           leftOpen={leftOpen()}
           onToggleLeft={() => setLeftOpen(!leftOpen())}
           onOpenSettings={() => setSettingsOpen(true)}
+          onToggleTheme={() => {
+            // 极客深色 ↔ 浅色 二态切换。classic-dark 也归到深色侧。
+            const next: Theme = currentTheme() === "light" ? "geek-dark" : "light";
+            setCurrentTheme(next);
+          }}
         />
       </Show>
 

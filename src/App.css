@@ -1118,9 +1118,15 @@ select:hover:not(:disabled) {
   border-top: 1px solid var(--border-faint);
   display: flex;
   align-items: center;
-  justify-content: space-between; /* 品牌名居左，设置按钮居右 */
+  justify-content: space-between; /* 品牌名居左，按钮组居右 */
   background: var(--bg-surface);
   gap: 8px;
+  flex-shrink: 0;
+}
+.ln-footer-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
   flex-shrink: 0;
 }
 .ln-brand-name {
