@@ -7436,19 +7436,83 @@ button.lm-select-trigger:hover:not(:disabled) {
   padding: 14px 16px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
 }
 .provider-actions {
   display: flex;
   gap: 8px;
   margin-top: 4px;
 }
+/* 字段：纵向 label+input。--full 占满宽度，--half 配合 .provider-field-row 两列并排。 */
 .provider-field {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 5px;
+  min-width: 0;
+}
+.provider-field--full { flex: 1 1 100%; }
+.provider-field--half { flex: 1 1 0; }
+/* 两列并排容器（API Key + API 格式） */
+.provider-field-row {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
 }
 .provider-field .settings-label { min-width: 0; }
+/* 字段 label 后的小灰字提示 */
+.provider-field label {
+  font-size: 12.5px;
+  color: var(--text-secondary);
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+.provider-field__hint {
+  font-size: 11px;
+  color: var(--text-dim);
+  font-weight: 400;
+}
+/* API Key 输入框 + 眼睛切换按钮容器 */
+.provider-field__password-wrap {
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+}
+.provider-field__password-wrap .settings-input {
+  flex: 1;
+  min-width: 0;
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+.provider-field__eye-btn {
+  flex-shrink: 0;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-strong);
+  border-left: none;
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  color: var(--text-dim);
+  cursor: pointer;
+  padding: 0 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: color 0.12s, background 0.12s;
+}
+.provider-field__eye-btn:hover {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+}
+/* provider 卡片 header 左侧展开三角 */
+.provider-card__chevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 12px;
+  flex-shrink: 0;
+  color: var(--text-dim);
+  font-size: 9px;
+  transition: transform 0.15s;
+}
 .provider-enable-toggle {
   display: flex;
   align-items: center;
@@ -7476,7 +7540,7 @@ button.lm-select-trigger:hover:not(:disabled) {
 
 /* 模型编辑器（单个 provider 下的模型列表）*/
 .model-editor {
-  margin-top: 8px;
+  margin-top: 6px;
   padding: 10px 12px;
   background: var(--bg-pill-inner);
   border-radius: var(--radius-sm);
@@ -7484,9 +7548,21 @@ button.lm-select-trigger:hover:not(:disabled) {
 }
 .model-editor__row {
   display: flex;
-  gap: 8px;
+  gap: 6px;
   align-items: center;
-  margin-bottom: 8px;
+  margin-bottom: 6px;
+}
+.model-editor__row:last-of-type { margin-bottom: 0; }
+/* 模型 id 输入：占主要空间 */
+.model-id-input {
+  flex: 1;
+  min-width: 0;
+}
+/* 上下文窗口输入：收窄，固定宽度 */
+.model-ctx-input {
+  width: 90px;
+  flex-shrink: 0;
+  text-align: right;
 }
 .model-add-btn {
   background: transparent;

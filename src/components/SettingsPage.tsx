@@ -62,6 +62,9 @@ export default function SettingsPage(props: {
   const [activeTab, setActiveTab] = createSignal<SettingsTab>(props.initialTab ?? "general");
   const [settings, setSettings] = createSignal<AppSettings>({});
   const [selectedProvider, setSelectedProvider] = createSignal<string>("");
+  // API Key 显示/隐藏状态：providerKey → bool（true=明文显示）。新 provider 用 NEW_PROVIDER_TEST_KEY。
+  const [showApiKeys, setShowApiKeys] = createSignal<Record<string, boolean>>({});
+  const toggleApiKey = (key: string) => setShowApiKeys((p) => ({ ...p, [key]: !p[key] }));
 
   // ── 模型连通性测试状态：providerKey → { modelId → entry } ──
   const [modelTests, setModelTests] = createSignal<Record<string, Record<string, ModelTestEntry>>>({});
@@ -315,6 +318,7 @@ export default function SettingsPage(props: {
                   {(prov) => (
                     <div class="provider-card" classList={{ active: prov.id === selectedProvider() }}>
                       <div class="provider-card__head" onClick={() => setSelectedProvider(prov.id)}>
+                        <span class="provider-card__chevron">{prov.id === selectedProvider() ? "▼" : "▶"}</span>
                         <Show
                           when={editingProviderId() !== prov.id}
                           fallback={
@@ -347,38 +351,60 @@ export default function SettingsPage(props: {
 
                       <Show when={prov.id === selectedProvider()}>
                         <div class="provider-card__body">
-                          <div class="provider-field">
-                            <label>Base URL</label>
+                          {/* Base URL 单行 */}
+                          <div class="provider-field provider-field--full">
+                            <label>Base URL <span class="provider-field__hint">不含 /chat/completions</span></label>
                             <input
                               class="settings-input"
                               value={prov.endpoint}
-                              placeholder="https://api.example.com/v1"
+                              placeholder="https://api.openai.com/v1"
                               onInput={(e) => updateProviderProperty(prov.id, "endpoint", e.currentTarget.value)}
                             />
                           </div>
-                          <div class="provider-field">
-                            <label>API Key</label>
-                            <input
-                              class="settings-input"
-                              type="password"
-                              value={prov.apiKey}
-                              placeholder="sk-..."
-                              onInput={(e) => updateProviderProperty(prov.id, "apiKey", e.currentTarget.value)}
-                            />
-                          </div>
-                          <div class="provider-field">
-                            <label>API 格式</label>
-                            <select
-                              class="settings-select"
-                              value={prov.apiFormat}
-                              onChange={(e) => updateProviderProperty(prov.id, "apiFormat", e.currentTarget.value)}
-                            >
-                              <For each={API_FORMATS}>{(f) => <option value={f}>{f}</option>}</For>
-                            </select>
+                          {/* API Key + API 格式 两列并排 */}
+                          <div class="provider-field-row">
+                            <div class="provider-field provider-field--half">
+                              <label>API Key <span class="provider-field__hint">服务商后台获取</span></label>
+                              <div class="provider-field__password-wrap">
+                                <input
+                                  class="settings-input"
+                                  type={showApiKeys()[prov.id] ? "text" : "password"}
+                                  value={prov.apiKey}
+                                  placeholder="sk-..."
+                                  onInput={(e) => updateProviderProperty(prov.id, "apiKey", e.currentTarget.value)}
+                                />
+                                <button
+                                  class="provider-field__eye-btn"
+                                  type="button"
+                                  title={showApiKeys()[prov.id] ? "隐藏" : "显示"}
+                                  onClick={() => toggleApiKey(prov.id)}
+                                >
+                                  <Show when={showApiKeys()[prov.id]} fallback={
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:15px;height:15px">
+                                      <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>
+                                    </svg>
+                                  }>
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:15px;height:15px">
+                                      <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/>
+                                    </svg>
+                                  </Show>
+                                </button>
+                              </div>
+                            </div>
+                            <div class="provider-field provider-field--half">
+                              <label>API 格式 <span class="provider-field__hint">OpenAI 兼容选 openai</span></label>
+                              <select
+                                class="settings-select"
+                                value={prov.apiFormat}
+                                onChange={(e) => updateProviderProperty(prov.id, "apiFormat", e.currentTarget.value)}
+                              >
+                                <For each={API_FORMATS}>{(f) => <option value={f}>{f}</option>}</For>
+                              </select>
+                            </div>
                           </div>
 
-                          <div class="provider-field">
-                            <label>模型列表</label>
+                          <div class="provider-field provider-field--full">
+                            <label>模型列表 <span class="provider-field__hint">测试全绿后才能启用</span></label>
                             <ProviderModelEditor
                               models={prov.models || []}
                               testEntries={modelTests()[prov.id] || {}}
@@ -415,26 +441,41 @@ export default function SettingsPage(props: {
                     <button class="settings-danger-btn" onClick={() => { setIsAddingProvider(false); clearModelTests(NEW_PROVIDER_TEST_KEY); }}>取消</button>
                   </div>
                   <div class="provider-card__body">
-                    <div class="provider-field">
+                    <div class="provider-field provider-field--full">
                       <label>名称</label>
                       <input class="settings-input" value={newProviderName()} placeholder="例如：OpenAI 官方" onInput={(e) => setNewProviderName(e.currentTarget.value)} />
                     </div>
-                    <div class="provider-field">
-                      <label>Base URL</label>
-                      <input class="settings-input" value={newProviderEndpoint()} placeholder="https://api.example.com/v1" onInput={(e) => setNewProviderEndpoint(e.currentTarget.value)} />
+                    <div class="provider-field provider-field--full">
+                      <label>Base URL <span class="provider-field__hint">不含 /chat/completions</span></label>
+                      <input class="settings-input" value={newProviderEndpoint()} placeholder="https://api.openai.com/v1" onInput={(e) => setNewProviderEndpoint(e.currentTarget.value)} />
                     </div>
-                    <div class="provider-field">
-                      <label>API Key</label>
-                      <input class="settings-input" type="password" value={newProviderApiKey()} placeholder="sk-..." onInput={(e) => setNewProviderApiKey(e.currentTarget.value)} />
+                    <div class="provider-field-row">
+                      <div class="provider-field provider-field--half">
+                        <label>API Key <span class="provider-field__hint">服务商后台获取</span></label>
+                        <div class="provider-field__password-wrap">
+                          <input class="settings-input" type={showApiKeys()[NEW_PROVIDER_TEST_KEY] ? "text" : "password"} value={newProviderApiKey()} placeholder="sk-..." onInput={(e) => setNewProviderApiKey(e.currentTarget.value)} />
+                          <button class="provider-field__eye-btn" type="button" title={showApiKeys()[NEW_PROVIDER_TEST_KEY] ? "隐藏" : "显示"} onClick={() => toggleApiKey(NEW_PROVIDER_TEST_KEY)}>
+                            <Show when={showApiKeys()[NEW_PROVIDER_TEST_KEY]} fallback={
+                              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:15px;height:15px">
+                                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>
+                              </svg>
+                            }>
+                              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:15px;height:15px">
+                                <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/>
+                              </svg>
+                            </Show>
+                          </button>
+                        </div>
+                      </div>
+                      <div class="provider-field provider-field--half">
+                        <label>API 格式 <span class="provider-field__hint">OpenAI 兼容选 openai</span></label>
+                        <select class="settings-select" value={newProviderFormat()} onChange={(e) => setNewProviderFormat(e.currentTarget.value as ModelProvider["apiFormat"])}>
+                          <For each={API_FORMATS}>{(f) => <option value={f}>{f}</option>}</For>
+                        </select>
+                      </div>
                     </div>
-                    <div class="provider-field">
-                      <label>API 格式</label>
-                      <select class="settings-select" value={newProviderFormat()} onChange={(e) => setNewProviderFormat(e.currentTarget.value as ModelProvider["apiFormat"])}>
-                        <For each={API_FORMATS}>{(f) => <option value={f}>{f}</option>}</For>
-                      </select>
-                    </div>
-                    <div class="provider-field">
-                      <label>模型列表</label>
+                    <div class="provider-field provider-field--full">
+                      <label>模型列表 <span class="provider-field__hint">测试全绿后才能启用</span></label>
                       <ProviderModelEditor
                         models={newProviderModels()}
                         testEntries={modelTests()[NEW_PROVIDER_TEST_KEY] || {}}
@@ -489,7 +530,7 @@ function ProviderModelEditor(props: {
               <input
                 class="settings-input model-ctx-input"
                 type="number"
-                title="上下文窗口大小"
+                title="上下文窗口大小（token 数）"
                 value={m.contextWindow}
                 onInput={(e) => update(idx(), { contextWindow: parseInt(e.currentTarget.value || "0", 10) || 0 })}
               />
