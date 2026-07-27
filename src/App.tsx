@@ -1,7 +1,7 @@
-import { createSignal, Show, For, onMount, onCleanup, createEffect, createMemo } from "solid-js";
+import { createSignal, Show, For, onMount, onCleanup, createMemo } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import type { Workspace, QueryTask, ChatMessage, ModelOption } from "./lib/types";
+import type { Workspace, Task, ChatMessage, ModelOption } from "./lib/types";
 import { modelKeyOf, modelIdOfKey, providerIdOfKey } from "./lib/types";
 import { appendDelta, pushToolCall, mergeToolResult, normalizeMessage, newSegmentId } from "./lib/chat";
 import { mergeUsage } from "./lib/metrics";
@@ -17,19 +17,27 @@ import SettingsPage from "./components/SettingsPage";
  * 应用主布局与状态中枢。相比 lakemind 大幅精简：
  *   - 删除所有 SQL 编辑器、结果表、右侧 inspector、文件拖拽、HomePanel、
  *     数据树、数据库连接、import 监听、chart 段处理等。
- *   - 保留 chat 相关的状态管理与流式聚合：workspaces / currentWorkspace /
- *     tasks / activeTaskId / streamingTaskId / chatMessages / 可用模型 / 选择器。
+ *   - 保留 task 相关的状态管理与流式聚合：workspaces / tasksByWorkspace /
+ *     activeTaskId / streamingTaskId / chatMessages / 可用模型 / 选择器。
+ *
+ * 工作区与任务的关系从「单工作区下拉切换 + 平铺任务列表」改为「多工作区折叠
+ * 分组 + 懒加载」：tasksByWorkspace 按 workspace.path 分组；collapsedWs 记录
+ * 每个工作区是否折叠（localStorage 持久化 key `ws_collapsed`，默认全部展开）；
+ * loadedWs 记录已懒加载过的工作区，避免重复 load。
  *
  * 布局：TitleBar 顶部；下方水平 flex = LeftNav（可折叠）+ 主区（ChatView 占满）
  * + 可折叠的日志抽屉（BottomConsole 风格，展示 logsSignal）。
  */
 export default function App() {
-  // ── 工作区与任务 ──
+  // ── 工作区与任务（按工作区分组） ──
   const [workspaces, setWorkspaces] = createSignal<Workspace[]>([]);
-  const [currentWorkspace, setCurrentWorkspace] = createSignal<Workspace>({ name: "", path: "" });
-  const [tasks, setTasks] = createSignal<QueryTask[]>([]);
+  const [tasksByWorkspace, setTasksByWorkspace] = createSignal<Record<string, Task[]>>({});
+  const [collapsedWs, setCollapsedWs] = createSignal<Record<string, boolean>>({});
+  // 已懒加载过的工作区集合（普通 Set，不需要响应式）：首次 onMount 时全部加载，
+  // 后续 toggleWorkspace 触发的懒加载据此去重。
+  const loadedWs = new Set<string>();
   const [activeTaskId, setActiveTaskId] = createSignal<string | null>(null);
-  // 当前正在流式输出的对话任务 id。start_agent_chat 是 fire-and-forget
+  // 当前正在流式输出的任务 id。start_agent_task 是 fire-and-forget
   // （tokio::spawn 后立即返回），真正的流式通过 agent-event 异步回来，
   // streamingTaskId 用于在流式期间锁定输入、显示 Stop 按钮。
   const [streamingTaskId, setStreamingTaskId] = createSignal<string | null>(null);
@@ -47,19 +55,47 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = createSignal<boolean>(false);
   const [busy, setBusy] = createSignal<boolean>(false);
 
+  // 在 tasksByWorkspace 中查找 taskId 所属的工作区路径（不存在返回 null）。
+  function findTaskWorkspace(taskId: string): string | null {
+    const all = tasksByWorkspace();
+    for (const [wsPath, arr] of Object.entries(all)) {
+      if (arr.some((t) => t.id === taskId)) return wsPath;
+    }
+    return null;
+  }
+
   const activeTask = createMemo(() => {
     const id = activeTaskId();
     if (!id) return null;
-    return tasks().find((t) => t.id === id) ?? null;
+    for (const arr of Object.values(tasksByWorkspace())) {
+      const found = arr.find((t) => t.id === id);
+      if (found) return found;
+    }
+    return null;
   });
 
-  // 「已进入对话流」的判定：选中的 task 必须存在且有至少一条消息。
-  // 满足时主区渲染 ChatView；否则渲染 HomeView 欢迎页（首次进入、点了「新建对话」
-  // 但还没发消息、删光所有对话等情况都会落到 HomeView）。
+  // 「已进入任务流」的判定：选中的 task 必须存在且有至少一条消息。
+  // 满足时主区渲染 ChatView；否则渲染 HomeView 欢迎页（首次进入、点了「新建任务」
+  // 但还没发消息、删光所有任务等情况都会落到 HomeView）。
   const chatTask = createMemo(() => {
     const t = activeTask();
     if (!t) return null;
     return (t.messages?.length ?? 0) > 0 ? t : null;
+  });
+
+  // 当前任务所在工作区的展示名（用于 HomeView / ChatView 的 workspace prop）。
+  // activeTask 为空时退回第一个工作区名。
+  const activeWorkspaceName = createMemo(() => {
+    const t = activeTask();
+    if (t) {
+      const wsPath = findTaskWorkspace(t.id);
+      if (wsPath) {
+        const ws = workspaces().find((w) => w.path === wsPath);
+        if (ws) return ws.name || ws.path;
+      }
+    }
+    const first = workspaces()[0];
+    return first ? first.name || first.path : "";
   });
 
   // 加载 settings.json → 收集所有 enabled provider 下的模型为可选项。
@@ -106,34 +142,69 @@ export default function App() {
     }
   }
 
-  // 持久化一个 chat task 到后端（messages + modelId + tokenUsage）。
-  async function saveChatTaskBackend(taskId: string, name: string, messages: ChatMessage[]) {
+  // 懒加载某个工作区的任务列表（已加载过则跳过）。结果按 createdAt 倒序。
+  async function loadWorkspaceTasks(wsPath: string) {
+    if (loadedWs.has(wsPath)) return;
+    loadedWs.add(wsPath);
     try {
-      const task = tasks().find((t) => t.id === taskId);
-      const modelId = task?.modelId || null;
-      const tokenUsage = task?.tokenUsage ?? null;
-      await invoke("save_chat_task", {
-        workspacePath: currentWorkspace().path,
-        taskId,
-        name,
-        messages,
-        modelId,
-        tokenUsage,
+      const loadedTasks = await invoke<Task[]>("load_workspace_tasks", { workspacePath: wsPath });
+      // 归一化历史消息（兼容简单的 content 形态）。
+      const migrated = loadedTasks
+        .map((t) =>
+          Array.isArray(t.messages)
+            ? { ...t, messages: t.messages.map((m) => normalizeMessage(m)) }
+            : t,
+        )
+        .sort((a, b) => b.createdAt - a.createdAt);
+      setTasksByWorkspace((prev) => ({ ...prev, [wsPath]: migrated }));
+    } catch (err) {
+      logError("ui", "Failed to load workspace tasks", err);
+    }
+  }
+
+  // 持久化一个 task 到后端（messages + modelId + tokenUsage）。
+  // workspacePath 由调用方传入（task 所在工作区）。
+  async function saveTaskBackend(task: Task, workspacePath: string) {
+    try {
+      await invoke("save_task", {
+        workspacePath,
+        taskId: task.id,
+        name: task.name,
+        messages: task.messages ?? [],
+        modelId: task.modelId || null,
+        tokenUsage: task.tokenUsage ?? null,
       });
     } catch (err) {
-      logError("agent", "Failed to save chat task to backend", err);
+      logError("agent", "Failed to save task to backend", err);
     }
   }
 
   onMount(async () => {
+    // 恢复工作区折叠态（localStorage）。
+    try {
+      const saved = localStorage.getItem("ws_collapsed");
+      if (saved) setCollapsedWs(JSON.parse(saved));
+    } catch { /* best-effort */ }
+
     // 安装 agent-event 监听器：聚合 reasoning/text/tool_call/tool_result/usage/
     // done/error 流进当前 assistant 消息的 segments。
     const unlistenAgent = await listen<any>("agent-event", (event) => {
       const payload = event.payload;
       const targetId = payload.taskId;
 
-      setTasks((prev) =>
-        prev.map((t) => {
+      setTasksByWorkspace((prev) => {
+        // 找到 targetId 所在的工作区，找不到则 no-op。
+        let targetWs: string | null = null;
+        for (const [p, arr] of Object.entries(prev)) {
+          if (arr.some((t) => t.id === targetId)) {
+            targetWs = p;
+            break;
+          }
+        }
+        if (targetWs === null) return prev;
+        const wsPath = targetWs;
+        const oldArr = prev[wsPath] ?? [];
+        const newArr = oldArr.map((t) => {
           if (t.id !== targetId) return t;
 
           let messages = [...(t.messages ?? [])];
@@ -151,6 +222,7 @@ export default function App() {
 
           let segments = lastMsg.segments ? [...lastMsg.segments] : [];
           const kind = payload.kind as string;
+          let updated: Task = t;
 
           if (kind === "text") {
             segments = appendDelta(segments, "text", payload.text ?? "");
@@ -174,7 +246,7 @@ export default function App() {
             // 通过 mergeUsage 把 usage 事件折叠进 task 的持久化 TokenUsage。
             try {
               const evt = JSON.parse(payload.text);
-              t = { ...t, tokenUsage: mergeUsage(t.tokenUsage ?? null, evt) };
+              updated = { ...updated, tokenUsage: mergeUsage(updated.tokenUsage ?? null, evt) };
             } catch { /* ignore parse error */ }
           } else if (kind === "error") {
             segments = [
@@ -195,12 +267,16 @@ export default function App() {
                 messages[messages.length - 1] = { ...lastMsg, segments };
               }
             }
-            void saveChatTaskBackend(targetId, t.name, messages);
           }
 
-          return { ...t, messages };
-        }),
-      );
+          const finalTask: Task = { ...updated, messages };
+          if (kind === "done" || kind === "error") {
+            void saveTaskBackend(finalTask, wsPath);
+          }
+          return finalTask;
+        });
+        return { ...prev, [wsPath]: newArr };
+      });
 
       // 流式结束（成功或出错）：清除执行状态，解除输入锁定。
       if (payload.kind === "done" || payload.kind === "error") {
@@ -208,25 +284,43 @@ export default function App() {
       }
     });
 
-    // 加载工作区列表，优先恢复上次使用的工作区。
+    // 加载工作区列表，并为每个工作区加载任务（首次全部加载，简单可靠）。
+    setBusy(true);
     try {
       const list = await invoke<Workspace[]>("load_workspaces");
       if (list && list.length > 0) {
         setWorkspaces(list);
+        await Promise.all(list.map((w) => loadWorkspaceTasks(w.path)));
+
+        // 恢复 workspace.last：只用于决定初始 activeTaskId（选 last 工作区下
+        // 最新的任务；该工作区默认全部展开，无需单独处理展开态）。
         let last: string | null = null;
         try {
           last = await invoke<string | null>("get_app_config", { key: "workspace.last" });
         } catch { /* best-effort */ }
-        const defaultWS =
+        const lastWs =
           (last && list.find((w) => w.path === last)) ||
           list.find((w) => w.path === "DefaultProject") ||
           list[0];
-        if (currentWorkspace().path !== defaultWS.path) {
-          changeWorkspace(defaultWS);
+
+        const lastArr = tasksByWorkspace()[lastWs.path] ?? [];
+        if (lastArr.length > 0) {
+          setActiveTaskId(lastArr[0].id); // 已按 createdAt 倒序，第 0 条即最新
+        } else {
+          // last 工作区无任务：在所有工作区中找第一个有任务的，否则保持 null。
+          for (const w of list) {
+            const arr = tasksByWorkspace()[w.path] ?? [];
+            if (arr.length > 0) {
+              setActiveTaskId(arr[0].id);
+              break;
+            }
+          }
         }
       }
     } catch (err) {
       logError("ui", "Failed to load workspaces", err);
+    } finally {
+      setBusy(false);
     }
 
     await loadModelsFromSettings();
@@ -239,51 +333,14 @@ export default function App() {
     });
   });
 
-  // 跟踪 workspace 切换：加载该 workspace 的任务列表。
-  createEffect(async () => {
-    const ws = currentWorkspace();
-    if (!ws || !ws.path) return;
-    setBusy(true);
-    try {
-      const loadedTasks = await invoke<QueryTask[]>("load_workspace_tasks", { workspacePath: ws.path });
-      if (currentWorkspace().path !== ws.path) return;
-      // 归一化历史消息（兼容简单的 content 形态）。
-      const migrated = loadedTasks
-        .map((t) =>
-          Array.isArray(t.messages)
-            ? { ...t, messages: t.messages.map((m) => normalizeMessage(m)) }
-            : t,
-        )
-        .sort((a, b) => b.createdAt - a.createdAt);
-      setTasks(migrated);
-
-      if (migrated.length > 0) {
-        const activeId = activeTaskId();
-        if (activeId && migrated.some((t) => t.id === activeId)) {
-          // 保留当前选中
-        } else {
-          setActiveTaskId(migrated[0].id);
-        }
-      } else {
-        // 该工作区没有任何对话：activeTaskId 保持 null，主区渲染 HomeView 欢迎页。
-        // 用户在首页发出第一条消息时再新建 task（submitFromHome），避免预生成一堆
-        // 空对话污染左侧列表。
-        setActiveTaskId(null);
-      }
-    } catch (err) {
-      logError("ui", "Failed to load workspace tasks", err);
-    } finally {
-      setBusy(false);
-    }
-  });
-
-  function changeWorkspace(ws: Workspace) {
-    setCurrentWorkspace(ws);
-    setTasks([]);
-    setActiveTaskId(null);
-    setStreamingTaskId(null);
-    invoke("set_app_config", { key: "workspace.last", value: ws.path }).catch((err: unknown) => {
-      logError("ui", "Failed to persist workspace.last", err);
+  // 切换某工作区折叠态 + 持久化到 localStorage。
+  function toggleWorkspace(wsPath: string) {
+    setCollapsedWs((prev) => {
+      const next = { ...prev, [wsPath]: !prev[wsPath] };
+      try {
+        localStorage.setItem("ws_collapsed", JSON.stringify(next));
+      } catch { /* best-effort */ }
+      return next;
     });
   }
 
@@ -291,31 +348,44 @@ export default function App() {
     setActiveTaskId(id);
   }
 
-  // 新建对话：生成 uuid，加入 tasks 列表，选中。
-  function newChat() {
+  // 在指定工作区下新建空任务：生成 uuid、加入 tasksByWorkspace、自动展开该工作区、选中。
+  function newTask(wsPath: string) {
     const id = `task-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-    const newTask: QueryTask = {
+    const newT: Task = {
       id,
-      name: "新对话",
+      name: "新任务",
       createdAt: Date.now(),
       messages: [],
       saved: false,
       modelId: selectedModel() || undefined,
     };
-    setTasks((prev) => [newTask, ...prev]);
+    setTasksByWorkspace((prev) => ({
+      ...prev,
+      [wsPath]: [newT, ...(prev[wsPath] ?? [])],
+    }));
+    // 自动展开该工作区（若已展开则不变）。
+    setCollapsedWs((prev) => (prev[wsPath] ? { ...prev, [wsPath]: false } : prev));
     setActiveTaskId(id);
   }
 
   async function deleteTask(id: string) {
-    const remaining = tasks().filter((t) => t.id !== id);
-    setTasks(remaining);
+    const wsPath = findTaskWorkspace(id);
+    if (!wsPath) return;
+    const arr = tasksByWorkspace()[wsPath] ?? [];
+    const remaining = arr.filter((t) => t.id !== id);
+    setTasksByWorkspace((prev) => ({
+      ...prev,
+      [wsPath]: remaining,
+    }));
     if (activeTaskId() === id) {
       if (remaining.length > 0) {
-        // 选中相邻的下一个（或上一个）对话，优先有内容的。
-        const visible = remaining.filter((t) => (t.messages?.length ?? 0) > 0).sort((a, b) => b.createdAt - a.createdAt);
+        // 选中相邻的下一个任务，优先有内容的。
+        const visible = remaining
+          .filter((t) => (t.messages?.length ?? 0) > 0)
+          .sort((a, b) => b.createdAt - a.createdAt);
         setActiveTaskId(visible.length > 0 ? visible[0].id : remaining[0].id);
       } else {
-        // 最后一个对话也被删了：回到首页（HomeView），让用户重新开始。
+        // 该工作区最后一个任务也被删了：回到首页（HomeView），让用户重新开始。
         setActiveTaskId(null);
       }
     }
@@ -326,23 +396,26 @@ export default function App() {
     }
   }
 
-  // 首页发送：若当前已选中一个空对话（点「新建对话」后回到首页的情况）就复用它，
-  // 否则新建一个，然后立即发送第一条消息。
-  function submitFromHome(prompt: string) {
+  // 首页发送：若当前已选中一个空任务（点「新建任务」后回到首页的情况）就复用它，
+  // 否则在 activeTask 所在工作区（或第一个工作区）新建一个，然后立即发送第一条消息。
+  function submitTaskFromHome(prompt: string) {
     if (availableModels().length === 0) {
       alert("请先在设置中配置并启用大模型服务商及模型。");
       setSettingsOpen(true);
       return;
     }
-    // 复用当前选中的空对话（有 id 但无消息），避免连续「新建」堆出多个空对话。
+    // 复用当前选中的空任务（有 id 但无消息），避免连续「新建」堆出多个空任务。
     const cur = activeTask();
     if (cur && (cur.messages?.length ?? 0) === 0) {
-      void sendChatMessage(prompt);
+      void sendTaskMessage(prompt);
       return;
     }
+    const wsPath =
+      (cur && findTaskWorkspace(cur.id)) || workspaces()[0]?.path;
+    if (!wsPath) return;
     const id = `task-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-    const name = prompt.trim().replace(/\n/g, " ").slice(0, 40) || "新对话";
-    const newTask: QueryTask = {
+    const name = prompt.trim().replace(/\n/g, " ").slice(0, 40) || "新任务";
+    const newT: Task = {
       id,
       name,
       createdAt: Date.now(),
@@ -350,17 +423,23 @@ export default function App() {
       saved: false,
       modelId: selectedModel() || undefined,
     };
-    setTasks((prev) => [newTask, ...prev]);
+    setTasksByWorkspace((prev) => ({
+      ...prev,
+      [wsPath]: [newT, ...(prev[wsPath] ?? [])],
+    }));
+    setCollapsedWs((prev) => (prev[wsPath] ? { ...prev, [wsPath]: false } : prev));
     setActiveTaskId(id);
-    // 切到 ChatView 后再发送（sendChatMessage 依赖 activeTaskId 已就绪）。
-    void sendChatMessage(prompt);
+    // 切到 ChatView 后再发送（sendTaskMessage 依赖 activeTaskId 已就绪）。
+    void sendTaskMessage(prompt);
   }
 
   // ChatView 发送消息：追加 user 消息 → 触发后端 agent 循环。
-  async function sendChatMessage(prompt: string) {
+  async function sendTaskMessage(prompt: string) {
     const id = activeTaskId();
     if (!id) return;
-    const task = tasks().find((t) => t.id === id);
+    const wsPath = findTaskWorkspace(id);
+    if (!wsPath) return;
+    const task = tasksByWorkspace()[wsPath]?.find((t) => t.id === id);
     if (!task) return;
 
     if (availableModels().length === 0) {
@@ -369,8 +448,8 @@ export default function App() {
       return;
     }
 
-    // 第一条用户消息 → 作为对话标题。
-    const newName = (!task.name || task.name === "新对话") && prompt.trim()
+    // 第一条用户消息 → 作为任务标题。
+    const newName = (!task.name || task.name === "新任务") && prompt.trim()
       ? prompt.trim().replace(/\n/g, " ").slice(0, 40)
       : task.name;
 
@@ -382,10 +461,12 @@ export default function App() {
     };
 
     const updatedMessages = [...(task.messages ?? []), userMsg];
-    setTasks((prev) =>
-      prev.map((t) => (t.id === id ? { ...t, name: newName, messages: updatedMessages } : t)),
-    );
-    await saveChatTaskBackend(id, newName, updatedMessages);
+    const updatedTask = { ...task, name: newName, messages: updatedMessages };
+    setTasksByWorkspace((prev) => ({
+      ...prev,
+      [wsPath]: (prev[wsPath] ?? []).map((t) => (t.id === id ? updatedTask : t)),
+    }));
+    await saveTaskBackend(updatedTask, wsPath);
 
     try {
       setStreamingTaskId(id);
@@ -393,7 +474,7 @@ export default function App() {
       const historyToSend = task.messages ?? [];
       const historyJson = JSON.stringify(historyToSend);
 
-      await invoke("start_agent_chat", {
+      await invoke("start_agent_task", {
         taskId: id,
         modelId: modelIdOfKey(activeModel),
         providerId: providerIdOfKey(activeModel),
@@ -403,27 +484,30 @@ export default function App() {
         confirmMode: selectedConfirm(),
       });
     } catch (err) {
-      logError("agent", "Failed to start agent chat", err);
+      logError("agent", "Failed to start agent task", err);
       setStreamingTaskId(null);
       const errorMsg: ChatMessage = {
         id: `msg-err-${Date.now()}`,
         role: "assistant",
-        segments: [{ type: "text", id: newSegmentId("txt"), text: `⚠️ **无法启动对话**: ${err}` }],
+        segments: [{ type: "text", id: newSegmentId("txt"), text: `⚠️ **无法启动任务**: ${err}` }],
         ts: Date.now(),
       };
-      setTasks((prev) =>
-        prev.map((t) => (t.id === id ? { ...t, messages: [...updatedMessages, errorMsg] } : t)),
-      );
+      setTasksByWorkspace((prev) => ({
+        ...prev,
+        [wsPath]: (prev[wsPath] ?? []).map((t) =>
+          t.id === id ? { ...t, messages: [...updatedMessages, errorMsg] } : t,
+        ),
+      }));
     }
   }
 
   // 中止当前流式输出。
-  async function stopChat(taskId: string) {
+  async function stopTask(taskId: string) {
     try {
-      await invoke("abort_chat", { taskId });
+      await invoke("abort_task", { taskId });
       setStreamingTaskId(null);
     } catch (err) {
-      logError("agent", "Failed to abort chat", err);
+      logError("agent", "Failed to abort task", err);
     }
   }
 
@@ -442,7 +526,13 @@ export default function App() {
     localStorage.setItem("default_model", key);
     const id = activeTaskId();
     if (id) {
-      setTasks((prev) => prev.map((t) => (t.id === id ? { ...t, modelId: key } : t)));
+      const wsPath = findTaskWorkspace(id);
+      if (wsPath) {
+        setTasksByWorkspace((prev) => ({
+          ...prev,
+          [wsPath]: (prev[wsPath] ?? []).map((t) => (t.id === id ? { ...t, modelId: key } : t)),
+        }));
+      }
     }
   }
 
@@ -455,16 +545,13 @@ export default function App() {
       <Show when={leftOpen()}>
         <LeftNav
           workspaces={workspaces()}
-          currentWorkspacePath={currentWorkspace().path}
-          onSelectWorkspace={(path) => {
-            const ws = workspaces().find((w) => w.path === path);
-            if (ws) changeWorkspace(ws);
-          }}
-          tasks={tasks()}
-          selectedTaskId={activeTaskId() ?? undefined}
+          tasksByWorkspace={tasksByWorkspace()}
+          collapsedWs={collapsedWs()}
+          activeTaskId={activeTaskId() ?? undefined}
+          onToggleWorkspace={toggleWorkspace}
           onSelectTask={selectTask}
           onDeleteTask={deleteTask}
-          onNewChat={newChat}
+          onNewTask={newTask}
           busy={busy()}
           leftOpen={leftOpen()}
           onToggleLeft={() => setLeftOpen(!leftOpen())}
@@ -492,7 +579,7 @@ export default function App() {
             when={chatTask()}
             fallback={
               <HomeView
-                workspace={currentWorkspace().name || currentWorkspace().path}
+                workspace={activeWorkspaceName()}
                 availableModels={availableModels()}
                 selectedModel={selectedModel()}
                 onSelectModel={handleSelectModel}
@@ -500,7 +587,7 @@ export default function App() {
                 onSelectPriority={setSelectedPriority}
                 selectedConfirm={selectedConfirm()}
                 onSelectConfirm={setSelectedConfirm}
-                onSubmit={submitFromHome}
+                onSubmit={submitTaskFromHome}
                 onOpenSettings={() => setSettingsOpen(true)}
               />
             }
@@ -509,10 +596,10 @@ export default function App() {
               <ChatView
                 taskId={task().id}
                 messages={activeMessages()}
-                workspace={currentWorkspace().name || currentWorkspace().path}
+                workspace={activeWorkspaceName()}
                 taskName={task().name}
-                onSend={sendChatMessage}
-                onStop={() => stopChat(task().id)}
+                onSend={sendTaskMessage}
+                onStop={() => stopTask(task().id)}
                 tokenUsage={task().tokenUsage ?? null}
                 contextWindow={modelCtxWindows()[task().modelId ?? selectedModel()] ?? 128000}
                 onDelete={() => deleteTask(task().id)}

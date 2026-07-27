@@ -290,7 +290,7 @@ fn civil_from_days(z: i64) -> (i64, u32, u32) {
     (if m <= 2 { y + 1 } else { y }, m as u32, d as u32)
 }
 
-pub(crate) async fn run_agent_chat_stream(
+pub(crate) async fn run_agent_task_stream(
     window: tauri::Window,
     task_id: String,
     model_id: String,

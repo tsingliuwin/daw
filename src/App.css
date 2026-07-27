@@ -7685,5 +7685,83 @@ button.lm-select-trigger:hover:not(:disabled) {
 }
 
 
+/* ===========================================================================
+   LeftNav 工作区折叠分组（多工作区可见 + 可折叠）
+   =========================================================================== */
+.ln-workspace-group {
+  display: flex;
+  flex-direction: column;
+  border-bottom: 1px solid var(--border-faint);
+}
+.ln-workspace-group:last-child {
+  border-bottom: none;
+}
+
+/* 工作区 header：三角 + 工作区名 + 右侧新建按钮 */
+.ln-ws-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  cursor: pointer;
+  user-select: none;
+  color: var(--text-secondary);
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+  transition: background 0.12s, color 0.12s;
+}
+.ln-ws-header:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+/* ▶/▼ 折叠三角 */
+.ln-ws-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  color: var(--text-dim);
+  transition: transform 0.15s;
+}
+.ln-ws-toggle--collapsed {
+  transform: rotate(-90deg);
+}
+
+/* 工作区名 */
+.ln-ws-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 工作区右侧「+」新建任务按钮 */
+.ln-ws-new {
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 3px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity 0.12s, color 0.12s, background 0.12s;
+}
+.ln-workspace-group:hover .ln-ws-new {
+  opacity: 1;
+}
+.ln-ws-new:hover {
+  color: var(--accent-blue);
+  background: rgba(59, 130, 246, 0.12);
+}
 
 

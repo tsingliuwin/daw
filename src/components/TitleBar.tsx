@@ -183,7 +183,7 @@ export default function TitleBar(props: {
             <div class="modal-body">
               <div class="about-logo"><img src={logoSrc()} alt="AI OA" style="width: 48px; height: 48px; object-fit: contain;" /></div>
               <h4>AI OA</h4>
-              <p class="about-desc">用对话完成请假、报销、审批等企业办公流程。</p>
+              <p class="about-desc">用任务完成请假、报销、审批等企业办公流程。</p>
               <div class="about-specs">
                 <div class="spec-row"><span>版本</span><strong>{appVersion()}</strong></div>
                 <div class="spec-row"><span>环境</span><strong>Tauri Webview Backend</strong></div>

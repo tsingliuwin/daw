@@ -13,7 +13,7 @@ const asText = (s: Segment): TextSeg | null => (s.type === "text" ? s : null);
 const asError = (s: Segment): ErrorSeg | null => (s.type === "error" ? s : null);
 
 /**
- * 对话模式主区：消息流（上）+ 段内嵌 + 底部常驻输入框。
+ * 任务模式主区：消息流（上）+ 段内嵌 + 底部常驻输入框。
  *
  * 相比 lakemind：
  *  - 去掉 onOpenInSqlPanel / onAddFile / onAddFolder 等 prop 及对应 UI。
@@ -45,7 +45,7 @@ export default function ChatView(props: {
   onSelectConfirm: (mode: string) => void;
   /** 用户对 awaiting 状态的工具做出确认/取消决定。 */
   onConfirmTool: (toolCallId: string, approved: boolean) => void;
-  /** 该对话是否正在流式输出（由父级 streamingTaskId 派生）。 */
+  /** 该任务是否正在流式输出（由父级 streamingTaskId 派生）。 */
   streaming: boolean;
 }) {
   const [modelDropdownOpen, setModelDropdownOpen] = createSignal(false);
@@ -129,7 +129,7 @@ export default function ChatView(props: {
         if (ts) return ts.text.trim().replace(/\n/g, " ");
       }
     }
-    return props.taskName || "对话";
+    return props.taskName || "任务";
   });
 
   // 流式输出状态：发送瞬间的本地 busy 与父级 streaming 合成。
@@ -305,7 +305,7 @@ export default function ChatView(props: {
   });
   onCleanup(() => stopScrollLock());
 
-  // 切换对话时重置折叠状态。
+  // 切换任务时重置折叠状态。
   let prevTaskId: string | undefined;
   createEffect(() => {
     const currentId = props.taskId;
@@ -434,7 +434,7 @@ export default function ChatView(props: {
           fallback={
             <button
               class="header-close-btn"
-              title="删除该对话"
+              title="删除该任务"
               onClick={() => {
                 if (props.messages.length > 0) setShowConfirm(true);
                 else props.onDelete?.();
@@ -480,7 +480,7 @@ export default function ChatView(props: {
 
           <Show
             when={props.messages.length > 0}
-            fallback={<div class="chat-empty">开始对话，用自然语言完成请假、报销、审批等办公流程。</div>}
+            fallback={<div class="chat-empty">开始任务，用自然语言完成请假、报销、审批等办公流程。</div>}
           >
             <Index each={props.messages}>
               {(msg) => (

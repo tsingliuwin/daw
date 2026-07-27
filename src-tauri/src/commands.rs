@@ -184,7 +184,7 @@ pub async fn remove_workspace(path: String) -> Result<(), String> {
 // ===========================================================================
 
 #[derive(serde::Serialize, serde::Deserialize)]
-pub struct ChatTask {
+pub struct Task {
     pub id: String,
     pub name: String,
     #[serde(rename = "createdAt")]
@@ -198,8 +198,8 @@ pub struct ChatTask {
 }
 
 #[tauri::command]
-pub async fn load_workspace_tasks(workspace_path: String) -> Result<Vec<ChatTask>, String> {
-    tauri::async_runtime::spawn_blocking(move || -> Result<Vec<ChatTask>, String> {
+pub async fn load_workspace_tasks(workspace_path: String) -> Result<Vec<Task>, String> {
+    tauri::async_runtime::spawn_blocking(move || -> Result<Vec<Task>, String> {
         let conn = db::get_db_conn()?;
         let mut stmt = conn
             .prepare("SELECT id, name, created_at, saved, model_id, token_usage FROM tasks WHERE workspace_path = ? ORDER BY created_at ASC")
@@ -229,7 +229,7 @@ pub async fn load_workspace_tasks(workspace_path: String) -> Result<Vec<ChatTask
                 }
                 let token_usage = token_usage_json
                     .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok());
-                tasks.push(ChatTask {
+                tasks.push(Task {
                     id,
                     name,
                     created_at,
@@ -247,7 +247,7 @@ pub async fn load_workspace_tasks(workspace_path: String) -> Result<Vec<ChatTask
 }
 
 #[tauri::command]
-pub async fn save_chat_task(
+pub async fn save_task(
     workspace_path: String,
     task_id: String,
     name: String,
@@ -260,7 +260,7 @@ pub async fn save_chat_task(
     let usage_json = token_usage.map(|v| serde_json::to_string(&v).unwrap_or_default());
     conn.execute(
         "INSERT OR REPLACE INTO tasks (id, workspace_path, name, kind, created_at, saved, model_id, token_usage)
-         VALUES (?, ?, ?, 'chat', COALESCE((SELECT created_at FROM tasks WHERE id = ?), ?), 1, ?, ?)",
+         VALUES (?, ?, ?, 'task', COALESCE((SELECT created_at FROM tasks WHERE id = ?), ?), 1, ?, ?)",
         rusqlite::params![task_id, workspace_path, name, task_id, now, model_id, usage_json],
     )
     .map_err(|e| e.to_string())?;
@@ -320,7 +320,7 @@ pub async fn clear_logs(before: Option<i64>) -> Result<(), String> {
 // ===========================================================================
 
 #[tauri::command]
-pub async fn start_agent_chat(
+pub async fn start_agent_task(
     window: tauri::Window,
     task_id: String,
     model_id: String,
@@ -335,7 +335,7 @@ pub async fn start_agent_chat(
     let priority = priority.unwrap_or_else(|| "均衡".to_string());
     let confirm_mode = confirm_mode.unwrap_or_else(|| "变更前确认".to_string());
     tokio::spawn(async move {
-        if let Err(e) = crate::agent::run_agent_chat_stream(
+        if let Err(e) = crate::agent::run_agent_task_stream(
             window.clone(),
             task_id.clone(),
             model_id,
@@ -390,7 +390,7 @@ pub async fn resolve_tool_confirmation(
 /// Abort a running agent chat stream. Sets the abort flag so `run_stream_loop`
 /// stops on the next iteration and emits "done" to unlock the frontend.
 #[tauri::command]
-pub async fn abort_chat(task_id: String, state: tauri::State<'_, AppState>) -> Result<(), String> {
+pub async fn abort_task(task_id: String, state: tauri::State<'_, AppState>) -> Result<(), String> {
     let mut aborted = state.aborted_tasks.lock().await;
     aborted.insert(task_id);
     Ok(())

@@ -32,5 +32,5 @@ mod wire;
 pub(crate) use config::first_enabled_model;
 #[allow(unused_imports)]
 pub(crate) use llm::{complete_one_shot, test_connection};
-pub(crate) use runner::run_agent_chat_stream;
+pub(crate) use runner::run_agent_task_stream;
 pub(crate) use wire::AgentStreamEvent;

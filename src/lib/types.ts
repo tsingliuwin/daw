@@ -147,21 +147,21 @@ export interface TokenUsage {
 }
 
 /**
- * 一个对话任务。相比 lakemind 的 QueryTask：去掉 sql 字段，去掉 kind 字段
- * （aioa 任务统一为 chat），概念上等价于 ChatTask 但保留 QueryTask 类型名
- * 以减少迁移改动。后端 ChatTask 结构对应。
+ * 一个 OA 任务（用户通过对话发起的一次办公流程，如请假/报销/审批）。
+ * 相比 lakemind 去掉了 sql/kind 字段——aioa 统一为「任务」语义。后端
+ * `commands::Task` 结构对应（serde camelCase，wire 格式一致）。
  */
-export interface QueryTask {
+export interface Task {
   id: string;
   name: string;
   createdAt: number;
-  /** 对话消息历史。 */
+  /** 任务的消息历史（assistant + user 交替）。 */
   messages?: ChatMessage[];
   /** 是否已保存。 */
   saved?: boolean;
   /** 使用的模型 ID（复合键 providerId:modelId）。 */
   modelId?: string;
-  /** 累计 token 用量（持久化，伴随对话全生命周期）。 */
+  /** 累计 token 用量（持久化，伴随任务全生命周期）。 */
   tokenUsage?: TokenUsage;
 }
 

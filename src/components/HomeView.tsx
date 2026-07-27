@@ -6,12 +6,12 @@ import Select from "./Select";
 /**
  * 首页/欢迎页：居中的大输入框。
  *
- * 与 ChatView 的区别：ChatView 是已进入某个对话后的「消息流 + 底部常驻输入框」；
- * HomeView 是用户还没发起任何对话时的着陆页——一个居中的、占视觉重心的输入框，
- * 用户在这里敲下第一条消息后才正式进入对话流（App 据此新建 task 并切到 ChatView）。
+ * 与 ChatView 的区别：ChatView 是已进入某个任务后的「消息流 + 底部常驻输入框」；
+ * HomeView 是用户还没发起任何任务时的着陆页——一个居中的、占视觉重心的输入框，
+ * 用户在这里敲下第一条消息后才正式进入任务流（App 据此新建 task 并切到 ChatView）。
  *
  * 复用 App 已有的模型/优先级/确认模式选择器状态：首页就能选好模型，发出去的就是
- * 选中的那个，避免进了对话页才发现模型不对。
+ * 选中的那个，避免进了任务页才发现模型不对。
  */
 export default function HomeView(props: {
   workspace: string;
@@ -73,7 +73,7 @@ export default function HomeView(props: {
           <img src={logoSrc()} alt="AI OA" class="home-view__logo" />
           <h1 class="home-view__title">AI OA</h1>
           <p class="home-view__subtitle">
-            用对话完成请假、报销、审批——不必再翻系统、填表单。
+            用任务完成请假、报销、审批——不必再翻系统、填表单。
           </p>
         </div>
 

@@ -72,14 +72,14 @@ pub fn run() {
             commands::add_workspace,
             commands::remove_workspace,
             commands::load_workspace_tasks,
-            commands::save_chat_task,
+            commands::save_task,
             commands::delete_task,
             commands::append_log,
             commands::query_logs,
             commands::clear_logs,
-            commands::start_agent_chat,
+            commands::start_agent_task,
             commands::resolve_tool_confirmation,
-            commands::abort_chat,
+            commands::abort_task,
             commands::test_llm_connection,
         ])
         .run(tauri::generate_context!())
