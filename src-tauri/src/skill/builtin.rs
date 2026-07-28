@@ -1,20 +1,27 @@
+//! 基座内置工具——不属于任何 skill，所有 skill 都能用的通用能力。
+//!
+//! 当前：get_current_time（解析相对时间）。工具实例在 runner 的 build_tools 里
+//! 用具体类型构造（rig Tool trait 非 dyn-compatible，无法 Box<dyn Tool>）。
+//! 这个模块只放工具的结构体定义和 impl。
+
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use rig_core::{completion::ToolDefinition, tool::Tool};
 
-use super::super::error::ToolError;
-use super::super::events::{emit_tool_call, emit_tool_result, next_tool_id};
+use crate::agent::error::ToolError;
+use crate::agent::events::{emit_tool_call, emit_tool_result, next_tool_id};
+use crate::agent::runner::current_datetime_str;
 use crate::state::AppState;
 
 /// No-args marker (rig requires an Args type even for parameter-less tools).
 #[derive(Deserialize, Serialize)]
-pub(crate) struct GetCurrentTimeArgs {}
+pub struct GetCurrentTimeArgs {}
 
-pub(crate) struct GetCurrentTimeTool {
+pub struct GetCurrentTimeTool {
     #[allow(dead_code)]
-    pub(crate) app_state: AppState,
-    pub(crate) task_id: String,
-    pub(crate) window: tauri::Window,
+    pub app_state: AppState,
+    pub task_id: String,
+    pub window: tauri::Window,
 }
 
 impl Tool for GetCurrentTimeTool {
@@ -26,7 +33,7 @@ impl Tool for GetCurrentTimeTool {
     async fn definition(&self, _prompt: String) -> ToolDefinition {
         ToolDefinition {
             name: "get_current_time".to_string(),
-            description: "获取当前日期和时间（含星期）。当用户提问涉及相对时间（「今天」「本周」「下周一」「本月」「上周」「最近三个月」「去年」等）时，**必须先调用本工具**确认当前时间，再据此计算时间范围。绝不能凭印象猜测当前日期。".to_string(),
+            description: "获取当前日期和时间（含星期）。当用户提问涉及相对时间（「今天」「本周」「下周一」「本月」「上周」等）时，**必须先调用本工具**确认当前时间，再据此计算时间范围。绝不能凭印象猜测当前日期。".to_string(),
             parameters: json!({
                 "type": "object",
                 "properties": {}
@@ -45,7 +52,7 @@ impl Tool for GetCurrentTimeTool {
         );
         let start = std::time::Instant::now();
 
-        let now_str = super::super::runner::current_datetime_str();
+        let now_str = current_datetime_str();
         let elapsed = start.elapsed().as_millis() as u64;
         emit_tool_result(
             &self.window,

@@ -39,8 +39,8 @@ export default function LeftNav(props: {
       {/* 顶部：logo（非 mac）+ 侧边栏折叠按钮 */}
       <div class="ln-top-bar" classList={{ "mac-nav": isMac }}>
         <Show when={!isMac}>
-          <div class="ln-logo-box" title="AI OA">
-            <img src={logoSrc()} alt="AI OA" style="width: 18px; height: 18px; object-fit: contain;" />
+          <div class="ln-logo-box" title="AIOA 工作台">
+            <img src={logoSrc()} alt="AIOA 工作台" style="width: 18px; height: 18px; object-fit: contain;" />
           </div>
         </Show>
         <div class="ln-nav-arrows" data-tauri-drag-region>

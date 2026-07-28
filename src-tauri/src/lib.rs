@@ -14,7 +14,7 @@ mod commands;
 mod db;
 mod logging;
 mod model;
-mod oa;
+mod skill;
 mod state;
 mod usage;
 

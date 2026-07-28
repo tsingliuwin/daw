@@ -83,8 +83,8 @@ export default function HomeView(props: {
       <div class="home-view__inner">
         {/* 品牌 */}
         <div class="home-view__brand">
-          <img src={logoSrc()} alt="AI OA" class="home-view__logo" />
-          <h1 class="home-view__title">AI OA</h1>
+          <img src={logoSrc()} alt="AIOA 工作台" class="home-view__logo" />
+          <h1 class="home-view__title">AIOA 工作台</h1>
           <p class="home-view__subtitle">
             用任务完成请假、报销、审批——不必再翻系统、填表单。
           </p>

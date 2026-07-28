@@ -16,13 +16,13 @@
 //! - [`tools`]    — the OA rig Tool implementations
 //! - [`runner`]   — streaming driver + agent assembly + public entry point
 
-mod config;
-mod error;
-mod events;
-mod llm;
-mod runner;
-mod tools;
-mod wire;
+pub(crate) mod config;
+pub(crate) mod error;
+pub(crate) mod events;
+pub(crate) mod llm;
+pub(crate) mod runner;
+pub(crate) mod tools;
+pub(crate) mod wire;
 
 // Re-export the public/crate-facing API so external callers keep using
 // `crate::agent::<item>` unchanged (commands.rs). `first_enabled_model` and

@@ -1,18 +1,7 @@
-//! Rig Tool implementations. Each tool lives in its own file (Args + Tool
-//! struct + `impl Tool`). The write tools share a driver in [`oa_shared`].
+//! Agent tools — 已迁移到 skill 机制。
 //!
-//! (M1 ships 3 tools — enough to prove the loop:
-//!   - `get_current_time`   — read-only, resolves relative-time expressions.
-//!   - `get_leave_balance`  — read-only, queries an employee's annual-leave
-//!                             balance via the OA backend.
-//!   - `submit_leave`       — write, gated by the human-confirmation channel.
+//! 基座内置工具（get_current_time）在 `skill/builtin.rs`。
+//! 领域 skill 的工具在各自 skill 模块里，由 runner 的 build_tools 条件注册。
 
-mod get_current_time;
-mod get_leave_balance;
-mod oa_shared;
-mod submit_leave;
-
-pub(crate) use get_current_time::GetCurrentTimeTool;
-pub(crate) use get_leave_balance::GetLeaveBalanceTool;
-pub(crate) use oa_shared::OaWriteShared;
-pub(crate) use submit_leave::SubmitLeaveTool;
+// 此模块保留为占位——工具定义已迁移到 skill/builtin.rs。
+// runner.rs 通过 crate::skill::builtin::GetCurrentTimeTool 引用基座工具。

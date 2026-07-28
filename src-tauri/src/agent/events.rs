@@ -14,7 +14,7 @@ use tauri::Emitter;
 use super::wire::{AgentStreamEvent, Segment};
 use crate::usage::{self};
 
-pub(super) fn now_ms() -> i64 {
+pub(crate) fn now_ms() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as i64)
@@ -24,12 +24,12 @@ pub(super) fn now_ms() -> i64 {
 /// Monotonic counter that guarantees unique tool-call ids.
 static TOOL_CALL_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
-pub(super) fn next_tool_id(prefix: &str) -> String {
+pub(crate) fn next_tool_id(prefix: &str) -> String {
     let n = TOOL_CALL_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
     format!("tool-{prefix}-{}-{n}", now_ms())
 }
 
-pub(super) fn emit_event(
+pub(crate) fn emit_event(
     window: &tauri::Window,
     task_id: &str,
     kind: &str,
@@ -49,13 +49,13 @@ pub(super) fn emit_event(
 
 /// Emit a partial reasoning/text delta to be appended to the current segment of
 /// that type on the frontend.
-pub(super) fn emit_delta(window: &tauri::Window, task_id: &str, kind: &str, text: &str) {
+pub(crate) fn emit_delta(window: &tauri::Window, task_id: &str, kind: &str, text: &str) {
     emit_event(window, task_id, kind, Some(text.to_string()), None);
 }
 
 /// Emit a `tool_call` segment (status: running) — opens a new tool step in the
 /// transcript.
-pub(super) fn emit_tool_call(
+pub(crate) fn emit_tool_call(
     window: &tauri::Window,
     task_id: &str,
     id: &str,
@@ -83,7 +83,7 @@ pub(super) fn emit_tool_call(
 
 /// Emit a `tool_result` — merged into the matching tool segment by id, flipping
 /// its status to ok|error and attaching the result payload.
-pub(super) fn emit_tool_result(
+pub(crate) fn emit_tool_result(
     window: &tauri::Window,
     task_id: &str,
     id: &str,
@@ -117,7 +117,7 @@ pub(super) fn emit_tool_result(
 /// as parked pending the user's confirm/cancel decision in "变更前确认" mode.
 /// `detail` is the human-readable description of what the tool is about to do,
 /// shown in the inline confirm UI.
-pub(super) fn emit_tool_awaiting(
+pub(crate) fn emit_tool_awaiting(
     window: &tauri::Window,
     task_id: &str,
     id: &str,
@@ -145,7 +145,7 @@ pub(super) fn emit_tool_awaiting(
 
 /// Emit a usage *estimate* event — sent before/during streaming, before the
 /// API's exact FinalResponse usage arrives.
-pub(super) fn emit_usage_estimate(
+pub(crate) fn emit_usage_estimate(
     window: &tauri::Window,
     task_id: &str,
     prompt_tokens_est: u64,
@@ -175,7 +175,7 @@ pub(super) fn emit_usage_estimate(
 
 /// Emit a *real* usage event from a FinalResponse (one per LLM call within the
 /// multi-turn run).
-pub(super) fn emit_usage_real(
+pub(crate) fn emit_usage_real(
     window: &tauri::Window,
     task_id: &str,
     n: usage::NormalizedUsage,
@@ -210,7 +210,7 @@ pub(super) fn emit_usage_real(
 }
 
 /// Emit a run *summary* at the end of one agent run.
-pub(super) fn emit_usage_run_summary(
+pub(crate) fn emit_usage_run_summary(
     window: &tauri::Window,
     task_id: &str,
     run_output_tokens: u64,

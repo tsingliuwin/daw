@@ -1,7 +1,7 @@
 import { Show } from "solid-js";
 
 /**
- * 共用的底部品牌区：左侧「研途教育 AI OA」品牌名 + 右侧按钮组。
+ * 共用的底部品牌区：左侧「研途教育 AIOA 工作台」品牌名 + 右侧按钮组。
  *
  * 主界面 LeftNav 和设置页 SettingsPage 都用它，保证品牌区样式一致、单一数据源
  * （品牌名只在这里改一次）。右侧按钮（从左到右）：
@@ -20,7 +20,7 @@ export default function BrandFooter(props: {
 }) {
   return (
     <div class="ln-footer">
-      <span class="ln-brand-name">研途教育 AI OA</span>
+      <span class="ln-brand-name">研途教育 AIOA 工作台</span>
       <div class="ln-footer-actions">
         {props.onToggleTheme && (
           <button

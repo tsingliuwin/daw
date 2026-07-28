@@ -12,7 +12,7 @@ export default function TopBar(props: {
 }) {
   return (
     <header class="topbar">
-      <span class="brand">AI OA</span>
+      <span class="brand">AIOA 工作台</span>
       <span class="brand-sub">任务驱动办公</span>
       <span class="spacer" />
       <div class="toggle-group">

@@ -1,16 +1,9 @@
 //! Core streaming runner: drive the rig multi-turn stream, map its items to
-//! frontend events, and assemble the full agent (all OA tools + provider
-//! branches).
+//! frontend events, and assemble the full agent (基座内置工具 + 各 skill 工具).
 //!
-//! (Migrated from lakemind's `runner.rs`. The streaming loop, the rate-limit
-//! retry classification, the usage accounting, the abort handling, and the
-//! provider-client construction are domain-agnostic and preserved verbatim.
-//! Only two things changed:
-//!   1. `build_tools` was rewritten — the 16 data-analysis tools became the 3
-//!      OA tools ([`crate::agent::tools`]).
-//!   2. The OKF "memory summary" preamble injection was removed (no OKF in the
-//!      OA app). The current-date/time injection is kept — OA tasks frequently
-//!      need it to resolve "今天 / 本周 / 下周一".
+//! The streaming loop, rate-limit retry, usage accounting, abort handling,
+//! and provider-client construction are domain-agnostic and preserved verbatim.
+//! Tools come from the skill registry (基座内置 + 已注册 skill).
 
 use serde_json::json;
 use rig_core::{
@@ -25,8 +18,8 @@ use super::config::{get_provider_for_model, sanitize_endpoint};
 use super::events::{
     emit_delta, emit_event, emit_usage_estimate, emit_usage_real, emit_usage_run_summary,
 };
-use super::tools::*;
 use super::wire::{ChatMessageDto, Segment};
+use crate::skill::builtin::GetCurrentTimeTool;
 use crate::state::AppState;
 use crate::usage::{self, PREAMBLE};
 
@@ -298,7 +291,7 @@ pub(crate) async fn run_agent_task_stream(
     prompt: String,
     history_json: String,
     priority: String,
-    confirm_mode: String,
+    #[allow(unused_variables)] confirm_mode: String,
     app_state: AppState,
 ) -> Result<(), String> {
     // 1. Get model provider config
@@ -333,38 +326,23 @@ pub(crate) async fn run_agent_task_stream(
         }
     }
 
-    // Factory closure that builds a fresh set of the OA tool instances. Called
+    // Factory closure that builds a fresh set of 基座内置 tool instances. Called
     // once per provider branch AND once per 429-retry (rig consumes the tools
     // when building the agent, so each retry needs a fresh set).
-    let build_tools = || -> (GetCurrentTimeTool, GetLeaveBalanceTool, SubmitLeaveTool) {
-        let write_shared = OaWriteShared {
+    // 未来：skill 的工具也在这里按 registry.enabled_skill_ids() 条件构造。
+    let build_tools = || -> GetCurrentTimeTool {
+        GetCurrentTimeTool {
             app_state: app_state.clone(),
             task_id: task_id.clone(),
             window: window.clone(),
-            confirm_mode: confirm_mode.clone(),
-        };
-        (
-            GetCurrentTimeTool {
-                app_state: app_state.clone(),
-                task_id: task_id.clone(),
-                window: window.clone(),
-            },
-            GetLeaveBalanceTool {
-                app_state: app_state.clone(),
-                task_id: task_id.clone(),
-                window: window.clone(),
-            },
-            SubmitLeaveTool { shared: write_shared },
-        )
+        }
     };
 
     // Estimate the input token cost before the stream starts so the UI panel
     // shows data immediately.
-    let (time_tool, balance_tool, leave_tool) = build_tools();
+    let time_tool = build_tools();
     let tool_defs = vec![
         time_tool.definition(String::new()).await,
-        balance_tool.definition(String::new()).await,
-        leave_tool.definition(String::new()).await,
     ];
     let tools_json = serde_json::to_string(&tool_defs).unwrap_or_default();
 
@@ -396,7 +374,7 @@ pub(crate) async fn run_agent_task_stream(
     let mut attempt: usize = 0;
     loop {
         attempt += 1;
-        let (time_tool, balance_tool, leave_tool) = build_tools();
+        let time_tool = build_tools();
 
         let outcome = if format == "openai" {
             let base_url = sanitize_endpoint(&provider.endpoint);
@@ -410,9 +388,7 @@ pub(crate) async fn run_agent_task_stream(
                 .agent(&model_id)
                 .preamble(&combined_preamble)
                 .max_tokens(max_tokens_limit)
-                .tool(time_tool)
-                .tool(balance_tool)
-                .tool(leave_tool);
+                .tool(time_tool);
             if model_id.starts_with("o1") || model_id.starts_with("o3") {
                 agent_builder = agent_builder.additional_params(json!({"reasoning_effort": effort}));
             }
@@ -443,9 +419,7 @@ pub(crate) async fn run_agent_task_stream(
                 .agent(&model_id)
                 .preamble(&combined_preamble)
                 .max_tokens(max_tokens_limit)
-                .tool(time_tool)
-                .tool(balance_tool)
-                .tool(leave_tool);
+                .tool(time_tool);
             if model_id.starts_with("o1") || model_id.starts_with("o3") {
                 agent_builder = agent_builder.additional_params(json!({"reasoning_effort": effort}));
             }
@@ -478,8 +452,6 @@ pub(crate) async fn run_agent_task_stream(
                 .preamble(&combined_preamble)
                 .max_tokens(4096)
                 .tool(time_tool)
-                .tool(balance_tool)
-                .tool(leave_tool)
                 .build();
             let stream = agent
                 .stream_chat(prompt.clone(), rig_history.clone())

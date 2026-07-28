@@ -13,7 +13,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "AI OA",
+        "title": "AIOA 工作台",
         "width": 1024,
         "height": 768,
         "decorations": true,

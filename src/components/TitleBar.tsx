@@ -69,7 +69,7 @@ export default function TitleBar(props: {
             </div>
           }>
             {/* 侧边栏折叠后只保留展开按钮（logo 和品牌名跟随左侧栏一起隐藏，
-                避免顶部重复出现 "AI OA"）。 */}
+                避免顶部重复出现 "AIOA 工作台"）。 */}
             <button
               class="ln-arrow-btn"
               classList={{ active: props.leftOpen }}
@@ -181,8 +181,8 @@ export default function TitleBar(props: {
               <button class="modal-close" onClick={() => setAboutOpen(false)}>✕</button>
             </div>
             <div class="modal-body">
-              <div class="about-logo"><img src={logoSrc()} alt="AI OA" style="width: 48px; height: 48px; object-fit: contain;" /></div>
-              <h4>AI OA</h4>
+              <div class="about-logo"><img src={logoSrc()} alt="AIOA 工作台" style="width: 48px; height: 48px; object-fit: contain;" /></div>
+              <h4>AIOA 工作台</h4>
               <p class="about-desc">用任务完成请假、报销、审批等企业办公流程。</p>
               <div class="about-specs">
                 <div class="spec-row"><span>版本</span><strong>{appVersion()}</strong></div>
