@@ -191,24 +191,24 @@ export default function BrandFooter(props: {
   });
 
   return (
-    <div class="ln-footer">
-      <span
-        class="ln-brand-name"
-        title="点击切换空间 / 加入企业"
-        onClick={(e) => {
-          // 阻止冒泡，避免触发父容器（如 settings-nav）可能的点击逻辑。
-          e.stopPropagation();
-          const willOpen = !popoverOpen();
-          setPopoverOpen(willOpen);
-          if (willOpen) void refreshSpaces();
-        }}
-      >{currentSpaceName()}</span>
+    <div
+      class="ln-footer"
+      onClick={(e) => {
+        // 点击品牌名左侧区域（非按钮）打开面板。按钮有自己的 onClick 且会
+        // stopPropagation，不会冒泡到这里。
+        e.stopPropagation();
+        const willOpen = !popoverOpen();
+        setPopoverOpen(willOpen);
+        if (willOpen) void refreshSpaces();
+      }}
+    >
+      <span class="ln-brand-name" title="点击切换空间 / 加入企业">{currentSpaceName()}</span>
       <div class="ln-footer-actions">
         {props.onToggleTheme && (
           <button
             class="ln-footer-settings"
             title={props.isDarkTheme ? "切换到浅色" : "切换到深色"}
-            onClick={() => props.onToggleTheme?.()}
+            onClick={(e) => { e.stopPropagation(); props.onToggleTheme?.(); }}
           >
             {/* 深色时显示太阳（点一下变浅色）；浅色时显示月亮（点一下变深色） */}
             <Show when={props.isDarkTheme} fallback={
@@ -234,7 +234,7 @@ export default function BrandFooter(props: {
           <button
             class="ln-footer-settings"
             title="设置"
-            onClick={() => props.onOpenSettings?.()}
+            onClick={(e) => { e.stopPropagation(); props.onOpenSettings?.(); }}
           >
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 15px; height: 15px;">
               <circle cx="12" cy="12" r="3"></circle>
@@ -246,7 +246,7 @@ export default function BrandFooter(props: {
           <button
             class="ln-footer-settings"
             title="返回首页"
-            onClick={() => props.onCloseSettings?.()}
+            onClick={(e) => { e.stopPropagation(); props.onCloseSettings?.(); }}
           >
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 16px; height: 16px;">
               <line x1="19" y1="12" x2="5" y2="12"></line>
