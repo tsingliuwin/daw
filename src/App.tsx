@@ -61,6 +61,7 @@ export default function App() {
   const [consoleOpen, setConsoleOpen] = createSignal<boolean>(false);
   const [settingsOpen, setSettingsOpen] = createSignal<boolean>(false);
   const [joinEnterpriseOpen, setJoinEnterpriseOpen] = createSignal<boolean>(false);
+  const [enterpriseAdminOpen, setEnterpriseAdminOpen] = createSignal<boolean>(false);
   const [busy, setBusy] = createSignal<boolean>(false);
 
   // 在 tasksByWorkspace 中查找 taskId 所属的工作区路径（不存在返回 null）。
@@ -654,6 +655,7 @@ export default function App() {
           }}
           activeSpace={activeSpace()}
           onOpenJoinEnterprise={() => setJoinEnterpriseOpen(true)}
+          onOpenEnterpriseAdmin={() => setEnterpriseAdminOpen(true)}
           onSpaceChanged={() => {
             // BrandFooter 已在后端改了 active space（set_active_space / join /
             // leave），读回最新值后走 switchSpace 同步本地并重载工作区与任务。
@@ -766,6 +768,24 @@ export default function App() {
               setJoinEnterpriseOpen(false);
               // 空间切换交给 onSpaceChanged 回调——join_enterprise 后
               // BrandFooter 的 onSpaceChanged 会触发 switchSpace。
+              void (async () => {
+                let sp = "personal";
+                try { sp = await invoke<string>("get_active_space"); } catch { /* best-effort */ }
+                await switchSpace(sp);
+              })();
+            }}
+          />
+        </div>
+      </Show>
+
+      {/* 企业管理页面（覆盖层）——复用 JoinEnterprisePage */}
+      <Show when={enterpriseAdminOpen()}>
+        <div class="app-overlay">
+          <JoinEnterprisePage
+            mode="admin"
+            onClose={() => setEnterpriseAdminOpen(false)}
+            onJoined={() => {
+              setEnterpriseAdminOpen(false);
               void (async () => {
                 let sp = "personal";
                 try { sp = await invoke<string>("get_active_space"); } catch { /* best-effort */ }

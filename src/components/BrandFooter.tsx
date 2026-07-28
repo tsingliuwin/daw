@@ -46,6 +46,8 @@ export default function BrandFooter(props: {
   onSpaceChanged?: () => void;
   /** 打开加入企业页面（全屏覆盖层，由 App 渲染）。 */
   onOpenJoinEnterprise?: () => void;
+  /** 打开企业管理页面（全屏覆盖层，由 App 渲染）。只在企业空间下显示。 */
+  onOpenEnterpriseAdmin?: () => void;
   /** 兼容 SettingsPage 旧用法（空间面板不触发）。 */
   onServerChanged?: () => void;
 }) {
@@ -220,6 +222,13 @@ export default function BrandFooter(props: {
                           class="brand-popover__space-name"
                           onClick={() => void switchTo(ent.id)}
                         >{ent.name}</span>
+                        <Show when={activeSpace() === ent.id && props.onOpenEnterpriseAdmin}>
+                          <button
+                            class="brand-popover__admin"
+                            title="企业管理"
+                            onClick={(e) => { e.stopPropagation(); setPopoverOpen(false); props.onOpenEnterpriseAdmin?.(); }}
+                          >管理</button>
+                        </Show>
                         <button
                           class="brand-popover__disconnect"
                           title="断开企业"

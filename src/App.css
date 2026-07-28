@@ -8145,6 +8145,21 @@ input[type="number"] {
 .brand-popover__disconnect:hover {
   background: var(--accent-red-bg);
 }
+/* 企业管理按钮（在企业空间下显示，断开按钮左侧） */
+.brand-popover__admin {
+  background: transparent;
+  color: var(--accent-blue);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  padding: 2px 8px;
+  font-size: 11px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.brand-popover__admin:hover {
+  border-color: var(--accent-blue);
+  background: rgba(59, 130, 246, 0.08);
+}
 .brand-popover__link {
   background: transparent;
   border: none;

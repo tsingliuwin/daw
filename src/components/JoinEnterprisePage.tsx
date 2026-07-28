@@ -11,11 +11,14 @@ export default function JoinEnterprisePage(props: {
   onClose: () => void;
   /** 加入成功后通知 App 刷新空间。 */
   onJoined: () => void;
+  /** 模式："join"=加入企业（默认），"admin"=企业管理（直接显示配置表单）。 */
+  mode?: "join" | "admin";
 }) {
   const [serverUrl, setServerUrl] = createSignal("");
   const [username, setUsername] = createSignal("");
   const [password, setPassword] = createSignal("");
-  const [step, setStep] = createSignal<"address" | "login" | "config">("address");
+  const isAdmin = props.mode === "admin";
+  const [step, setStep] = createSignal<"address" | "login" | "config">(isAdmin ? "config" : "address");
   const [busy, setBusy] = createSignal(false);
   const [msg, setMsg] = createSignal("");
 
@@ -25,6 +28,30 @@ export default function JoinEnterprisePage(props: {
   const [llmApiKey, setLlmApiKey] = createSignal("");
   const [llmApiFormat, setLlmApiFormat] = createSignal("openai");
   const [llmModels, setLlmModels] = createSignal("");
+
+  // 管理模式：加载当前企业的配置（从服务端 GET /enterprise/status 拉取）。
+  if (isAdmin) {
+    void (async () => {
+      try {
+        const settings = await invoke<Record<string, unknown>>("load_settings_json");
+        const parsed = typeof settings === "string" ? JSON.parse(settings) : settings;
+        const active = parsed.activeSpace as string;
+        const ents = parsed.enterprises as { id: string; name: string; serverUrl: string; token: string }[];
+        const ent = ents?.find((e) => e.id === active);
+        if (!ent) { setMsg("找不到当前企业配置"); return; }
+        // 从服务端拉取当前企业配置。
+        const resp = await fetch(`${ent.serverUrl}/enterprise/status`, {
+          headers: { Authorization: `Bearer ${ent.token}` },
+        });
+        if (resp.ok) {
+          const cfg = await resp.json() as { serverName?: string; configured?: boolean };
+          setEntName(cfg.serverName ?? ent.name);
+        }
+      } catch (err) {
+        setMsg(`加载企业配置失败：${err}`);
+      }
+    })();
+  }
 
   // 判断输入是否为签名 URL（含 /auth/setup?token=）
   const isSetupUrl = (input: string) => input.includes("/auth/setup?token=");
@@ -139,7 +166,7 @@ export default function JoinEnterprisePage(props: {
   return (
     <div class="settings-page">
       <div class="settings-header" data-tauri-drag-region>
-        <h2 class="settings-title" data-tauri-drag-region>加入企业</h2>
+        <h2 class="settings-title" data-tauri-drag-region>{isAdmin ? "企业管理" : "加入企业"}</h2>
         <button class="settings-close-btn" title="关闭" onClick={props.onClose}>✕</button>
       </div>
       <div class="settings-body">
