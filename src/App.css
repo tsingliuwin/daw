@@ -8062,20 +8062,23 @@ input[type="number"] {
   align-items: center;
 }
 /* 主操作按钮：与 settings-primary-btn 一致 */
+/* "加入企业"按钮：描边入口风格，和"添加服务商"一致 */
 .brand-popover__btn {
-  background: var(--accent-blue);
-  color: #fff;
-  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
   padding: 7px 14px;
   font-size: 12.5px;
-  font-weight: 600;
+  font-weight: 500;
   cursor: pointer;
   flex-shrink: 0;
-  transition: background 0.15s;
+  transition: border-color 0.12s, color 0.12s, background 0.12s;
 }
 .brand-popover__btn:hover {
-  background: var(--accent-blue-hover);
+  border-color: var(--accent-blue);
+  color: var(--accent-blue);
+  background: rgba(59, 130, 246, 0.08);
 }
 .brand-popover__btn:disabled {
   opacity: 0.5;
