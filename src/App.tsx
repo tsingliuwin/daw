@@ -12,6 +12,7 @@ import LeftNav from "./components/LeftNav";
 import ChatView from "./components/ChatView";
 import HomeView from "./components/HomeView";
 import SettingsPage from "./components/SettingsPage";
+import JoinEnterprisePage from "./components/JoinEnterprisePage";
 
 /**
  * 应用主布局与状态中枢。相比 lakemind 大幅精简：
@@ -59,6 +60,7 @@ export default function App() {
   const [leftOpen, setLeftOpen] = createSignal<boolean>(true);
   const [consoleOpen, setConsoleOpen] = createSignal<boolean>(false);
   const [settingsOpen, setSettingsOpen] = createSignal<boolean>(false);
+  const [joinEnterpriseOpen, setJoinEnterpriseOpen] = createSignal<boolean>(false);
   const [busy, setBusy] = createSignal<boolean>(false);
 
   // 在 tasksByWorkspace 中查找 taskId 所属的工作区路径（不存在返回 null）。
@@ -651,6 +653,7 @@ export default function App() {
             persistTheme(next);
           }}
           activeSpace={activeSpace()}
+          onOpenJoinEnterprise={() => setJoinEnterpriseOpen(true)}
           onSpaceChanged={() => {
             // BrandFooter 已在后端改了 active space（set_active_space / join /
             // leave），读回最新值后走 switchSpace 同步本地并重载工作区与任务。
@@ -750,6 +753,25 @@ export default function App() {
           <SettingsPage
             onClose={() => setSettingsOpen(false)}
             onProvidersChanged={() => { void loadModelsFromSettings(); }}
+          />
+        </div>
+      </Show>
+
+      {/* 加入企业页面（覆盖层） */}
+      <Show when={joinEnterpriseOpen()}>
+        <div class="app-overlay">
+          <JoinEnterprisePage
+            onClose={() => setJoinEnterpriseOpen(false)}
+            onJoined={() => {
+              setJoinEnterpriseOpen(false);
+              // 空间切换交给 onSpaceChanged 回调——join_enterprise 后
+              // BrandFooter 的 onSpaceChanged 会触发 switchSpace。
+              void (async () => {
+                let sp = "personal";
+                try { sp = await invoke<string>("get_active_space"); } catch { /* best-effort */ }
+                await switchSpace(sp);
+              })();
+            }}
           />
         </div>
       </Show>

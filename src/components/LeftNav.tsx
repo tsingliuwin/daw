@@ -37,6 +37,8 @@ export default function LeftNav(props: {
   activeSpace?: string;
   /** 空间切换/加入/断开后通知 App 重新加载（透传给 BrandFooter）。 */
   onSpaceChanged?: () => void;
+  /** 打开加入企业页面（透传给 BrandFooter）。 */
+  onOpenJoinEnterprise?: () => void;
 }) {
   return (
     <div class="left-nav">
@@ -139,6 +141,7 @@ export default function LeftNav(props: {
         onToggleTheme={props.onToggleTheme}
         isDarkTheme={currentTheme() !== "light"}
         onOpenSettings={props.onOpenSettings}
+        onOpenJoinEnterprise={props.onOpenJoinEnterprise}
         activeSpace={props.activeSpace}
         onSpaceChanged={props.onSpaceChanged}
       />

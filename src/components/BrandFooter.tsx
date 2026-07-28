@@ -44,6 +44,8 @@ export default function BrandFooter(props: {
   activeSpace?: string;
   /** 空间切换/加入/断开后通知父级刷新。 */
   onSpaceChanged?: () => void;
+  /** 打开加入企业页面（全屏覆盖层，由 App 渲染）。 */
+  onOpenJoinEnterprise?: () => void;
   /** 兼容 SettingsPage 旧用法（空间面板不触发）。 */
   onServerChanged?: () => void;
 }) {
@@ -53,15 +55,6 @@ export default function BrandFooter(props: {
   // ── 空间状态（面板打开时从后端刷新） ──
   const [enterprises, setEnterprises] = createSignal<EnterpriseInfo[]>([]);
   const [activeSpace, setActiveSpace] = createSignal<string>(props.activeSpace ?? "personal");
-
-  // ── 加入企业向导状态 ──
-  const [wizardOpen, setWizardOpen] = createSignal(false);
-  const [serverUrlInput, setServerUrlInput] = createSignal("");
-  const [usernameInput, setUsernameInput] = createSignal("");
-  const [passwordInput, setPasswordInput] = createSignal("");
-  const [connectStatus, setConnectStatus] = createSignal<"idle" | "connecting" | "connected" | "error">("idle");
-  const [joinBusy, setJoinBusy] = createSignal(false);
-  const [wizardMsg, setWizardMsg] = createSignal("");
 
   // 浮层根节点引用：用于点击外部判定关闭。
   let popoverRef: HTMLDivElement | undefined;
@@ -109,67 +102,6 @@ export default function BrandFooter(props: {
       props.onSpaceChanged?.();
     } catch (err) {
       logError("ui", "Failed to leave enterprise", err);
-    }
-  };
-
-  // 加入向导 - 连接服务地址（fetch {url}/client-config 拿 serverName 验证有效性）。
-  const handleConnect = async () => {
-    const url = serverUrlInput().trim().replace(/\/+$/, "");
-    if (!url) {
-      setWizardMsg("请输入服务地址");
-      setConnectStatus("error");
-      return;
-    }
-    setServerUrlInput(url);
-    setConnectStatus("connecting");
-    setWizardMsg("");
-    try {
-      const resp = await fetch(`${url}/client-config`);
-      if (!resp.ok) {
-        const text = await resp.text().catch(() => "");
-        setConnectStatus("error");
-        setWizardMsg(`无法连接服务端（${resp.status}）${text ? "：" + text : ""}`);
-        return;
-      }
-      const cfg = (await resp.json()) as { serverName?: string };
-      setConnectStatus("connected");
-      setWizardMsg(cfg.serverName ? `已识别服务：${cfg.serverName}` : "服务地址有效，请登录");
-    } catch (err) {
-      setConnectStatus("error");
-      setWizardMsg(`连接失败：${err}`);
-    }
-  };
-
-  // 加入向导 - 登录（join_enterprise：参数 serverUrl/username/password，返回 serverName）。
-  const handleJoin = async () => {
-    const url = serverUrlInput().trim().replace(/\/+$/, "");
-    const user = usernameInput().trim();
-    const pass = passwordInput();
-    if (!url || !user || !pass) {
-      setWizardMsg("服务地址、用户名、密码均不能为空");
-      return;
-    }
-    setJoinBusy(true);
-    setWizardMsg("");
-    try {
-      const serverName = await invoke<string>("join_enterprise", {
-        serverUrl: url,
-        username: user,
-        password: pass,
-      });
-      // 成功：关闭向导与面板，通知父级刷新（App 会重载工作区/任务/模型）。
-      setWizardOpen(false);
-      setPopoverOpen(false);
-      setServerUrlInput("");
-      setUsernameInput("");
-      setPasswordInput("");
-      setConnectStatus("idle");
-      setWizardMsg(serverName ? `已加入：${serverName}` : "");
-      props.onSpaceChanged?.();
-    } catch (err) {
-      setWizardMsg(`加入失败：${err}`);
-    } finally {
-      setJoinBusy(false);
     }
   };
 
@@ -265,105 +197,40 @@ export default function BrandFooter(props: {
               <div class="brand-popover__mode">{currentSpaceName()}</div>
             </div>
             <div class="brand-popover__body">
-              <Show
-                when={!wizardOpen()}
-                fallback={
-                  <Show
-                    when={connectStatus() === "connected"}
-                    fallback={
-                      // 步骤 1：服务地址输入 + 连接
-                      <div class="brand-popover__row">
-                        <input
-                          class="brand-popover__input"
-                          style="flex: 1; min-width: 0;"
-                          value={serverUrlInput()}
-                          placeholder="http://localhost:3000"
-                          onInput={(e) => setServerUrlInput(e.currentTarget.value)}
-                          onKeyDown={(e) => { if (e.key === "Enter") void handleConnect(); }}
-                        />
-                        <button
-                          class="brand-popover__btn"
-                          disabled={connectStatus() === "connecting"}
-                          onClick={() => void handleConnect()}
-                        >
-                          {connectStatus() === "connecting" ? "连接中…" : "连接"}
-                        </button>
-                      </div>
-                    }
-                  >
-                    {/* 步骤 2：用户名/密码 + 登录（加入企业） */}
-                    <input class="brand-popover__input" value={serverUrlInput()} disabled />
-                    <input
-                      class="brand-popover__input"
-                      value={usernameInput()}
-                      placeholder="用户名"
-                      onInput={(e) => setUsernameInput(e.currentTarget.value)}
-                      onKeyDown={(e) => { if (e.key === "Enter") void handleJoin(); }}
-                    />
-                    <div class="brand-popover__row">
-                      <input
-                        class="brand-popover__input"
-                        style="flex: 1; min-width: 0;"
-                        type="password"
-                        value={passwordInput()}
-                        placeholder="密码"
-                        onInput={(e) => setPasswordInput(e.currentTarget.value)}
-                        onKeyDown={(e) => { if (e.key === "Enter") void handleJoin(); }}
-                      />
-                      <button
-                        class="brand-popover__btn"
-                        disabled={joinBusy()}
-                        onClick={() => void handleJoin()}
-                      >
-                        {joinBusy() ? "加入中…" : "登录"}
-                      </button>
-                    </div>
-                  </Show>
-                }
-              >
-                {/* 空间列表：个人空间 + 已加入企业（可切换/断开） */}
-                <div class="brand-popover__space-list">
-                  <div
-                    class="brand-popover__space-item"
-                    classList={{ "brand-popover__space-item--active": activeSpace() === "personal" || !activeSpace() }}
-                    onClick={() => void switchTo("personal")}
-                  >
-                    <span class="brand-popover__space-name">个人版</span>
-                  </div>
-                  <Show
-                    when={enterprises().length > 0}
-                    fallback={<div class="brand-popover__hint">尚未加入企业</div>}
-                  >
-                    <For each={enterprises()}>
-                      {(ent) => (
-                        <div
-                          class="brand-popover__space-item"
-                          classList={{ "brand-popover__space-item--active": activeSpace() === ent.id }}
-                        >
-                          <span
-                            class="brand-popover__space-name"
-                            onClick={() => void switchTo(ent.id)}
-                          >{ent.name}</span>
-                          <button
-                            class="brand-popover__disconnect"
-                            title="断开企业"
-                            onClick={(e) => { e.stopPropagation(); void disconnect(ent.id); }}
-                          >断开</button>
-                        </div>
-                      )}
-                    </For>
-                  </Show>
+              {/* 空间列表：个人版 + 已加入企业（可切换/断开） */}
+              <div class="brand-popover__space-list">
+                <div
+                  class="brand-popover__space-item"
+                  classList={{ "brand-popover__space-item--active": activeSpace() === "personal" || !activeSpace() }}
+                  onClick={() => void switchTo("personal")}
+                >
+                  <span class="brand-popover__space-name">个人版</span>
                 </div>
-                <button class="brand-popover__btn" onClick={() => setWizardOpen(true)}>加入企业</button>
-              </Show>
-
-              <Show when={wizardOpen()}>
-                <button class="brand-popover__link" onClick={() => setWizardOpen(false)}>返回空间列表</button>
-              </Show>
-
-              <Show when={wizardMsg()}>
-                <div class="brand-popover__msg">{wizardMsg()}</div>
-              </Show>
+                <Show
+                  when={enterprises().length > 0}
+                  fallback={<div class="brand-popover__hint">尚未加入企业</div>}
+                >
+                  <For each={enterprises()}>
+                    {(ent) => (
+                      <div
+                        class="brand-popover__space-item"
+                        classList={{ "brand-popover__space-item--active": activeSpace() === ent.id }}
+                      >
+                        <span
+                          class="brand-popover__space-name"
+                          onClick={() => void switchTo(ent.id)}
+                        >{ent.name}</span>
+                        <button
+                          class="brand-popover__disconnect"
+                          title="断开企业"
+                          onClick={(e) => { e.stopPropagation(); void disconnect(ent.id); }}
+                        >断开</button>
+                      </div>
+                    )}
+                  </For>
+                </Show>
+              </div>
+              <button class="brand-popover__btn" onClick={(e) => { e.stopPropagation(); setPopoverOpen(false); props.onOpenJoinEnterprise?.(); }}>加入企业</button>
             </div>
           </div>
         </Show>
