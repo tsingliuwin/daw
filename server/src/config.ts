@@ -5,6 +5,10 @@
  * 本地开发可在 server/ 目录下创建 .env 文件，tsx 会自动加载。
  */
 
+import fs from "fs";
+import path from "path";
+import crypto from "crypto";
+
 export interface LlmProviderConfig {
   id: string;
   name: string;
@@ -64,8 +68,6 @@ function parseUsers(): UserConfig[] {
  * 客户端首次连接时从 /client-config 获取，作为数据隔离的 key。
  */
 function getOrCreateEnterpriseId(): string {
-  const fs = require("fs");
-  const path = require("path");
   const idFile = path.resolve(process.cwd(), ".enterprise-id");
   try {
     if (fs.existsSync(idFile)) {
@@ -85,8 +87,6 @@ function getOrCreateEnterpriseId(): string {
  * 客户端完成首次认证。用完即删（一次性）。
  */
 function getOrCreateSetupToken(): string | null {
-  const fs = require("fs");
-  const path = require("path");
   const tokenFile = path.resolve(process.cwd(), ".setup-token");
   try {
     if (fs.existsSync(tokenFile)) {
@@ -109,8 +109,6 @@ function getOrCreateSetupToken(): string | null {
 
 /** 删除 setup token（认证成功后调用，一次性）。 */
 export function deleteSetupToken() {
-  const fs = require("fs");
-  const path = require("path");
   const tokenFile = path.resolve(process.cwd(), ".setup-token");
   try { fs.unlinkSync(tokenFile); } catch { /* 忽略 */ }
 }
