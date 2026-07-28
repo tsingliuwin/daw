@@ -66,10 +66,10 @@ export default function BrandFooter(props: {
   // 浮层根节点引用：用于点击外部判定关闭。
   let popoverRef: HTMLDivElement | undefined;
 
-  // 当前空间展示名：personal → 「个人空间」；否则查企业名。
+  // 当前空间展示名：personal → 「个人版」；否则查企业名。
   const currentSpaceName = () => {
     const sp = activeSpace();
-    if (!sp || sp === "personal") return "个人空间";
+    if (!sp || sp === "personal") return "个人版";
     const ent = enterprises().find((e) => e.id === sp);
     return ent ? ent.name : sp;
   };
@@ -202,7 +202,7 @@ export default function BrandFooter(props: {
           setPopoverOpen(willOpen);
           if (willOpen) void refreshSpaces();
         }}
-      >研途教育 AIOA 工作台</span>
+      >{currentSpaceName()}</span>
       <div class="ln-footer-actions">
         {props.onToggleTheme && (
           <button
@@ -328,7 +328,7 @@ export default function BrandFooter(props: {
                     classList={{ "brand-popover__space-item--active": activeSpace() === "personal" || !activeSpace() }}
                     onClick={() => void switchTo("personal")}
                   >
-                    <span class="brand-popover__space-name">个人空间</span>
+                    <span class="brand-popover__space-name">个人版</span>
                   </div>
                   <Show
                     when={enterprises().length > 0}
