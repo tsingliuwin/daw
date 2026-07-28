@@ -636,7 +636,7 @@ export default function ChatView(props: {
               rows={2}
             />
             <div class="chat-composer__toolbar">
-              <div style="display: flex; align-items: center; gap: 10px; min-width: 0; flex-shrink: 1; margin-right: auto;">
+              <div style="display: flex; align-items: center; gap: 4px; min-width: 0; flex-shrink: 1; margin-left: auto;">
                 {/* Token usage indicator */}
                 <div class="token-usage-wrap">
                   <div
