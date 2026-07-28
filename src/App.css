@@ -7026,8 +7026,10 @@ button.lm-select-trigger:hover:not(:disabled) {
 }
 .ln-task-item:hover { background: var(--bg-hover); color: var(--text-primary); }
 .ln-task-item.active {
-  background: var(--bg-active);
+  background: rgba(59, 130, 246, 0.12);
   color: var(--text-primary);
+  border-left: 2px solid var(--accent-blue);
+  padding-left: 8px; /* 补偿左 border 宽度，文字不跳动 */
 }
 .ln-task-name {
   flex: 1;
