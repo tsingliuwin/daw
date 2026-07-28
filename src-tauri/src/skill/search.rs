@@ -181,11 +181,12 @@ impl Tool for SearchTool {
 
         let num = args.num_results.unwrap_or(5).min(10).max(1);
 
-        // 从 AppState 拿 search_backend。
-        let backend = self.app_state.search_backend.clone();
+        // 每次调用时实时从 settings.json 读取搜索配置（用户可能在应用启动后
+        // 才在设置页配的，启动时缓存的 search_backend 可能是 None）。
+        let backend = create_search_backend_from_settings();
         let result = match &backend {
             Some(b) => b.search(&args.query, num).await,
-            None => Err("未配置搜索服务。请在设置中配置搜索服务的 API Key。".to_string()),
+            None => Err("未配置搜索服务。请在设置 → 通用 → 搜索服务中配置 API Key。".to_string()),
         };
 
         let elapsed = start.elapsed().as_millis() as u64;
