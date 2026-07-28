@@ -7820,6 +7820,24 @@ input[type="number"] {
   color: var(--text-dim);
   margin-top: 4px;
 }
+/* 工作区 Select（toolbar 直接子元素，不在 .home-composer__selectors 里）：
+   覆盖默认 trigger 背景色，改成和 ComposerActions pill 一致的透明无边框 */
+.home-composer__toolbar > .lm-select-wrapper .lm-select-trigger {
+  background: transparent;
+  border: none;
+  padding: 4px 8px;
+  font-size: 11px;
+  height: auto;
+  min-height: 26px;
+  border-radius: var(--radius-pill);
+}
+.home-composer__toolbar > .lm-select-wrapper .lm-select-trigger:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+.home-composer__toolbar > .lm-select-wrapper .lm-select-label {
+  font-size: 11px;
+}
 .home-composer__selectors {
   display: flex;
   gap: 4px;
