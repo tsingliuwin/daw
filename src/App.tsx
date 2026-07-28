@@ -13,6 +13,7 @@ import ChatView from "./components/ChatView";
 import HomeView from "./components/HomeView";
 import SettingsPage from "./components/SettingsPage";
 import JoinEnterprisePage from "./components/JoinEnterprisePage";
+import EnterpriseAdminPage from "./components/EnterpriseAdminPage";
 
 /**
  * 应用主布局与状态中枢。相比 lakemind 大幅精简：
@@ -778,20 +779,12 @@ export default function App() {
         </div>
       </Show>
 
-      {/* 企业管理页面（覆盖层）——复用 JoinEnterprisePage */}
+      {/* 企业管理后台（覆盖层） */}
       <Show when={enterpriseAdminOpen()}>
         <div class="app-overlay">
-          <JoinEnterprisePage
-            mode="admin"
+          <EnterpriseAdminPage
             onClose={() => setEnterpriseAdminOpen(false)}
-            onJoined={() => {
-              setEnterpriseAdminOpen(false);
-              void (async () => {
-                let sp = "personal";
-                try { sp = await invoke<string>("get_active_space"); } catch { /* best-effort */ }
-                await switchSpace(sp);
-              })();
-            }}
+            onSaved={() => { void loadModelsFromSettings(); }}
           />
         </div>
       </Show>
