@@ -122,14 +122,15 @@ export default function HomeView(props: {
             onKeyDown={onKeydown}
           />
           <div class="home-composer__toolbar">
-            {/* 选择器区 + 发送按钮一起靠右 */}
+            {/* 工作区选择器：靠左 */}
+            <Select
+              width="150px"
+              value={props.selectedWorkspacePath}
+              options={workspaceOptions()}
+              onChange={onWorkspaceChange}
+            />
+            {/* 模型/优先级/确认 + 发送：靠右 */}
             <div class="home-composer__selectors">
-              <Select
-                width="150px"
-                value={props.selectedWorkspacePath}
-                options={workspaceOptions()}
-                onChange={onWorkspaceChange}
-              />
               <Select
                 width="160px"
                 value={props.selectedModel}
