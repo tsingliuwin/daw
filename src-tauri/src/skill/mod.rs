@@ -23,6 +23,7 @@
 pub mod builtin;
 pub mod context;
 pub mod registry;
+pub mod search;
 
 pub use context::SkillContext;
 pub use registry::SkillRegistry;

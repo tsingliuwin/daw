@@ -20,6 +20,7 @@ use super::events::{
 };
 use super::wire::{ChatMessageDto, Segment};
 use crate::skill::builtin::GetCurrentTimeTool;
+use crate::skill::search::SearchTool;
 use crate::state::AppState;
 use crate::usage::{self, PREAMBLE};
 
@@ -330,19 +331,27 @@ pub(crate) async fn run_agent_task_stream(
     // once per provider branch AND once per 429-retry (rig consumes the tools
     // when building the agent, so each retry needs a fresh set).
     // 未来：skill 的工具也在这里按 registry.enabled_skill_ids() 条件构造。
-    let build_tools = || -> GetCurrentTimeTool {
-        GetCurrentTimeTool {
-            app_state: app_state.clone(),
-            task_id: task_id.clone(),
-            window: window.clone(),
-        }
+    let build_tools = || -> (GetCurrentTimeTool, SearchTool) {
+        (
+            GetCurrentTimeTool {
+                app_state: app_state.clone(),
+                task_id: task_id.clone(),
+                window: window.clone(),
+            },
+            SearchTool {
+                app_state: app_state.clone(),
+                task_id: task_id.clone(),
+                window: window.clone(),
+            },
+        )
     };
 
     // Estimate the input token cost before the stream starts so the UI panel
     // shows data immediately.
-    let time_tool = build_tools();
+    let (time_tool, search_tool) = build_tools();
     let tool_defs = vec![
         time_tool.definition(String::new()).await,
+        search_tool.definition(String::new()).await,
     ];
     let tools_json = serde_json::to_string(&tool_defs).unwrap_or_default();
 
@@ -374,7 +383,7 @@ pub(crate) async fn run_agent_task_stream(
     let mut attempt: usize = 0;
     loop {
         attempt += 1;
-        let time_tool = build_tools();
+        let (time_tool, search_tool) = build_tools();
 
         let outcome = if format == "openai" {
             let base_url = sanitize_endpoint(&provider.endpoint);
@@ -388,7 +397,8 @@ pub(crate) async fn run_agent_task_stream(
                 .agent(&model_id)
                 .preamble(&combined_preamble)
                 .max_tokens(max_tokens_limit)
-                .tool(time_tool);
+                .tool(time_tool)
+                .tool(search_tool);
             if model_id.starts_with("o1") || model_id.starts_with("o3") {
                 agent_builder = agent_builder.additional_params(json!({"reasoning_effort": effort}));
             }
@@ -419,7 +429,8 @@ pub(crate) async fn run_agent_task_stream(
                 .agent(&model_id)
                 .preamble(&combined_preamble)
                 .max_tokens(max_tokens_limit)
-                .tool(time_tool);
+                .tool(time_tool)
+                .tool(search_tool);
             if model_id.starts_with("o1") || model_id.starts_with("o3") {
                 agent_builder = agent_builder.additional_params(json!({"reasoning_effort": effort}));
             }

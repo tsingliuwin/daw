@@ -316,6 +316,38 @@ export default function SettingsPage(props: {
                   </select>
                 </div>
               </div>
+
+              {/* 搜索服务配置 */}
+              <div class="settings-section-head" style="margin-top: 20px;">
+                <h4 class="settings-section-title">搜索服务</h4>
+              </div>
+              <p class="settings-section-desc">配置互联网搜索工具使用的服务。Agent 调用 search 工具时用此配置。</p>
+              <div class="settings-row">
+                <label class="settings-label">搜索引擎</label>
+                <div class="settings-control">
+                  <select
+                    class="settings-select"
+                    value={(settings().search as any)?.engine ?? ""}
+                    onChange={(e) => updateSetting("search", { ...(settings().search as any ?? {}), engine: e.currentTarget.value, apiKey: (settings().search as any)?.apiKey ?? "" })}
+                  >
+                    <option value="">未配置</option>
+                    <option value="exa">Exa</option>
+                    <option value="brave">Brave（待实现）</option>
+                  </select>
+                </div>
+              </div>
+              <div class="settings-row">
+                <label class="settings-label">API Key</label>
+                <div class="settings-control">
+                  <input
+                    class="settings-input"
+                    type="password"
+                    value={(settings().search as any)?.apiKey ?? ""}
+                    placeholder="在 exa.ai/dashboard 获取"
+                    onInput={(e) => updateSetting("search", { ...(settings().search as any ?? {}), engine: (settings().search as any)?.engine ?? "exa", apiKey: e.currentTarget.value })}
+                  />
+                </div>
+              </div>
             </div>
           </Show>
 

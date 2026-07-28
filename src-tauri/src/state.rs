@@ -45,6 +45,8 @@ pub struct AppState {
     /// Aborted task IDs. Inserted by `abort_chat`; checked by `run_stream_loop`
     /// each iteration so a long-running stream stops promptly.
     pub aborted_tasks: Arc<Mutex<HashSet<String>>>,
+    /// 搜索后端（None=未配置搜索服务，SearchTool 调时报错提示）。
+    pub search_backend: Option<Arc<dyn crate::skill::search::SearchBackend>>,
 }
 
 impl AppState {
@@ -55,6 +57,7 @@ impl AppState {
             workspace_path: Arc::new(Mutex::new("DefaultProject".to_string())),
             pending_confirmations: Arc::new(Mutex::new(HashMap::new())),
             aborted_tasks: Arc::new(Mutex::new(HashSet::new())),
+            search_backend: crate::skill::search::create_search_backend_from_settings(),
         }
     }
 }
