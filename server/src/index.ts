@@ -14,7 +14,11 @@ import clientConfig from "./routes/clientConfig.js";
 import models from "./routes/models.js";
 import chat from "./routes/chat.js";
 import search from "./routes/search.js";
-import { config, initSetupToken } from "./config.js";
+import enterprise from "./routes/enterprise.js";
+import { config, initSetupToken, loadEnterpriseConfig } from "./config.js";
+
+// 启动时加载已保存的企业配置（覆盖 env 默认值）。
+loadEnterpriseConfig();
 
 const app = new Hono();
 
@@ -30,6 +34,7 @@ app.route("/client-config", clientConfig);
 app.route("/models", models);
 app.route("/chat", chat);
 app.route("/search", search);
+app.route("/enterprise", enterprise);
 
 // 启动（本地开发用；CloudBase 部署时由适配器调用 app）。
 const port = parseInt(process.env.PORT || "3000", 10);

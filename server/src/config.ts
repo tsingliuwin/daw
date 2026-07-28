@@ -143,3 +143,49 @@ export function initSetupToken(port: number): string | null {
   }
   return null;
 }
+
+/**
+ * 从 enterprise-config.json 加载企业配置，覆盖 env 的默认值。
+ * 在服务端启动时调用（如果文件存在，说明已经配过企业信息）。
+ */
+export function loadEnterpriseConfig() {
+  const configFile = path.resolve(process.cwd(), "enterprise-config.json");
+  try {
+    if (!fs.existsSync(configFile)) return;
+    const raw = fs.readFileSync(configFile, "utf-8");
+    const saved = JSON.parse(raw) as Partial<ServerConfig>;
+    if (saved.serverName) config.serverName = saved.serverName;
+    if (saved.providers) config.providers = saved.providers;
+    if (saved.searchEngine !== undefined) config.searchEngine = saved.searchEngine;
+    if (saved.searchApiKey !== undefined) config.searchApiKey = saved.searchApiKey;
+  } catch { /* 文件读取失败，用 env 默认值 */ }
+}
+
+/**
+ * 保存企业配置到 enterprise-config.json。
+ * 管理员首次配置后调用——持久化 serverName/providers/searchEngine/searchApiKey。
+ */
+export function saveEnterpriseConfig(data: {
+  serverName?: string;
+  providers?: LlmProviderConfig[];
+  searchEngine?: string;
+  searchApiKey?: string;
+}) {
+  const configFile = path.resolve(process.cwd(), "enterprise-config.json");
+  try {
+    // 读现有配置（如果文件已存在），合并新值。
+    let existing: Partial<ServerConfig> = {};
+    try {
+      if (fs.existsSync(configFile)) {
+        existing = JSON.parse(fs.readFileSync(configFile, "utf-8"));
+      }
+    } catch { /* 忽略 */ }
+    const merged = { ...existing, ...data };
+    fs.writeFileSync(configFile, JSON.stringify(merged, null, 2), "utf-8");
+    // 同步更新内存里的 config。
+    if (data.serverName) config.serverName = data.serverName;
+    if (data.providers) config.providers = data.providers;
+    if (data.searchEngine !== undefined) config.searchEngine = data.searchEngine;
+    if (data.searchApiKey !== undefined) config.searchApiKey = data.searchApiKey;
+  } catch { /* 写入失败不影响运行 */ }
+}

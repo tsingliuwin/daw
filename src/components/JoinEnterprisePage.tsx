@@ -5,8 +5,7 @@ import BrandFooter from "./BrandFooter";
 /**
  * 加入企业页面——全屏覆盖层，类似设置页的结构。
  *
- * 引导用户：填服务地址 → 连接验证 → 登录 → 加入企业空间。
- * 未来：全新企业引导配置 LLM/搜索。
+ * 流程：粘贴签名链接/地址 → 认证/登录 → （首次）配置企业信息 → 进入企业空间。
  */
 export default function JoinEnterprisePage(props: {
   onClose: () => void;
@@ -16,9 +15,16 @@ export default function JoinEnterprisePage(props: {
   const [serverUrl, setServerUrl] = createSignal("");
   const [username, setUsername] = createSignal("");
   const [password, setPassword] = createSignal("");
-  const [step, setStep] = createSignal<"address" | "login">("address");
+  const [step, setStep] = createSignal<"address" | "login" | "config">("address");
   const [busy, setBusy] = createSignal(false);
   const [msg, setMsg] = createSignal("");
+
+  // ── 企业配置表单状态 ──
+  const [entName, setEntName] = createSignal("");
+  const [llmEndpoint, setLlmEndpoint] = createSignal("");
+  const [llmApiKey, setLlmApiKey] = createSignal("");
+  const [llmApiFormat, setLlmApiFormat] = createSignal("openai");
+  const [llmModels, setLlmModels] = createSignal("");
 
   // 判断输入是否为签名 URL（含 /auth/setup?token=）
   const isSetupUrl = (input: string) => input.includes("/auth/setup?token=");
@@ -32,9 +38,17 @@ export default function JoinEnterprisePage(props: {
       setBusy(true);
       setMsg("正在通过签名链接认证…");
       try {
-        const name = await invoke<string>("join_enterprise_via_setup", { setupUrl: input });
-        setMsg(`已加入：${name}`);
-        props.onJoined();
+        const result = await invoke<{ serverName: string; needsConfig: boolean }>(
+          "join_enterprise_via_setup", { setupUrl: input }
+        );
+        if (result.needsConfig) {
+          setEntName(result.serverName || "");
+          setStep("config");
+          setMsg("认证成功！请完成企业信息配置。");
+        } else {
+          setMsg(`已加入：${result.serverName}`);
+          props.onJoined();
+        }
       } catch (err) {
         setMsg(`认证失败：${err}`);
       } finally {
@@ -82,6 +96,41 @@ export default function JoinEnterprisePage(props: {
       props.onJoined();
     } catch (err) {
       setMsg(`加入失败：${err}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // 保存企业配置（调 setup_enterprise 命令 → POST /enterprise/setup）。
+  const handleSetupEnterprise = async () => {
+    if (!entName().trim()) { setMsg("请输入企业名称"); return; }
+    if (!llmEndpoint().trim() || !llmApiKey().trim()) { setMsg("请填写 LLM 服务地址和 API Key"); return; }
+    if (!llmModels().trim()) { setMsg("请填写至少一个模型 ID"); return; }
+    setBusy(true);
+    setMsg("");
+    try {
+      const models = llmModels().split("\n").map(s => s.trim()).filter(s => s).map(id => ({
+        id,
+        contextWindow: 256000,
+        maxTokens: 64000,
+      }));
+      const configJson = JSON.stringify({
+        serverName: entName().trim(),
+        providers: [{
+          id: "primary",
+          name: entName().trim(),
+          endpoint: llmEndpoint().trim(),
+          apiKey: llmApiKey().trim(),
+          apiFormat: llmApiFormat(),
+          models,
+          enabled: true,
+        }],
+      });
+      await invoke("setup_enterprise", { configJson });
+      setMsg("企业配置已保存！");
+      props.onJoined();
+    } catch (err) {
+      setMsg(`保存失败：${err}`);
     } finally {
       setBusy(false);
     }
@@ -182,6 +231,86 @@ export default function JoinEnterprisePage(props: {
                     onClick={() => { setStep("address"); setMsg(""); setUsername(""); setPassword(""); }}
                   >
                     ← 返回修改地址
+                  </button>
+                </div>
+              </div>
+            </Show>
+
+            {/* 步骤 3：企业信息配置（首次认证后） */}
+            <Show when={step() === "config"}>
+              <div class="settings-row">
+                <label class="settings-label">企业名称 <span class="provider-field__hint">必填</span></label>
+                <div class="settings-control">
+                  <input
+                    class="settings-input"
+                    value={entName()}
+                    placeholder="如：研途教育"
+                    onInput={(e) => setEntName(e.currentTarget.value)}
+                  />
+                </div>
+              </div>
+
+              <h4 class="settings-section-title" style="margin-top: 20px;">LLM 服务配置</h4>
+              <p class="settings-section-desc">企业员工将使用此配置，无需各自申请 API Key。</p>
+
+              <div class="settings-row">
+                <label class="settings-label">Base URL <span class="provider-field__hint">填到 /v1</span></label>
+                <div class="settings-control">
+                  <input
+                    class="settings-input"
+                    value={llmEndpoint()}
+                    placeholder="https://api.openai.com/v1"
+                    onInput={(e) => setLlmEndpoint(e.currentTarget.value)}
+                  />
+                </div>
+              </div>
+              <div class="settings-row">
+                <label class="settings-label">API Key</label>
+                <div class="settings-control">
+                  <input
+                    class="settings-input"
+                    type="password"
+                    value={llmApiKey()}
+                    placeholder="sk-..."
+                    onInput={(e) => setLlmApiKey(e.currentTarget.value)}
+                  />
+                </div>
+              </div>
+              <div class="settings-row">
+                <label class="settings-label">API 格式</label>
+                <div class="settings-control">
+                  <select
+                    class="settings-select"
+                    value={llmApiFormat()}
+                    onChange={(e) => setLlmApiFormat(e.currentTarget.value)}
+                  >
+                    <option value="openai">openai（兼容/OpenAI）</option>
+                    <option value="anthropic">anthropic（Claude）</option>
+                    <option value="responses">responses（OpenAI Responses）</option>
+                  </select>
+                </div>
+              </div>
+              <div class="settings-row">
+                <label class="settings-label">模型 ID <span class="provider-field__hint">每行一个</span></label>
+                <div class="settings-control">
+                  <textarea
+                    class="settings-input"
+                    style="min-height: 60px; resize: vertical; font-family: var(--font-mono);"
+                    value={llmModels()}
+                    placeholder={"如：\ndeepseek-v4-pro\ngpt-4o"}
+                    onInput={(e) => setLlmModels(e.currentTarget.value)}
+                  />
+                </div>
+              </div>
+              <div class="settings-row">
+                <label class="settings-label" />
+                <div class="settings-control">
+                  <button
+                    class="settings-primary-btn"
+                    disabled={busy()}
+                    onClick={() => void handleSetupEnterprise()}
+                  >
+                    {busy() ? "保存中…" : "保存并进入企业空间"}
                   </button>
                 </div>
               </div>
