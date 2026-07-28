@@ -613,6 +613,7 @@ export default function App() {
             const next: Theme = currentTheme() === "light" ? "geek-dark" : "light";
             persistTheme(next);
           }}
+          onServerChanged={() => { void loadModelsFromSettings(); }}
         />
       </Show>
 

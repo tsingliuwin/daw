@@ -89,111 +89,27 @@ export default function SettingsPage(props: {
   const [editingProviderId, setEditingProviderId] = createSignal<string | null>(null);
   const [tempName, setTempName] = createSignal("");
 
-  // ── 服务端（企业模式）状态 ──
-  // 已连接态由 settings().server 派生（有 token 即已连接）；下面的信号只
-  // 驱动地址输入、登录表单与异步状态展示。
-  const serverInfo = () =>
-    settings().server as { url?: string; token?: string; username?: string; serverName?: string } | undefined;
-  const [serverUrlInput, setServerUrlInput] = createSignal("");
-  const [usernameInput, setUsernameInput] = createSignal("");
-  const [passwordInput, setPasswordInput] = createSignal("");
-  const [connectStatus, setConnectStatus] = createSignal<"idle" | "connecting" | "connected" | "error">("idle");
-  const [loginBusy, setLoginBusy] = createSignal(false);
-  const [serverMsg, setServerMsg] = createSignal("");
-
-  onMount(async () => {
+  // 读取 settings.json 刷新本地状态。onMount 和品牌区登录/断开企业服务端后
+  // （onServerChanged）都会调它，保证通用设置页里的搜索服务、provider 等字段
+  // 与磁盘一致。企业模式服务端配置已迁至品牌区弹出面板（BrandFooter）。
+  const loadSettings = async () => {
     try {
       const json = await invoke<string>("load_settings_json");
       if (json && json !== "{}") {
         const loaded = JSON.parse(json) as AppSettings;
         setSettings(loaded);
-        // 回填服务地址输入框（已连接则显示已连地址）。
-        const svr = loaded.server as { url?: string } | undefined;
-        if (svr?.url) setServerUrlInput(svr.url);
         if (loaded.providers && loaded.providers.length > 0) {
           setSelectedProvider(loaded.providers[0].id);
         }
+      } else {
+        setSettings({});
       }
     } catch (err) {
       logError("ui", "Failed to load settings", err);
     }
-  });
-
-  // ── 服务端：连接（调 client-config 验证地址有效性，用 fetch） ──
-  const handleServerConnect = async () => {
-    const url = serverUrlInput().trim().replace(/\/+$/, "");
-    if (!url) {
-      setServerMsg("请输入服务地址");
-      setConnectStatus("error");
-      return;
-    }
-    setServerUrlInput(url);
-    setConnectStatus("connecting");
-    setServerMsg("");
-    try {
-      const resp = await fetch(`${url}/client-config`);
-      if (!resp.ok) {
-        const text = await resp.text().catch(() => "");
-        setConnectStatus("error");
-        setServerMsg(`无法连接服务端（${resp.status}）${text ? "：" + text : ""}`);
-        return;
-      }
-      const cfg = (await resp.json()) as { serverName?: string };
-      setConnectStatus("connected");
-      setServerMsg(cfg.serverName ? `已识别服务：${cfg.serverName}` : "服务地址有效，请登录");
-    } catch (err) {
-      setConnectStatus("error");
-      setServerMsg(`连接失败：${err}`);
-    }
   };
 
-  // ── 服务端：登录（调 login_to_server 拿 token 并写回 settings.json） ──
-  const handleServerLogin = async () => {
-    const url = serverUrlInput().trim().replace(/\/+$/, "");
-    const user = usernameInput().trim();
-    const pass = passwordInput();
-    if (!url || !user || !pass) {
-      setServerMsg("服务地址、用户名、密码均不能为空");
-      return;
-    }
-    setLoginBusy(true);
-    setServerMsg("");
-    try {
-      const serverName = await invoke<string>("login_to_server", {
-        serverUrl: url,
-        username: user,
-        password: pass,
-      });
-      // 后端已把 server 字段写入 settings.json，重新拉取以刷新本地状态。
-      const json = await invoke<string>("load_settings_json");
-      setSettings(json && json !== "{}" ? (JSON.parse(json) as AppSettings) : {});
-      setServerMsg(`已连接${serverName ? "：" + serverName : ""}`);
-      setUsernameInput("");
-      setPasswordInput("");
-      // 切换到企业模式后模型列表来源变了，通知父级刷新。
-      props.onProvidersChanged?.(settings().providers ?? []);
-    } catch (err) {
-      setServerMsg(`登录失败：${err}`);
-    } finally {
-      setLoginBusy(false);
-    }
-  };
-
-  // ── 服务端：断开（清除 settings.json 的 server 字段） ──
-  const handleServerDisconnect = () => {
-    const updated = { ...settings() };
-    delete updated.server;
-    setSettings(updated);
-    invoke("save_settings_json", { json: JSON.stringify(updated, null, 2) }).catch((err: unknown) => {
-      logError("ui", "Failed to save settings", err);
-    });
-    setConnectStatus("idle");
-    setServerMsg("已断开服务端");
-    setUsernameInput("");
-    setPasswordInput("");
-    // 退回个人模式，模型列表需重新从本地 providers 加载。
-    props.onProvidersChanged?.(updated.providers ?? []);
-  };
+  onMount(() => { void loadSettings(); });
 
   // ── 持久化 helper ──
   const updateSetting = (key: keyof AppSettings, value: unknown) => {
@@ -366,6 +282,11 @@ export default function SettingsPage(props: {
             }}
             isDarkTheme={currentTheme() !== "light"}
             onCloseSettings={props.onClose}
+            onServerChanged={() => {
+              // 企业模式登录/断开后刷新本地 settings 状态，并通知父级重载模型列表。
+              void loadSettings();
+              props.onProvidersChanged?.([]);
+            }}
           />
         </nav>
 
@@ -440,118 +361,6 @@ export default function SettingsPage(props: {
                 </div>
               </div>
 
-              {/* 服务端配置（企业模式） */}
-              <div class="settings-section-head" style="margin-top: 20px;">
-                <h4 class="settings-section-title">服务端</h4>
-              </div>
-              <p class="settings-section-desc">连接企业服务端后，模型和搜索由服务端统一管理，无需单独配置。</p>
-
-              <Show
-                when={!!serverInfo()?.token}
-                fallback={
-                  <Show
-                    when={connectStatus() === "connected"}
-                    fallback={
-                      <div class="settings-row">
-                        <label class="settings-label">服务地址</label>
-                        <div class="settings-control" style="display: flex; gap: 8px; align-items: center;">
-                          <input
-                            class="settings-input"
-                            style="flex: 1; min-width: 0;"
-                            value={serverUrlInput()}
-                            placeholder="http://localhost:3000"
-                            onInput={(e) => setServerUrlInput(e.currentTarget.value)}
-                            onKeyDown={(e) => { if (e.key === "Enter") handleServerConnect(); }}
-                          />
-                          <button
-                            class="settings-primary-btn"
-                            style="flex-shrink: 0;"
-                            disabled={connectStatus() === "connecting"}
-                            onClick={handleServerConnect}
-                          >
-                            {connectStatus() === "connecting" ? "连接中…" : "连接"}
-                          </button>
-                        </div>
-                      </div>
-                    }
-                  >
-                    {/* 地址已验证，显示登录表单 */}
-                    <div class="settings-row">
-                      <label class="settings-label">服务地址</label>
-                      <div class="settings-control">
-                        <input
-                          class="settings-input"
-                          value={serverUrlInput()}
-                          disabled
-                          style="color: var(--text-secondary);"
-                        />
-                      </div>
-                    </div>
-                    <div class="settings-row">
-                      <label class="settings-label">用户名</label>
-                      <div class="settings-control">
-                        <input
-                          class="settings-input"
-                          value={usernameInput()}
-                          placeholder="用户名"
-                          onInput={(e) => setUsernameInput(e.currentTarget.value)}
-                          onKeyDown={(e) => { if (e.key === "Enter") handleServerLogin(); }}
-                        />
-                      </div>
-                    </div>
-                    <div class="settings-row">
-                      <label class="settings-label">密码</label>
-                      <div class="settings-control" style="display: flex; gap: 8px; align-items: center;">
-                        <input
-                          class="settings-input"
-                          style="flex: 1; min-width: 0;"
-                          type="password"
-                          value={passwordInput()}
-                          placeholder="密码"
-                          onInput={(e) => setPasswordInput(e.currentTarget.value)}
-                          onKeyDown={(e) => { if (e.key === "Enter") handleServerLogin(); }}
-                        />
-                        <button
-                          class="settings-primary-btn"
-                          style="flex-shrink: 0;"
-                          disabled={loginBusy()}
-                          onClick={handleServerLogin}
-                        >
-                          {loginBusy() ? "登录中…" : "登录"}
-                        </button>
-                      </div>
-                    </div>
-                  </Show>
-                }
-              >
-                {/* 已连接：显示服务名 + 断开 */}
-                <div class="settings-row">
-                  <label class="settings-label">已连接</label>
-                  <div class="settings-control" style="display: flex; gap: 8px; align-items: center;">
-                    <span style="color: var(--text-secondary); font-size: 12.5px;">
-                      {serverInfo()?.serverName
-                        ? `${serverInfo()?.serverName}${serverInfo()?.username ? "（" + serverInfo()?.username + "）" : ""}`
-                        : serverInfo()?.url}
-                    </span>
-                    <button
-                      class="settings-danger-btn"
-                      style="flex-shrink: 0;"
-                      onClick={handleServerDisconnect}
-                    >
-                      断开
-                    </button>
-                  </div>
-                </div>
-              </Show>
-
-              <Show when={serverMsg()}>
-                <div class="settings-row">
-                  <label class="settings-label" />
-                  <div class="settings-control">
-                    <span style="color: var(--text-secondary); font-size: 12px;">{serverMsg()}</span>
-                  </div>
-                </div>
-              </Show>
             </div>
           </Show>
 

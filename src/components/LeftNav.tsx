@@ -33,6 +33,8 @@ export default function LeftNav(props: {
   onOpenSettings: () => void;
   /** 快捷切换主题（深色 ↔ 浅色）。底部品牌区主题按钮触发。 */
   onToggleTheme: () => void;
+  /** 企业服务端登录/断开后刷新模型列表（透传给 BrandFooter 弹层）。 */
+  onServerChanged?: () => void;
 }) {
   return (
     <div class="left-nav">
@@ -135,6 +137,7 @@ export default function LeftNav(props: {
         onToggleTheme={props.onToggleTheme}
         isDarkTheme={currentTheme() !== "light"}
         onOpenSettings={props.onOpenSettings}
+        onServerChanged={props.onServerChanged}
       />
     </div>
   );
