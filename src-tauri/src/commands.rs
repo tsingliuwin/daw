@@ -11,7 +11,7 @@
 //! * **Logs**     — unified log store append/query/clear.
 //! * **Agent**    — start the streaming chat, resolve a pending write, abort.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use tauri::Emitter;
 
@@ -175,18 +175,20 @@ pub async fn remove_workspace(path: String) -> Result<(), String> {
     let conn = db::get_db_conn()?;
     let _ = conn.execute("PRAGMA foreign_keys = ON;", []);
 
-    // Clean up content files for all tasks under this workspace.
+    // Clean up content files for all tasks under this workspace. Tasks are
+    // space-scoped, so each row carries its own space_id.
     let mut stmt = conn
-        .prepare("SELECT id FROM tasks WHERE workspace_path = ?")
+        .prepare("SELECT id, space_id FROM tasks WHERE workspace_path = ?")
         .map_err(|e| e.to_string())?;
     let rows = stmt
-        .query_map([&path], |row| row.get::<_, String>(0))
+        .query_map([&path], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
         .map_err(|e| e.to_string())?;
 
-    let aioa_dir = db::get_aioa_dir()?;
     for r in rows {
-        if let Ok(id) = r {
-            delete_task_content_files(&aioa_dir, &id);
+        if let Ok((id, space_id)) = r {
+            delete_task_content_files(&space_id, &id);
         }
     }
 
@@ -215,14 +217,17 @@ pub struct Task {
 }
 
 #[tauri::command]
-pub async fn load_workspace_tasks(workspace_path: String) -> Result<Vec<Task>, String> {
+pub async fn load_workspace_tasks(
+    workspace_path: String,
+    space_id: String,
+) -> Result<Vec<Task>, String> {
     tauri::async_runtime::spawn_blocking(move || -> Result<Vec<Task>, String> {
         let conn = db::get_db_conn()?;
         let mut stmt = conn
-            .prepare("SELECT id, name, created_at, saved, model_id, token_usage FROM tasks WHERE workspace_path = ? ORDER BY created_at ASC")
+            .prepare("SELECT id, name, created_at, saved, model_id, token_usage FROM tasks WHERE workspace_path = ? AND space_id = ? ORDER BY created_at ASC")
             .map_err(|e| e.to_string())?;
         let rows = stmt
-            .query_map([&workspace_path], |row| {
+            .query_map(rusqlite::params![&workspace_path, &space_id], |row| {
                 Ok((
                     row.get::<_, String>(0)?,
                     row.get::<_, String>(1)?,
@@ -234,12 +239,12 @@ pub async fn load_workspace_tasks(workspace_path: String) -> Result<Vec<Task>, S
             })
             .map_err(|e| e.to_string())?;
 
-        let aioa_dir = db::get_aioa_dir()?;
+        let chats_dir = db::get_chats_dir(&space_id)?;
         let mut tasks = Vec::new();
         for r in rows {
             if let Ok((id, name, created_at, saved, model_id, token_usage_json)) = r {
                 let mut messages = None;
-                let filepath = aioa_dir.join("chats").join(format!("{id}.json"));
+                let filepath = chats_dir.join(format!("{id}.json"));
                 if filepath.exists() {
                     let json_str = std::fs::read_to_string(filepath).unwrap_or_default();
                     messages = serde_json::from_str(&json_str).ok();
@@ -271,29 +276,29 @@ pub async fn save_task(
     messages: serde_json::Value,
     model_id: Option<String>,
     token_usage: Option<serde_json::Value>,
+    space_id: String,
 ) -> Result<(), String> {
     let conn = db::get_db_conn()?;
     let now = now_ms();
     let usage_json = token_usage.map(|v| serde_json::to_string(&v).unwrap_or_default());
     conn.execute(
-        "INSERT OR REPLACE INTO tasks (id, workspace_path, name, kind, created_at, saved, model_id, token_usage)
-         VALUES (?, ?, ?, 'task', COALESCE((SELECT created_at FROM tasks WHERE id = ?), ?), 1, ?, ?)",
-        rusqlite::params![task_id, workspace_path, name, task_id, now, model_id, usage_json],
+        "INSERT OR REPLACE INTO tasks (id, workspace_path, name, kind, created_at, saved, model_id, token_usage, space_id)
+         VALUES (?, ?, ?, 'task', COALESCE((SELECT created_at FROM tasks WHERE id = ?), ?), 1, ?, ?, ?)",
+        rusqlite::params![task_id, workspace_path, name, task_id, now, model_id, usage_json, space_id],
     )
     .map_err(|e| e.to_string())?;
 
-    let aioa_dir = db::get_aioa_dir()?;
-    let filepath = aioa_dir.join("chats").join(format!("{task_id}.json"));
+    let chats_dir = db::get_chats_dir(&space_id)?;
+    let filepath = chats_dir.join(format!("{task_id}.json"));
     let json_str = serde_json::to_string(&messages).map_err(|e| e.to_string())?;
     std::fs::write(filepath, json_str).map_err(|e| format!("Failed to write chat JSON file: {e}"))?;
     Ok(())
 }
 
 #[tauri::command]
-pub async fn delete_task(task_id: String) -> Result<(), String> {
+pub async fn delete_task(task_id: String, space_id: String) -> Result<(), String> {
     let conn = db::get_db_conn()?;
-    let aioa_dir = db::get_aioa_dir()?;
-    delete_task_content_files(&aioa_dir, &task_id);
+    delete_task_content_files(&space_id, &task_id);
     conn.execute("DELETE FROM tasks WHERE id = ?", [&task_id])
         .map_err(|e| e.to_string())?;
     Ok(())
@@ -583,12 +588,253 @@ pub async fn fetch_server_models() -> Result<String, String> {
 }
 
 // ===========================================================================
+// Multi-space (enterprise) commands
+// ===========================================================================
+//
+// The app stores chat tasks under a "space": the built-in `personal` space
+// (`~/.aioa/personal/chats/`) or one enterprise space per joined org
+// (`~/.aioa/<enterpriseUUID>/chats/`). The global metadata DB and
+// `settings.json` are shared across spaces. settings.json holds the joined
+// enterprises and the currently active space:
+//   { "enterprises": [{id,name,serverUrl,token,username}], "activeSpace": "..." }
+// These commands read/modify that file directly (the source of truth) and
+// keep `AppState.active_space` in sync as a fast in-memory cache.
+
+/// A joined enterprise, as exposed to the frontend. The `token` is deliberately
+/// omitted so secrets never cross the IPC boundary.
+#[derive(serde::Serialize)]
+pub struct EnterpriseInfo {
+    pub id: String,
+    pub name: String,
+    #[serde(rename = "serverUrl")]
+    pub server_url: String,
+    pub username: String,
+}
+
+/// List the enterprises stored in settings.json (token omitted).
+#[tauri::command]
+pub async fn get_enterprises() -> Result<Vec<EnterpriseInfo>, String> {
+    let settings = read_settings_value()?;
+    let arr = settings
+        .get("enterprises")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let mut out = Vec::new();
+    for e in arr {
+        out.push(EnterpriseInfo {
+            id: e.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            name: e.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            server_url: e
+                .get("serverUrl")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
+            username: e
+                .get("username")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
+        });
+    }
+    Ok(out)
+}
+
+/// Return the currently active space id ("personal" or an enterprise UUID).
+/// Defaults to "personal" when settings.json has no `activeSpace`.
+#[tauri::command]
+pub async fn get_active_space() -> Result<String, String> {
+    let settings = read_settings_value()?;
+    let active = settings
+        .get("activeSpace")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .unwrap_or("personal")
+        .to_string();
+    Ok(active)
+}
+
+/// Set the active space (persisted to settings.json and mirrored into the
+/// in-memory `AppState.active_space` cache).
+#[tauri::command]
+pub async fn set_active_space(
+    space_id: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    let mut settings = read_settings_value()?;
+    settings["activeSpace"] = serde_json::json!(space_id);
+    write_settings_value(&settings)?;
+    let mut active = state.active_space.lock().await;
+    *active = space_id;
+    Ok(())
+}
+
+/// Join an enterprise: log in, fetch the enterprise id + name, persist the
+/// connection into settings.json `enterprises` (upsert by id), switch the
+/// active space to it, and return the enterprise (server) name.
+#[tauri::command]
+pub async fn join_enterprise(
+    server_url: String,
+    username: String,
+    password: String,
+) -> Result<String, String> {
+    let base = normalize_server_url(&server_url);
+    if base.is_empty() {
+        return Err("服务地址不能为空".to_string());
+    }
+    if username.trim().is_empty() || password.is_empty() {
+        return Err("用户名和密码不能为空".to_string());
+    }
+
+    let client = reqwest::Client::new();
+
+    // 1. POST /auth/login → token.
+    let resp = client
+        .post(format!("{base}/auth/login"))
+        .json(&serde_json::json!({ "username": username, "password": password }))
+        .send()
+        .await
+        .map_err(|e| format!("连接服务端失败: {e}"))?;
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(format!("登录失败（{status}）: {body}"));
+    }
+    let body: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| format!("解析登录响应失败: {e}"))?;
+    let token = body
+        .get("token")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "登录响应缺少 token".to_string())?
+        .to_string();
+    let login_username = body
+        .get("user")
+        .and_then(|u| u.get("username"))
+        .and_then(|v| v.as_str())
+        .unwrap_or(&username)
+        .to_string();
+
+    // 2. GET /client-config → enterpriseId + serverName.
+    let resp2 = client
+        .get(format!("{base}/client-config"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .map_err(|e| format!("拉取企业配置失败: {e}"))?;
+    if !resp2.status().is_success() {
+        let status = resp2.status();
+        let body = resp2.text().await.unwrap_or_default();
+        return Err(format!("拉取企业配置失败（{status}）: {body}"));
+    }
+    let cfg: serde_json::Value = resp2
+        .json()
+        .await
+        .map_err(|e| format!("解析企业配置失败: {e}"))?;
+    let enterprise_id = cfg
+        .get("enterpriseId")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| "企业配置缺少 enterpriseId".to_string())?
+        .to_string();
+    let server_name = cfg
+        .get("serverName")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    // 3. Upsert into the enterprises array (match by id).
+    let mut settings = read_settings_value()?;
+    let entry = serde_json::json!({
+        "id": enterprise_id,
+        "name": server_name,
+        "serverUrl": base,
+        "token": token,
+        "username": login_username,
+    });
+    let arr = settings
+        .get("enterprises")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let mut found = false;
+    let mut new_arr: Vec<serde_json::Value> = Vec::new();
+    for e in arr {
+        let eid = e.get("id").and_then(|v| v.as_str()).unwrap_or("");
+        if eid == enterprise_id {
+            new_arr.push(entry.clone());
+            found = true;
+        } else {
+            new_arr.push(e);
+        }
+    }
+    if !found {
+        new_arr.push(entry);
+    }
+    settings["enterprises"] = serde_json::Value::Array(new_arr);
+
+    // 4. Switch the active space to the newly joined enterprise.
+    settings["activeSpace"] = serde_json::json!(enterprise_id);
+    write_settings_value(&settings)?;
+
+    Ok(server_name)
+}
+
+/// Leave an enterprise: drop it from settings.json `enterprises`. If it was the
+/// active space, fall back to "personal" and mirror that into the in-memory
+/// cache.
+#[tauri::command]
+pub async fn leave_enterprise(
+    enterprise_id: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    let mut settings = read_settings_value()?;
+    let arr = settings
+        .get("enterprises")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let remaining: Vec<serde_json::Value> = arr
+        .into_iter()
+        .filter(|e| {
+            e.get("id").and_then(|v| v.as_str()).unwrap_or("") != enterprise_id
+        })
+        .collect();
+    settings["enterprises"] = serde_json::Value::Array(remaining);
+
+    // If the removed enterprise was active, fall back to personal.
+    let active = settings
+        .get("activeSpace")
+        .and_then(|v| v.as_str())
+        .unwrap_or("personal")
+        .to_string();
+    if active == enterprise_id {
+        settings["activeSpace"] = serde_json::json!("personal");
+    }
+    write_settings_value(&settings)?;
+
+    let new_active = settings
+        .get("activeSpace")
+        .and_then(|v| v.as_str())
+        .unwrap_or("personal")
+        .to_string();
+    let mut st = state.active_space.lock().await;
+    *st = new_active;
+    Ok(())
+}
+
+// ===========================================================================
 // Internals — helpers
 // ===========================================================================
 
-fn delete_task_content_files(aioa_dir: &Path, task_id: &str) {
-    // All tasks are chat tasks in M1; the chats/ file is the only content file.
-    let _ = std::fs::remove_file(aioa_dir.join("chats").join(format!("{task_id}.json")));
+fn delete_task_content_files(space_id: &str, task_id: &str) {
+    // All tasks are chat tasks in M1; the <space>/chats/ file is the only
+    // content file. The chats dir may legitimately not exist yet for a fresh
+    // space, so resolve-and-remove best-effort.
+    if let Ok(dir) = db::get_chats_dir(space_id) {
+        let _ = std::fs::remove_file(dir.join(format!("{task_id}.json")));
+    }
 }
 
 fn now_ms() -> i64 {

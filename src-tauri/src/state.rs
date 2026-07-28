@@ -45,6 +45,11 @@ pub struct AppState {
     /// Aborted task IDs. Inserted by `abort_chat`; checked by `run_stream_loop`
     /// each iteration so a long-running stream stops promptly.
     pub aborted_tasks: Arc<Mutex<HashSet<String>>>,
+    /// The currently active space id ("personal" or an enterprise UUID). The
+    /// source of truth is `settings.json`'s `activeSpace`; this is an in-memory
+    /// cache seeded at startup and kept in sync by `set_active_space` /
+    /// `leave_enterprise`.
+    pub active_space: Arc<Mutex<String>>,
     /// 搜索后端（None=未配置搜索服务，SearchTool 调时报错提示）。
     pub search_backend: Option<Arc<dyn crate::skill::search::SearchBackend>>,
 }
@@ -57,9 +62,32 @@ impl AppState {
             workspace_path: Arc::new(Mutex::new("DefaultProject".to_string())),
             pending_confirmations: Arc::new(Mutex::new(HashMap::new())),
             aborted_tasks: Arc::new(Mutex::new(HashSet::new())),
+            active_space: Arc::new(Mutex::new(load_active_space())),
             search_backend: crate::skill::search::create_search_backend_from_settings(),
         }
     }
+}
+
+/// Read the active space from `~/.aioa/settings.json` so the in-memory cache
+/// matches what was last persisted. Falls back to "personal" when the file or
+/// field is missing/unreadable (the default for a fresh install).
+fn load_active_space() -> String {
+    let Some(mut home) = get_home_dir() else {
+        return "personal".to_string();
+    };
+    home.push(".aioa");
+    home.push("settings.json");
+    let Ok(content) = std::fs::read_to_string(&home) else {
+        return "personal".to_string();
+    };
+    let Ok(val) = serde_json::from_str::<serde_json::Value>(&content) else {
+        return "personal".to_string();
+    };
+    val.get("activeSpace")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| "personal".to_string())
 }
 
 /// The default workspace directory: `~/.aioa/DefaultProject/`.

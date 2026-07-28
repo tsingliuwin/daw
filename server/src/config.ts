@@ -59,11 +59,32 @@ function parseUsers(): UserConfig[] {
   }
 }
 
-export const config: ServerConfig = {
+/**
+ * 企业唯一 ID——服务端首次启动时生成 UUID，持久化到 .enterprise-id 文件。
+ * 客户端首次连接时从 /client-config 获取，作为数据隔离的 key。
+ */
+function getOrCreateEnterpriseId(): string {
+  const fs = require("fs");
+  const path = require("path");
+  const idFile = path.resolve(process.cwd(), ".enterprise-id");
+  try {
+    if (fs.existsSync(idFile)) {
+      return fs.readFileSync(idFile, "utf-8").trim();
+    }
+  } catch { /* 文件读取失败，继续生成新的 */ }
+  const id = crypto.randomUUID();
+  try {
+    fs.writeFileSync(idFile, id, "utf-8");
+  } catch { /* 写入失败也不影响运行——内存里有 ID */ }
+  return id;
+}
+
+export const config: ServerConfig & { enterpriseId: string } = {
   jwtSecret: process.env.JWT_SECRET || "aioa-dev-secret-change-me",
   serverName: process.env.SERVER_NAME || "AIOA 工作台",
   providers: parseProviders(),
   searchEngine: process.env.SEARCH_ENGINE || "",
   searchApiKey: process.env.SEARCH_API_KEY || "",
   users: parseUsers(),
+  enterpriseId: getOrCreateEnterpriseId(),
 };

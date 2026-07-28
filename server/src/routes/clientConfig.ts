@@ -13,6 +13,7 @@ const clientConfig = new Hono();
 clientConfig.get("/", (c) => {
   return c.json({
     serverName: config.serverName,
+    enterpriseId: config.enterpriseId,
     hasUsers: config.users.length > 0,
     hasProviders: config.providers.length > 0,
     hasSearch: !!(config.searchEngine && config.searchApiKey),

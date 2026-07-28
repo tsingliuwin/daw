@@ -85,6 +85,11 @@ pub fn run() {
             commands::test_llm_connection,
             commands::login_to_server,
             commands::fetch_server_models,
+            commands::get_enterprises,
+            commands::get_active_space,
+            commands::set_active_space,
+            commands::join_enterprise,
+            commands::leave_enterprise,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

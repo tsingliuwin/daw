@@ -39,6 +39,20 @@ pub fn get_db_path() -> Result<PathBuf, String> {
     Ok(path)
 }
 
+/// Get the per-space chat content directory `~/.aioa/<space_id>/chats/`.
+///
+/// The "personal" space (`space_id = "personal"`) is the default; each joined
+/// enterprise uses its UUID. The directory is created (idempotent) so any
+/// caller — read or write — can rely on it existing.
+pub fn get_chats_dir(space_id: &str) -> Result<PathBuf, String> {
+    let mut path = get_aioa_dir()?;
+    path.push(space_id);
+    path.push("chats");
+    fs::create_dir_all(&path)
+        .map_err(|e| format!("Failed to create chats directory for space {space_id}: {e}"))?;
+    Ok(path)
+}
+
 /// Establish connection to sqlite database.
 ///
 /// Each call opens a fresh connection (the app fans out concurrent reads/writes
@@ -84,11 +98,12 @@ pub fn set_config(conn: &Connection, key: &str, value: &str) -> Result<(), Strin
 
 /// Initialize central directory structure and table schemas. Idempotent.
 pub fn init_global_db() -> Result<(), String> {
-    let aioa_dir = get_aioa_dir()?;
-
-    // Content directory for chat task files.
-    let chats_dir = aioa_dir.join("chats");
-    fs::create_dir_all(&chats_dir).map_err(|e| format!("Failed to create chats directory: {e}"))?;
+    // Content directory for chat task files, scoped per space. The default
+    // `personal` space is always created on startup; enterprise spaces are
+    // created on demand by `get_chats_dir(<uuid>)` when their tasks are first
+    // read/written.
+    get_chats_dir("personal")?;
+    migrate_legacy_chats();
 
     let conn = get_db_conn()?;
     let _ = conn.execute("PRAGMA foreign_keys = ON;", []);
@@ -117,11 +132,20 @@ pub fn init_global_db() -> Result<(), String> {
             saved INTEGER NOT NULL,
             model_id TEXT,
             token_usage TEXT,
+            space_id TEXT NOT NULL DEFAULT 'personal',
             FOREIGN KEY(workspace_path) REFERENCES workspaces(path) ON DELETE CASCADE
         )",
         [],
     )
     .map_err(|e| format!("Failed to create tasks table: {e}"))?;
+
+    // Idempotent migration: add the `space_id` column to tasks for pre-multispace
+    // databases. Fresh DBs already have it via CREATE TABLE above; ALTER fails
+    // when the column already exists, which we silently ignore.
+    let _ = conn.execute(
+        "ALTER TABLE tasks ADD COLUMN space_id TEXT NOT NULL DEFAULT 'personal'",
+        [],
+    );
 
     // config: key/value user settings
     conn.execute(
@@ -347,4 +371,43 @@ pub fn now_ms() -> i64 {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as i64
+}
+
+/// Best-effort one-time migration: legacy personal-mode stored chat files in
+/// `~/.aioa/chats/`; the multi-space layout moves them under the `personal`
+/// space at `~/.aioa/personal/chats/`. Move any leftover `.json` files so
+/// existing users keep their history on upgrade. Failures are swallowed —
+/// this must never block startup.
+fn migrate_legacy_chats() {
+    let Ok(aioa_dir) = get_aioa_dir() else {
+        return;
+    };
+    let legacy = aioa_dir.join("chats");
+    if !legacy.is_dir() {
+        return;
+    }
+    let Ok(target) = get_chats_dir("personal") else {
+        return;
+    };
+    let Ok(entries) = fs::read_dir(&legacy) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let p = entry.path();
+        if p.extension().and_then(|e| e.to_str()) != Some("json") {
+            continue;
+        }
+        let Some(file_name) = p.file_name() else {
+            continue;
+        };
+        let dest = target.join(file_name);
+        if dest.exists() {
+            continue;
+        }
+        // `rename` is atomic on the same volume (the paths share ~/.aioa, so
+        // they always are here); fall back to copy+remove if it ever fails.
+        if fs::rename(&p, &dest).is_err() {
+            let _ = fs::copy(&p, &dest).and_then(|_| fs::remove_file(&p));
+        }
+    }
 }
