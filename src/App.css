@@ -7849,8 +7849,6 @@ input[type="number"] {
   background: var(--bg-hover);
   color: var(--text-primary);
 }
-  max-width: 120px;
-}
 
 .home-composer__send {
   flex-shrink: 0;
