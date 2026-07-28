@@ -443,6 +443,146 @@ pub async fn test_llm_connection(
 }
 
 // ===========================================================================
+// Enterprise server commands
+// ===========================================================================
+
+/// Read ~/.aioa/settings.json as a JSON object Value. Returns an empty object
+/// when the file does not exist yet. Used by the enterprise-mode commands to
+/// read/modify the `server` field without clobbering everything else in the
+/// file.
+fn read_settings_value() -> Result<serde_json::Value, String> {
+    let mut path = db::get_aioa_dir()?;
+    path.push("settings.json");
+    if !path.exists() {
+        return Ok(serde_json::json!({}));
+    }
+    let content = std::fs::read_to_string(&path).map_err(|e| format!("读取配置文件失败: {e}"))?;
+    serde_json::from_str::<serde_json::Value>(&content)
+        .map_err(|e| format!("解析配置文件失败: {e}"))
+}
+
+/// Write a JSON Value back to ~/.aioa/settings.json (pretty-printed).
+fn write_settings_value(value: &serde_json::Value) -> Result<(), String> {
+    let mut path = db::get_aioa_dir()?;
+    path.push("settings.json");
+    let json_str =
+        serde_json::to_string_pretty(value).map_err(|e| format!("序列化配置文件失败: {e}"))?;
+    std::fs::write(path, json_str).map_err(|e| format!("保存配置文件失败: {e}"))
+}
+
+/// Strip trailing whitespace/slashes from a server URL so paths can be safely
+/// appended (`{base}/auth/login`).
+fn normalize_server_url(url: &str) -> String {
+    url.trim().trim_end_matches('/').to_string()
+}
+
+/// Login to an enterprise server: POST /auth/login → store the token (plus url,
+/// username, serverName) into settings.json `server` field → return serverName.
+///
+/// The stored `server` field shape is `{url, token, username, serverName}`; the
+/// frontend reads it to decide between enterprise and personal mode.
+#[tauri::command]
+pub async fn login_to_server(
+    server_url: String,
+    username: String,
+    password: String,
+) -> Result<String, String> {
+    let base = normalize_server_url(&server_url);
+    if base.is_empty() {
+        return Err("服务地址不能为空".to_string());
+    }
+    if username.trim().is_empty() || password.is_empty() {
+        return Err("用户名和密码不能为空".to_string());
+    }
+
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(format!("{base}/auth/login"))
+        .json(&serde_json::json!({ "username": username, "password": password }))
+        .send()
+        .await
+        .map_err(|e| format!("连接服务端失败: {e}"))?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(format!("登录失败（{status}）: {body}"));
+    }
+
+    let body: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| format!("解析登录响应失败: {e}"))?;
+
+    let token = body
+        .get("token")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "登录响应缺少 token".to_string())?
+        .to_string();
+    let server_name = body
+        .get("serverName")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let user_name = body
+        .get("user")
+        .and_then(|u| u.get("username"))
+        .and_then(|v| v.as_str())
+        .unwrap_or(&username)
+        .to_string();
+
+    // Merge the `server` field into settings.json, preserving every other field.
+    let mut settings = read_settings_value()?;
+    settings["server"] = serde_json::json!({
+        "url": base,
+        "token": token,
+        "username": user_name,
+        "serverName": server_name,
+    });
+    write_settings_value(&settings)?;
+
+    Ok(server_name)
+}
+
+/// Fetch the model list from the connected enterprise server (GET /models with
+/// the stored Bearer token). Returns the raw JSON string for the frontend to
+/// parse into its model selector. Reads `server.url` + `server.token` from
+/// settings.json; returns an error when not yet connected.
+#[tauri::command]
+pub async fn fetch_server_models() -> Result<String, String> {
+    let settings = read_settings_value()?;
+    let server = settings
+        .get("server")
+        .ok_or_else(|| "尚未连接服务端".to_string())?;
+    let url = server
+        .get("url")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "服务端地址缺失".to_string())?;
+    let token = server
+        .get("token")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "服务端 token 缺失".to_string())?;
+
+    let client = reqwest::Client::new();
+    let resp = client
+        .get(format!("{url}/models"))
+        .bearer_auth(token)
+        .send()
+        .await
+        .map_err(|e| format!("拉取模型列表失败: {e}"))?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(format!("拉取模型列表失败（{status}）: {body}"));
+    }
+
+    resp.text()
+        .await
+        .map_err(|e| format!("读取模型列表响应失败: {e}"))
+}
+
+// ===========================================================================
 // Internals — helpers
 // ===========================================================================
 

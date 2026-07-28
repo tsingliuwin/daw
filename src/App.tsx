@@ -101,45 +101,77 @@ export default function App() {
     return first ? first.name || first.path : "";
   });
 
-  // 加载 settings.json → 收集所有 enabled provider 下的模型为可选项。
+  // 加载 settings.json → 收集可用模型为可选项。
+  // 企业模式：settings.json 有 server.url + server.token 时，从服务端 /models
+  // 拉取模型列表（无需本地 key）；否则保持个人模式，从本地 providers 读。
   async function loadModelsFromSettings() {
     try {
       const json = await invoke<string>("load_settings_json");
-      if (json && json !== "{}") {
-        const loaded = JSON.parse(json);
-        const models: ModelOption[] = [];
-        const ctxMap: Record<string, number> = {};
-        if (loaded.providers) {
-          for (const prov of loaded.providers) {
-            if (prov.enabled && prov.models) {
-              for (const m of prov.models) {
-                if (!m.id || !m.id.trim()) continue; // 跳过空 id 的模型行（未填完）
-                const opt: ModelOption = {
-                  providerId: prov.id,
-                  providerName: prov.name || prov.id,
-                  modelId: m.id,
-                  contextWindow: m.contextWindow,
-                };
-                models.push(opt);
-                if (m.contextWindow) ctxMap[modelKeyOf(opt)] = m.contextWindow;
-              }
+      if (!json || json === "{}") return;
+      const loaded = JSON.parse(json);
+      const models: ModelOption[] = [];
+      const ctxMap: Record<string, number> = {};
+
+      // 企业模式：连了服务端就从服务端拉模型列表。
+      const server = loaded.server;
+      if (server && server.url && server.token) {
+        try {
+          const raw = await invoke<string>("fetch_server_models");
+          const data = JSON.parse(raw) as {
+            providers?: {
+              id: string;
+              name?: string;
+              models?: { id: string; contextWindow: number; maxTokens?: number }[];
+            }[];
+          };
+          for (const prov of data.providers || []) {
+            for (const m of prov.models || []) {
+              if (!m.id || !m.id.trim()) continue; // 跳过空 id 的模型行（未填完）
+              const opt: ModelOption = {
+                providerId: prov.id,
+                providerName: prov.name || prov.id,
+                modelId: m.id,
+                contextWindow: m.contextWindow,
+              };
+              models.push(opt);
+              if (m.contextWindow) ctxMap[modelKeyOf(opt)] = m.contextWindow;
+            }
+          }
+        } catch (err) {
+          logError("ui", "Failed to fetch server models", err);
+        }
+      } else if (loaded.providers) {
+        // 个人模式：从 settings.json providers 读已启用的模型。
+        for (const prov of loaded.providers) {
+          if (prov.enabled && prov.models) {
+            for (const m of prov.models) {
+              if (!m.id || !m.id.trim()) continue; // 跳过空 id 的模型行（未填完）
+              const opt: ModelOption = {
+                providerId: prov.id,
+                providerName: prov.name || prov.id,
+                modelId: m.id,
+                contextWindow: m.contextWindow,
+              };
+              models.push(opt);
+              if (m.contextWindow) ctxMap[modelKeyOf(opt)] = m.contextWindow;
             }
           }
         }
-        setAvailableModels(models);
-        setModelCtxWindows(ctxMap);
+      }
 
-        const keys = models.map(modelKeyOf);
-        const savedDefault = localStorage.getItem("default_model");
-        if (models.length > 0) {
-          if (savedDefault && keys.includes(savedDefault)) {
-            setSelectedModel(savedDefault);
-          } else if (!selectedModel() || !keys.includes(selectedModel())) {
-            setSelectedModel(keys[0]);
-          }
-        } else {
-          setSelectedModel("");
+      setAvailableModels(models);
+      setModelCtxWindows(ctxMap);
+
+      const keys = models.map(modelKeyOf);
+      const savedDefault = localStorage.getItem("default_model");
+      if (models.length > 0) {
+        if (savedDefault && keys.includes(savedDefault)) {
+          setSelectedModel(savedDefault);
+        } else if (!selectedModel() || !keys.includes(selectedModel())) {
+          setSelectedModel(keys[0]);
         }
+      } else {
+        setSelectedModel("");
       }
     } catch (err) {
       logError("ui", "Failed to load models from settings", err);

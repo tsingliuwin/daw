@@ -83,6 +83,8 @@ pub fn run() {
             commands::resolve_tool_confirmation,
             commands::abort_task,
             commands::test_llm_connection,
+            commands::login_to_server,
+            commands::fetch_server_models,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
