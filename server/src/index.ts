@@ -14,7 +14,7 @@ import clientConfig from "./routes/clientConfig.js";
 import models from "./routes/models.js";
 import chat from "./routes/chat.js";
 import search from "./routes/search.js";
-import { config } from "./config.js";
+import { config, initSetupToken } from "./config.js";
 
 const app = new Hono();
 
@@ -40,6 +40,20 @@ serve({ fetch: app.fetch, port }, (info) => {
   console.log(`  用户数: ${config.users.length}`);
   console.log(`  LLM Provider 数: ${config.providers.length}`);
   console.log(`  搜索引擎: ${config.searchEngine || "未配置"}`);
+
+  // 首次运行：生成签名 URL 并打印到控制台。
+  const setupUrl = initSetupToken(info.port);
+  if (setupUrl) {
+    console.log("");
+    console.log("═══════════════════════════════════════════════════");
+    console.log("  首次启动——复制以下链接到客户端完成认证：");
+    console.log("");
+    console.log(`  ${setupUrl}`);
+    console.log("");
+    console.log("  （有效期 15 分钟，认证成功后自动失效）");
+    console.log("═══════════════════════════════════════════════════");
+    console.log("");
+  }
 });
 
 // 导出 app 供 CloudBase 云函数适配器使用。

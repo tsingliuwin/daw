@@ -89,6 +89,7 @@ pub fn run() {
             commands::get_active_space,
             commands::set_active_space,
             commands::join_enterprise,
+            commands::join_enterprise_via_setup,
             commands::leave_enterprise,
         ])
         .run(tauri::generate_context!())

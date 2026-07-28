@@ -79,7 +79,49 @@ function getOrCreateEnterpriseId(): string {
   return id;
 }
 
-export const config: ServerConfig & { enterpriseId: string } = {
+/**
+ * 首次启动设置 token——服务端首次运行（无用户配置）时生成一个随机 token，
+ * 持久化到 .setup-token 文件，有效期 15 分钟。管理员复制签名 URL 粘贴到
+ * 客户端完成首次认证。用完即删（一次性）。
+ */
+function getOrCreateSetupToken(): string | null {
+  const fs = require("fs");
+  const path = require("path");
+  const tokenFile = path.resolve(process.cwd(), ".setup-token");
+  try {
+    if (fs.existsSync(tokenFile)) {
+      const content = fs.readFileSync(tokenFile, "utf-8").trim();
+      const parsed = JSON.parse(content);
+      // 检查是否过期（15 分钟）。
+      if (Date.now() - parsed.createdAt < 15 * 60 * 1000) {
+        return parsed.token;
+      }
+      // 过期了，删除文件。
+      fs.unlinkSync(tokenFile);
+    }
+  } catch { /* 文件读取失败，继续生成新的 */ }
+  const token = crypto.randomUUID();
+  try {
+    fs.writeFileSync(tokenFile, JSON.stringify({ token, createdAt: Date.now() }), "utf-8");
+  } catch { /* 写入失败也不影响运行 */ }
+  return token;
+}
+
+/** 删除 setup token（认证成功后调用，一次性）。 */
+export function deleteSetupToken() {
+  const fs = require("fs");
+  const path = require("path");
+  const tokenFile = path.resolve(process.cwd(), ".setup-token");
+  try { fs.unlinkSync(tokenFile); } catch { /* 忽略 */ }
+}
+
+/** 是否首次运行（用户列表只有默认 demo 或为空）。 */
+export function isFirstRun(): boolean {
+  return config.users.length === 0 ||
+    (config.users.length === 1 && config.users[0].username === "admin" && config.users[0].password === "admin");
+}
+
+export const config: ServerConfig & { enterpriseId: string; setupToken: string | null } = {
   jwtSecret: process.env.JWT_SECRET || "aioa-dev-secret-change-me",
   serverName: process.env.SERVER_NAME || "AIOA 工作台",
   providers: parseProviders(),
@@ -87,4 +129,19 @@ export const config: ServerConfig & { enterpriseId: string } = {
   searchApiKey: process.env.SEARCH_API_KEY || "",
   users: parseUsers(),
   enterpriseId: getOrCreateEnterpriseId(),
+  setupToken: null, // 在 index.ts 启动时设置（需要知道端口）
 };
+
+/** 生成 setup token 并返回签名 URL（在 index.ts 启动时调用）。 */
+export function initSetupToken(port: number): string | null {
+  if (!isFirstRun()) {
+    config.setupToken = null;
+    return null;
+  }
+  const token = getOrCreateSetupToken();
+  config.setupToken = token;
+  if (token) {
+    return `http://localhost:${port}/auth/setup?token=${token}`;
+  }
+  return null;
+}

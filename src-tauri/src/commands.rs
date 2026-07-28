@@ -781,7 +781,101 @@ pub async fn join_enterprise(
     Ok(server_name)
 }
 
-/// Leave an enterprise: drop it from settings.json `enterprises`. If it was the
+/// 通过签名 URL 加入企业（首次认证）。
+/// 参数 setup_url 是服务端控制台输出的完整 URL，如 `http://localhost:3000/auth/setup?token=xxx`。
+/// 解析出服务地址 + token → POST /auth/setup → 拿 JWT + enterpriseId → 存 enterprises + 切 activeSpace。
+#[tauri::command]
+pub async fn join_enterprise_via_setup(setup_url: String) -> Result<String, String> {
+    // 解析 URL：提取 base（scheme://host[:port]）和 token（query 参数）。
+    let parsed = url::Url::parse(&setup_url)
+        .map_err(|e| format!("无效的 URL: {e}"))?;
+    let base = format!("{}://{}",
+        parsed.scheme(),
+        parsed.host_str().unwrap_or("localhost"),
+    );
+    let base = match parsed.port() {
+        Some(p) => format!("{base}:{p}"),
+        None => base,
+    };
+    let token = parsed
+        .query_pairs()
+        .find(|(k, _)| k == "token")
+        .map(|(_, v)| v.to_string())
+        .ok_or_else(|| "签名 URL 缺少 token 参数".to_string())?;
+
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(format!("{base}/auth/setup"))
+        .json(&serde_json::json!({ "token": token }))
+        .send()
+        .await
+        .map_err(|e| format!("首次认证请求失败: {e}"))?;
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(format!("首次认证失败（{status}）: {body}"));
+    }
+    let body: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| format!("解析认证响应失败: {e}"))?;
+    let jwt = body
+        .get("token")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "认证响应缺少 token".to_string())?
+        .to_string();
+    let enterprise_id = body
+        .get("enterpriseId")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| "认证响应缺少 enterpriseId".to_string())?
+        .to_string();
+    let server_name = body
+        .get("serverName")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let username = body
+        .get("user")
+        .and_then(|u| u.get("username"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("admin")
+        .to_string();
+
+    // Upsert into enterprises + switch activeSpace（和 join_enterprise 逻辑一致）。
+    let mut settings = read_settings_value()?;
+    let entry = serde_json::json!({
+        "id": enterprise_id,
+        "name": server_name,
+        "serverUrl": base,
+        "token": jwt,
+        "username": username,
+    });
+    let arr = settings
+        .get("enterprises")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let mut found = false;
+    let mut new_arr: Vec<serde_json::Value> = Vec::new();
+    for e in arr {
+        let eid = e.get("id").and_then(|v| v.as_str()).unwrap_or("");
+        if eid == enterprise_id {
+            new_arr.push(entry.clone());
+            found = true;
+        } else {
+            new_arr.push(e);
+        }
+    }
+    if !found {
+        new_arr.push(entry);
+    }
+    settings["enterprises"] = serde_json::Value::Array(new_arr);
+    settings["activeSpace"] = serde_json::json!(enterprise_id);
+    write_settings_value(&settings)?;
+
+    Ok(server_name)
+}
 /// active space, fall back to "personal" and mirror that into the in-memory
 /// cache.
 #[tauri::command]

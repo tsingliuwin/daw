@@ -20,9 +20,31 @@ export default function JoinEnterprisePage(props: {
   const [busy, setBusy] = createSignal(false);
   const [msg, setMsg] = createSignal("");
 
+  // 判断输入是否为签名 URL（含 /auth/setup?token=）
+  const isSetupUrl = (input: string) => input.includes("/auth/setup?token=");
+
   const handleConnect = async () => {
-    const url = serverUrl().trim().replace(/\/+$/, "");
-    if (!url) { setMsg("请输入服务地址"); return; }
+    const input = serverUrl().trim();
+    if (!input) { setMsg("请输入服务地址或签名链接"); return; }
+
+    // 如果粘贴的是签名 URL，直接走 setup 流程。
+    if (isSetupUrl(input)) {
+      setBusy(true);
+      setMsg("正在通过签名链接认证…");
+      try {
+        const name = await invoke<string>("join_enterprise_via_setup", { setupUrl: input });
+        setMsg(`已加入：${name}`);
+        props.onJoined();
+      } catch (err) {
+        setMsg(`认证失败：${err}`);
+      } finally {
+        setBusy(false);
+      }
+      return;
+    }
+
+    // 普通地址：走 client-config 验证 + 登录流程。
+    const url = input.replace(/\/+$/, "");
     setServerUrl(url);
     setBusy(true);
     setMsg("");
@@ -83,7 +105,7 @@ export default function JoinEnterprisePage(props: {
           <div class="settings-section">
             <h3 class="settings-section-title">连接企业服务端</h3>
             <p class="settings-section-desc">
-              输入企业部署的 AIOA 服务端地址，连接后用企业账号登录即可使用。
+              粘贴服务端首次启动生成的签名链接可一键认证；或输入服务地址后用账号密码登录。
               模型和搜索由服务端统一管理，无需单独配置。
             </p>
 
@@ -95,7 +117,7 @@ export default function JoinEnterprisePage(props: {
                     class="settings-input"
                     style="flex: 1; min-width: 0;"
                     value={serverUrl()}
-                    placeholder="http://localhost:3000"
+                    placeholder="粘贴签名链接或输入 http://localhost:3000"
                     onInput={(e) => setServerUrl(e.currentTarget.value)}
                     onKeyDown={(e) => { if (e.key === "Enter") void handleConnect(); }}
                   />
