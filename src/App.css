@@ -8004,7 +8004,7 @@ input[type="number"] {
   position: fixed;
   bottom: 48px; /* 在品牌区上方 */
   left: 12px;
-  width: 280px;
+  width: 240px;
   background: var(--bg-elevated);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-card);
@@ -8096,6 +8096,63 @@ input[type="number"] {
   font-size: 12.5px;
   color: var(--text-secondary);
   word-break: break-all;
+}
+/* 多企业空间：可切换的空间列表（个人空间 + 已加入企业） */
+.brand-popover__space-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.brand-popover__space-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+}
+.brand-popover__space-item--active {
+  background: var(--bg-hover);
+}
+.brand-popover__space-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 12.5px;
+  color: var(--text-primary);
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.brand-popover__hint {
+  font-size: 11.5px;
+  color: var(--text-dim);
+  padding: 4px 8px;
+}
+.brand-popover__disconnect {
+  background: transparent;
+  color: var(--accent-red);
+  border: 1px solid var(--accent-red);
+  border-radius: var(--radius-sm);
+  padding: 2px 8px;
+  font-size: 11px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.brand-popover__disconnect:hover {
+  background: var(--accent-red-bg);
+}
+.brand-popover__link {
+  background: transparent;
+  border: none;
+  color: var(--accent-blue);
+  font-size: 11.5px;
+  cursor: pointer;
+  padding: 0;
+  text-align: left;
+}
+.brand-popover__link:hover {
+  text-decoration: underline;
 }
 
 

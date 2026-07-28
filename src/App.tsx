@@ -44,6 +44,9 @@ export default function App() {
   // （tokio::spawn 后立即返回），真正的流式通过 agent-event 异步回来，
   // streamingTaskId 用于在流式期间锁定输入、显示 Stop 按钮。
   const [streamingTaskId, setStreamingTaskId] = createSignal<string | null>(null);
+  // 当前激活的多企业空间：值为 "personal" 或某企业 UUID。后端按 spaceId 隔离
+  // 工作区/任务数据，切换空间需重新加载工作区与任务。
+  const [activeSpace, setActiveSpace] = createSignal<string>("personal");
 
   // ── 模型与选择器 ──
   const [availableModels, setAvailableModels] = createSignal<ModelOption[]>([]);
@@ -183,7 +186,7 @@ export default function App() {
     if (loadedWs.has(wsPath)) return;
     loadedWs.add(wsPath);
     try {
-      const loadedTasks = await invoke<Task[]>("load_workspace_tasks", { workspacePath: wsPath });
+      const loadedTasks = await invoke<Task[]>("load_workspace_tasks", { workspacePath: wsPath, spaceId: activeSpace() });
       // 归一化历史消息（兼容简单的 content 形态）。
       const migrated = loadedTasks
         .map((t) =>
@@ -209,10 +212,76 @@ export default function App() {
         messages: task.messages ?? [],
         modelId: task.modelId || null,
         tokenUsage: task.tokenUsage ?? null,
+        spaceId: activeSpace(),
       });
     } catch (err) {
       logError("agent", "Failed to save task to backend", err);
     }
+  }
+
+  // 加载工作区列表并为每个工作区加载任务，恢复 workspace.last 决定初始
+  // activeTaskId 与首页工作区下拉选中项。onMount 首次加载与 switchSpace 切换
+  // 空间后的重载共用此逻辑。
+  async function reloadWorkspacesAndTasks() {
+    setBusy(true);
+    try {
+      const list = await invoke<Workspace[]>("load_workspaces");
+      if (list && list.length > 0) {
+        setWorkspaces(list);
+        await Promise.all(list.map((w) => loadWorkspaceTasks(w.path)));
+
+        // 恢复 workspace.last：只用于决定初始 activeTaskId（选 last 工作区下
+        // 最新的任务；该工作区默认全部展开，无需单独处理展开态）。
+        let last: string | null = null;
+        try {
+          last = await invoke<string | null>("get_app_config", { key: "workspace.last" });
+        } catch { /* best-effort */ }
+        const lastWs =
+          (last && list.find((w) => w.path === last)) ||
+          list.find((w) => w.path === "DefaultProject") ||
+          list[0];
+
+        // 首页工作区下拉默认选中 last 工作区。
+        setHomeWorkspacePath(lastWs.path);
+
+        const lastArr = tasksByWorkspace()[lastWs.path] ?? [];
+        if (lastArr.length > 0) {
+          setActiveTaskId(lastArr[0].id); // 已按 createdAt 倒序，第 0 条即最新
+        } else {
+          // last 工作区无任务：在所有工作区中找第一个有任务的，否则保持 null。
+          for (const w of list) {
+            const arr = tasksByWorkspace()[w.path] ?? [];
+            if (arr.length > 0) {
+              setActiveTaskId(arr[0].id);
+              break;
+            }
+          }
+        }
+      } else {
+        setWorkspaces([]);
+      }
+    } catch (err) {
+      logError("ui", "Failed to load workspaces", err);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // 切换当前激活的多企业空间（"personal" 或企业 UUID）。后端 set_active_space
+  // 持久化后清空本地任务缓存，重新加载工作区+任务，并刷新模型列表（企业/个人
+  // 模型来源不同）。
+  async function switchSpace(spaceId: string) {
+    try {
+      await invoke("set_active_space", { spaceId });
+    } catch (err) {
+      logError("ui", "Failed to set active space", err);
+    }
+    setActiveSpace(spaceId);
+    loadedWs.clear();
+    setTasksByWorkspace({});
+    setActiveTaskId(null);
+    await reloadWorkspacesAndTasks();
+    void loadModelsFromSettings();
   }
 
   onMount(async () => {
@@ -220,6 +289,13 @@ export default function App() {
     try {
       const saved = localStorage.getItem("ws_collapsed");
       if (saved) setCollapsedWs(JSON.parse(saved));
+    } catch { /* best-effort */ }
+
+    // 恢复上次激活的多企业空间（personal 或企业 UUID）。必须在加载工作区任务
+    // 之前完成——load_workspace_tasks 等命令需要 spaceId 参数。
+    try {
+      const sp = await invoke<string>("get_active_space");
+      setActiveSpace(sp);
     } catch { /* best-effort */ }
 
     // 从后端 config 表恢复主题（ui.theme）。
@@ -324,46 +400,7 @@ export default function App() {
     });
 
     // 加载工作区列表，并为每个工作区加载任务（首次全部加载，简单可靠）。
-    setBusy(true);
-    try {
-      const list = await invoke<Workspace[]>("load_workspaces");
-      if (list && list.length > 0) {
-        setWorkspaces(list);
-        await Promise.all(list.map((w) => loadWorkspaceTasks(w.path)));
-
-        // 恢复 workspace.last：只用于决定初始 activeTaskId（选 last 工作区下
-        // 最新的任务；该工作区默认全部展开，无需单独处理展开态）。
-        let last: string | null = null;
-        try {
-          last = await invoke<string | null>("get_app_config", { key: "workspace.last" });
-        } catch { /* best-effort */ }
-        const lastWs =
-          (last && list.find((w) => w.path === last)) ||
-          list.find((w) => w.path === "DefaultProject") ||
-          list[0];
-
-        // 首页工作区下拉默认选中 last 工作区。
-        setHomeWorkspacePath(lastWs.path);
-
-        const lastArr = tasksByWorkspace()[lastWs.path] ?? [];
-        if (lastArr.length > 0) {
-          setActiveTaskId(lastArr[0].id); // 已按 createdAt 倒序，第 0 条即最新
-        } else {
-          // last 工作区无任务：在所有工作区中找第一个有任务的，否则保持 null。
-          for (const w of list) {
-            const arr = tasksByWorkspace()[w.path] ?? [];
-            if (arr.length > 0) {
-              setActiveTaskId(arr[0].id);
-              break;
-            }
-          }
-        }
-      }
-    } catch (err) {
-      logError("ui", "Failed to load workspaces", err);
-    } finally {
-      setBusy(false);
-    }
+    await reloadWorkspacesAndTasks();
 
     await loadModelsFromSettings();
 
@@ -448,7 +485,7 @@ export default function App() {
       }
     }
     try {
-      await invoke("delete_task", { taskId: id });
+      await invoke("delete_task", { taskId: id, spaceId: activeSpace() });
     } catch (err) {
       logError("ui", "Failed to delete task", err);
     }
@@ -613,7 +650,16 @@ export default function App() {
             const next: Theme = currentTheme() === "light" ? "geek-dark" : "light";
             persistTheme(next);
           }}
-          onServerChanged={() => { void loadModelsFromSettings(); }}
+          activeSpace={activeSpace()}
+          onSpaceChanged={() => {
+            // BrandFooter 已在后端改了 active space（set_active_space / join /
+            // leave），读回最新值后走 switchSpace 同步本地并重载工作区与任务。
+            void (async () => {
+              let sp = "personal";
+              try { sp = await invoke<string>("get_active_space"); } catch { /* best-effort */ }
+              await switchSpace(sp);
+            })();
+          }}
         />
       </Show>
 

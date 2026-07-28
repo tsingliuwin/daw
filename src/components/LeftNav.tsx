@@ -33,8 +33,10 @@ export default function LeftNav(props: {
   onOpenSettings: () => void;
   /** 快捷切换主题（深色 ↔ 浅色）。底部品牌区主题按钮触发。 */
   onToggleTheme: () => void;
-  /** 企业服务端登录/断开后刷新模型列表（透传给 BrandFooter 弹层）。 */
-  onServerChanged?: () => void;
+  /** 当前激活的多企业空间（personal 或企业 UUID），透传给 BrandFooter 显示。 */
+  activeSpace?: string;
+  /** 空间切换/加入/断开后通知 App 重新加载（透传给 BrandFooter）。 */
+  onSpaceChanged?: () => void;
 }) {
   return (
     <div class="left-nav">
@@ -137,7 +139,8 @@ export default function LeftNav(props: {
         onToggleTheme={props.onToggleTheme}
         isDarkTheme={currentTheme() !== "light"}
         onOpenSettings={props.onOpenSettings}
-        onServerChanged={props.onServerChanged}
+        activeSpace={props.activeSpace}
+        onSpaceChanged={props.onSpaceChanged}
       />
     </div>
   );

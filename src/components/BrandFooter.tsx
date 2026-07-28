@@ -1,26 +1,24 @@
-import { createSignal, Show, onMount, onCleanup } from "solid-js";
+import { createSignal, Show, onMount, onCleanup, For } from "solid-js";
 import { Portal } from "solid-js/web";
 import { invoke } from "@tauri-apps/api/core";
 import { logError } from "../lib/logger";
 
-interface AppSettings {
-  [key: string]: unknown;
-}
-
-interface ServerInfo {
-  url?: string;
-  token?: string;
-  username?: string;
-  serverName?: string;
+/** 后端 get_enterprises 返回的已加入企业项（与 commands::EnterpriseInfo 对应，
+ * serde 把 server_url 序列化成 serverUrl；token 故意不下发）。 */
+interface EnterpriseInfo {
+  id: string;
+  name: string;
+  serverUrl: string;
+  username: string;
 }
 
 /**
  * 共用的底部品牌区：左侧「研途教育 AIOA 工作台」品牌名 + 右侧按钮组。
  *
  * 主界面 LeftNav 和设置页 SettingsPage 都用它，保证品牌区样式一致、单一数据源
- * （品牌名只在这里改一次）。品牌名可点击，弹出企业模式服务端配置浮层（连接 /
- * 登录 / 断开企业服务端）——该逻辑从 SettingsPage 迁来，集中到品牌区后设置页
- * 不再保留「服务端」section。
+ * （品牌名只在这里改一次）。品牌名可点击，弹出「多企业空间」面板：展示当前
+ * 空间、已加入的企业列表（可点击切换、可断开），以及「加入企业」向导（服务地址
+ * 连接 → 用户名/密码登录 → join_enterprise）。
  *
  * 右侧按钮（从左到右）：
  *  - `onToggleTheme`：太阳/月亮图标，在深色 ↔ 浅色间二态切换（主界面用）。
@@ -29,8 +27,12 @@ interface ServerInfo {
  *    的 ✕ 关闭按钮，但鼠标不用移到右上角）。
  * 各按钮可选，不传则不渲染。
  *
- * `onServerChanged`：登录或断开企业服务端后通知父级刷新模型列表（企业模式与
- * 个人模式模型来源不同，切换时必须重新拉取）。
+ * `activeSpace`：父级当前激活空间，用作面板打开前的初始显示；面板打开时仍会从
+ * 后端 get_active_space 拉取最新值。`onSpaceChanged`：加入/断开/切换空间后
+ * 通知父级重新加载工作区与任务（并刷新模型列表——企业空间与个人空间模型来源
+ * 不同）。
+ *
+ * `onServerChanged`：兼容 SettingsPage 旧用法保留（空间面板不触发）。
  */
 export default function BrandFooter(props: {
   onToggleTheme?: () => void;
@@ -38,43 +40,140 @@ export default function BrandFooter(props: {
   isDarkTheme?: boolean;
   onOpenSettings?: () => void;
   onCloseSettings?: () => void;
+  /** 父级当前激活空间，用作面板初始显示。 */
+  activeSpace?: string;
+  /** 空间切换/加入/断开后通知父级刷新。 */
+  onSpaceChanged?: () => void;
+  /** 兼容 SettingsPage 旧用法（空间面板不触发）。 */
   onServerChanged?: () => void;
 }) {
   // ── 浮层开关 ──
   const [popoverOpen, setPopoverOpen] = createSignal(false);
 
-  // ── 服务端（企业模式）状态 ──
-  // 已连接态由 settings().server 派生（有 token 即已连接）；下面的信号只
-  // 驱动地址输入、登录表单与异步状态展示。
-  const [settings, setSettings] = createSignal<AppSettings>({});
-  const serverInfo = () => settings().server as ServerInfo | undefined;
+  // ── 空间状态（面板打开时从后端刷新） ──
+  const [enterprises, setEnterprises] = createSignal<EnterpriseInfo[]>([]);
+  const [activeSpace, setActiveSpace] = createSignal<string>(props.activeSpace ?? "personal");
+
+  // ── 加入企业向导状态 ──
+  const [wizardOpen, setWizardOpen] = createSignal(false);
   const [serverUrlInput, setServerUrlInput] = createSignal("");
   const [usernameInput, setUsernameInput] = createSignal("");
   const [passwordInput, setPasswordInput] = createSignal("");
   const [connectStatus, setConnectStatus] = createSignal<"idle" | "connecting" | "connected" | "error">("idle");
-  const [loginBusy, setLoginBusy] = createSignal(false);
-  const [serverMsg, setServerMsg] = createSignal("");
+  const [joinBusy, setJoinBusy] = createSignal(false);
+  const [wizardMsg, setWizardMsg] = createSignal("");
 
   // 浮层根节点引用：用于点击外部判定关闭。
   let popoverRef: HTMLDivElement | undefined;
 
-  const connected = () => !!serverInfo()?.token;
+  // 当前空间展示名：personal → 「个人空间」；否则查企业名。
+  const currentSpaceName = () => {
+    const sp = activeSpace();
+    if (!sp || sp === "personal") return "个人空间";
+    const ent = enterprises().find((e) => e.id === sp);
+    return ent ? ent.name : sp;
+  };
 
-  // 读取 settings.json 刷新本地状态（onMount 和登录/断开后回填都用它）。
-  const loadSettings = async () => {
+  // 从后端拉取企业列表与当前空间（面板打开时刷新）。
+  const refreshSpaces = async () => {
     try {
-      const json = await invoke<string>("load_settings_json");
-      const loaded = json && json !== "{}" ? (JSON.parse(json) as AppSettings) : {};
-      setSettings(loaded);
-      const svr = loaded.server as { url?: string } | undefined;
-      if (svr?.url) setServerUrlInput(svr.url);
+      const [ents, sp] = await Promise.all([
+        invoke<EnterpriseInfo[]>("get_enterprises").catch(() => [] as EnterpriseInfo[]),
+        invoke<string>("get_active_space").catch(() => "personal"),
+      ]);
+      setEnterprises(ents);
+      setActiveSpace(sp);
     } catch (err) {
-      logError("ui", "Failed to load settings", err);
+      logError("ui", "Failed to load spaces", err);
+    }
+  };
+
+  // 切到指定空间（personal 或企业 id）：后端 set_active_space 后通知父级刷新。
+  const switchTo = async (spaceId: string) => {
+    try {
+      await invoke("set_active_space", { spaceId });
+      setActiveSpace(spaceId);
+      setPopoverOpen(false);
+      props.onSpaceChanged?.();
+    } catch (err) {
+      logError("ui", "Failed to switch space", err);
+    }
+  };
+
+  // 断开某企业：leave_enterprise 后刷新列表并通知父级（active space 可能被
+  // 后端改回 personal）。
+  const disconnect = async (enterpriseId: string) => {
+    try {
+      await invoke("leave_enterprise", { enterpriseId });
+      await refreshSpaces();
+      props.onSpaceChanged?.();
+    } catch (err) {
+      logError("ui", "Failed to leave enterprise", err);
+    }
+  };
+
+  // 加入向导 - 连接服务地址（fetch {url}/client-config 拿 serverName 验证有效性）。
+  const handleConnect = async () => {
+    const url = serverUrlInput().trim().replace(/\/+$/, "");
+    if (!url) {
+      setWizardMsg("请输入服务地址");
+      setConnectStatus("error");
+      return;
+    }
+    setServerUrlInput(url);
+    setConnectStatus("connecting");
+    setWizardMsg("");
+    try {
+      const resp = await fetch(`${url}/client-config`);
+      if (!resp.ok) {
+        const text = await resp.text().catch(() => "");
+        setConnectStatus("error");
+        setWizardMsg(`无法连接服务端（${resp.status}）${text ? "：" + text : ""}`);
+        return;
+      }
+      const cfg = (await resp.json()) as { serverName?: string };
+      setConnectStatus("connected");
+      setWizardMsg(cfg.serverName ? `已识别服务：${cfg.serverName}` : "服务地址有效，请登录");
+    } catch (err) {
+      setConnectStatus("error");
+      setWizardMsg(`连接失败：${err}`);
+    }
+  };
+
+  // 加入向导 - 登录（join_enterprise：参数 serverUrl/username/password，返回 serverName）。
+  const handleJoin = async () => {
+    const url = serverUrlInput().trim().replace(/\/+$/, "");
+    const user = usernameInput().trim();
+    const pass = passwordInput();
+    if (!url || !user || !pass) {
+      setWizardMsg("服务地址、用户名、密码均不能为空");
+      return;
+    }
+    setJoinBusy(true);
+    setWizardMsg("");
+    try {
+      const serverName = await invoke<string>("join_enterprise", {
+        serverUrl: url,
+        username: user,
+        password: pass,
+      });
+      // 成功：关闭向导与面板，通知父级刷新（App 会重载工作区/任务/模型）。
+      setWizardOpen(false);
+      setPopoverOpen(false);
+      setServerUrlInput("");
+      setUsernameInput("");
+      setPasswordInput("");
+      setConnectStatus("idle");
+      setWizardMsg(serverName ? `已加入：${serverName}` : "");
+      props.onSpaceChanged?.();
+    } catch (err) {
+      setWizardMsg(`加入失败：${err}`);
+    } finally {
+      setJoinBusy(false);
     }
   };
 
   onMount(() => {
-    void loadSettings();
     // 点击浮层外 + 品牌名外则关闭（与 Select 组件的 handleClickOutside 同思路）。
     const onDocClick = (e: MouseEvent) => {
       if (!popoverOpen()) return;
@@ -91,90 +190,17 @@ export default function BrandFooter(props: {
     onCleanup(() => document.removeEventListener("mousedown", onDocClick));
   });
 
-  // ── 服务端：连接（调 client-config 验证地址有效性，用 fetch） ──
-  const handleServerConnect = async () => {
-    const url = serverUrlInput().trim().replace(/\/+$/, "");
-    if (!url) {
-      setServerMsg("请输入服务地址");
-      setConnectStatus("error");
-      return;
-    }
-    setServerUrlInput(url);
-    setConnectStatus("connecting");
-    setServerMsg("");
-    try {
-      const resp = await fetch(`${url}/client-config`);
-      if (!resp.ok) {
-        const text = await resp.text().catch(() => "");
-        setConnectStatus("error");
-        setServerMsg(`无法连接服务端（${resp.status}）${text ? "：" + text : ""}`);
-        return;
-      }
-      const cfg = (await resp.json()) as { serverName?: string };
-      setConnectStatus("connected");
-      setServerMsg(cfg.serverName ? `已识别服务：${cfg.serverName}` : "服务地址有效，请登录");
-    } catch (err) {
-      setConnectStatus("error");
-      setServerMsg(`连接失败：${err}`);
-    }
-  };
-
-  // ── 服务端：登录（调 login_to_server 拿 token 并写回 settings.json） ──
-  const handleServerLogin = async () => {
-    const url = serverUrlInput().trim().replace(/\/+$/, "");
-    const user = usernameInput().trim();
-    const pass = passwordInput();
-    if (!url || !user || !pass) {
-      setServerMsg("服务地址、用户名、密码均不能为空");
-      return;
-    }
-    setLoginBusy(true);
-    setServerMsg("");
-    try {
-      const serverName = await invoke<string>("login_to_server", {
-        serverUrl: url,
-        username: user,
-        password: pass,
-      });
-      // 后端已把 server 字段写入 settings.json，重新拉取以刷新本地状态。
-      await loadSettings();
-      setServerMsg(`已连接${serverName ? "：" + serverName : ""}`);
-      setUsernameInput("");
-      setPasswordInput("");
-      // 切换到企业模式后模型列表来源变了，通知父级刷新。
-      props.onServerChanged?.();
-    } catch (err) {
-      setServerMsg(`登录失败：${err}`);
-    } finally {
-      setLoginBusy(false);
-    }
-  };
-
-  // ── 服务端：断开（清除 settings.json 的 server 字段） ──
-  const handleServerDisconnect = () => {
-    const updated = { ...settings() };
-    delete updated.server;
-    setSettings(updated);
-    invoke("save_settings_json", { json: JSON.stringify(updated, null, 2) }).catch((err: unknown) => {
-      logError("ui", "Failed to save settings", err);
-    });
-    setConnectStatus("idle");
-    setServerMsg("已断开服务端");
-    setUsernameInput("");
-    setPasswordInput("");
-    // 退回个人模式，模型列表需重新从本地 providers 加载。
-    props.onServerChanged?.();
-  };
-
   return (
     <div class="ln-footer">
       <span
         class="ln-brand-name"
-        title="点击切换企业模式 / 服务端配置"
+        title="点击切换空间 / 加入企业"
         onClick={(e) => {
           // 阻止冒泡，避免触发父容器（如 settings-nav）可能的点击逻辑。
           e.stopPropagation();
-          setPopoverOpen((v) => !v);
+          const willOpen = !popoverOpen();
+          setPopoverOpen(willOpen);
+          if (willOpen) void refreshSpaces();
         }}
       >研途教育 AIOA 工作台</span>
       <div class="ln-footer-actions">
@@ -235,17 +261,17 @@ export default function BrandFooter(props: {
         <Show when={popoverOpen()}>
           <div class="brand-popover" ref={popoverRef}>
             <div class="brand-popover__header">
-              <div class="brand-popover__title">模式</div>
-              <div class="brand-popover__mode">{connected() ? "企业版" : "个人版"}</div>
+              <div class="brand-popover__title">空间</div>
+              <div class="brand-popover__mode">{currentSpaceName()}</div>
             </div>
             <div class="brand-popover__body">
               <Show
-                when={connected()}
+                when={!wizardOpen()}
                 fallback={
                   <Show
                     when={connectStatus() === "connected"}
                     fallback={
-                      // 未连接 + 地址未验证：服务地址输入 + 连接按钮
+                      // 步骤 1：服务地址输入 + 连接
                       <div class="brand-popover__row">
                         <input
                           class="brand-popover__input"
@@ -253,30 +279,26 @@ export default function BrandFooter(props: {
                           value={serverUrlInput()}
                           placeholder="http://localhost:3000"
                           onInput={(e) => setServerUrlInput(e.currentTarget.value)}
-                          onKeyDown={(e) => { if (e.key === "Enter") handleServerConnect(); }}
+                          onKeyDown={(e) => { if (e.key === "Enter") void handleConnect(); }}
                         />
                         <button
                           class="brand-popover__btn"
                           disabled={connectStatus() === "connecting"}
-                          onClick={handleServerConnect}
+                          onClick={() => void handleConnect()}
                         >
                           {connectStatus() === "connecting" ? "连接中…" : "连接"}
                         </button>
                       </div>
                     }
                   >
-                    {/* 地址已验证，显示登录表单 */}
-                    <input
-                      class="brand-popover__input"
-                      value={serverUrlInput()}
-                      disabled
-                    />
+                    {/* 步骤 2：用户名/密码 + 登录（加入企业） */}
+                    <input class="brand-popover__input" value={serverUrlInput()} disabled />
                     <input
                       class="brand-popover__input"
                       value={usernameInput()}
                       placeholder="用户名"
                       onInput={(e) => setUsernameInput(e.currentTarget.value)}
-                      onKeyDown={(e) => { if (e.key === "Enter") handleServerLogin(); }}
+                      onKeyDown={(e) => { if (e.key === "Enter") void handleJoin(); }}
                     />
                     <div class="brand-popover__row">
                       <input
@@ -286,34 +308,61 @@ export default function BrandFooter(props: {
                         value={passwordInput()}
                         placeholder="密码"
                         onInput={(e) => setPasswordInput(e.currentTarget.value)}
-                        onKeyDown={(e) => { if (e.key === "Enter") handleServerLogin(); }}
+                        onKeyDown={(e) => { if (e.key === "Enter") void handleJoin(); }}
                       />
                       <button
                         class="brand-popover__btn"
-                        disabled={loginBusy()}
-                        onClick={handleServerLogin}
+                        disabled={joinBusy()}
+                        onClick={() => void handleJoin()}
                       >
-                        {loginBusy() ? "登录中…" : "登录"}
+                        {joinBusy() ? "加入中…" : "登录"}
                       </button>
                     </div>
                   </Show>
                 }
               >
-                {/* 已连接：显示服务名 + 用户名 + 断开按钮 */}
-                <div class="brand-popover__connected">
-                  <span class="brand-popover__conn-info">
-                    {serverInfo()?.serverName
-                      ? `${serverInfo()?.serverName}${serverInfo()?.username ? "（" + serverInfo()?.username + "）" : ""}`
-                      : serverInfo()?.url}
-                  </span>
-                  <button class="settings-danger-btn" onClick={handleServerDisconnect}>
-                    断开
-                  </button>
+                {/* 空间列表：个人空间 + 已加入企业（可切换/断开） */}
+                <div class="brand-popover__space-list">
+                  <div
+                    class="brand-popover__space-item"
+                    classList={{ "brand-popover__space-item--active": activeSpace() === "personal" || !activeSpace() }}
+                    onClick={() => void switchTo("personal")}
+                  >
+                    <span class="brand-popover__space-name">个人空间</span>
+                  </div>
+                  <Show
+                    when={enterprises().length > 0}
+                    fallback={<div class="brand-popover__hint">尚未加入企业</div>}
+                  >
+                    <For each={enterprises()}>
+                      {(ent) => (
+                        <div
+                          class="brand-popover__space-item"
+                          classList={{ "brand-popover__space-item--active": activeSpace() === ent.id }}
+                        >
+                          <span
+                            class="brand-popover__space-name"
+                            onClick={() => void switchTo(ent.id)}
+                          >{ent.name}</span>
+                          <button
+                            class="brand-popover__disconnect"
+                            title="断开企业"
+                            onClick={(e) => { e.stopPropagation(); void disconnect(ent.id); }}
+                          >断开</button>
+                        </div>
+                      )}
+                    </For>
+                  </Show>
                 </div>
+                <button class="brand-popover__btn" onClick={() => setWizardOpen(true)}>加入企业</button>
               </Show>
 
-              <Show when={serverMsg()}>
-                <div class="brand-popover__msg">{serverMsg()}</div>
+              <Show when={wizardOpen()}>
+                <button class="brand-popover__link" onClick={() => setWizardOpen(false)}>返回空间列表</button>
+              </Show>
+
+              <Show when={wizardMsg()}>
+                <div class="brand-popover__msg">{wizardMsg()}</div>
               </Show>
             </div>
           </div>
