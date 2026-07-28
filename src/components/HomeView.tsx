@@ -47,11 +47,19 @@ export default function HomeView(props: {
   const hasModels = createMemo(() => props.availableModels.length > 0);
   const canSend = createMemo(() => input().trim().length > 0 && hasModels());
 
-  // 模型选项转成 Select 需要的 {value,label}；value 用 providerId:modelId 复合键。
+  // 模型图标（太阳，和对话页 pill-btn 一致）
+  const SUN_ICON = (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="width: 12px; height: 12px;">
+      <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41" />
+      <circle cx="12" cy="12" r="4" />
+    </svg>
+  );
+  // 模型选项转成 Select 需要的 {value,label,icon}；value 用 providerId:modelId 复合键。
   const modelOptions = createMemo(() =>
     props.availableModels.map((m) => ({
       value: `${m.providerId}:${m.modelId}`,
       label: m.modelId,
+      icon: SUN_ICON,
     })),
   );
 
@@ -70,14 +78,32 @@ export default function HomeView(props: {
     }
   }
 
+  // 优先级选项 + 闪电图标（和对话页 pill-btn 一致）
+  const LIGHTNING_ICON = (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 12px; height: 12px;">
+      <path d="M9.5 2A2.5 2.5 0 0 1 12 4.5v15a2.5 2.5 0 0 1-4.96-.44 2.5 2.5 0 0 1 0-3.12 3 3 0 0 1 0-4.88 2.5 2.5 0 0 1 0-3.12A2.5 2.5 0 0 1 9.5 2Z" />
+      <path d="M17.94 3.94l-4.06 4.06M19.44 5.44l-3.06 3.06M12.94 11.44l-4 4M14.44 13.44l-3 3M15.5 8.5l1.5-1.5M15.5 8.5l1.5-1.5" />
+    </svg>
+  );
   const PRIORITY_OPTIONS = [
-    { value: "均衡", label: "均衡" },
-    { value: "最高", label: "最高" },
-    { value: "最快", label: "最快" },
-  ] as const;
+    { value: "均衡", label: "均衡", icon: LIGHTNING_ICON },
+    { value: "最高", label: "最高", icon: LIGHTNING_ICON },
+    { value: "最快", label: "最快", icon: LIGHTNING_ICON },
+  ];
+  // 确认模式图标：盾牌（变更前确认）/ 闪电（自动执行）
+  const SHIELD_ICON = (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 12px; height: 12px;">
+      <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+    </svg>
+  );
+  const ZAP_ICON = (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 12px; height: 12px;">
+      <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
+    </svg>
+  );
   const CONFIRM_OPTIONS = [
-    { value: "变更前确认", label: "变更前确认" },
-    { value: "自动执行", label: "自动执行" },
+    { value: "变更前确认", label: "变更前确认", icon: SHIELD_ICON },
+    { value: "自动执行", label: "自动执行", icon: ZAP_ICON },
   ] as const;
 
   function submit() {
