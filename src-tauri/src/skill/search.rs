@@ -55,9 +55,16 @@ pub struct ExaSearchBackend {
 
 impl ExaSearchBackend {
     pub fn new(api_key: String) -> Self {
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(30))
+            .connect_timeout(std::time::Duration::from_secs(10))
+            .pool_idle_timeout(std::time::Duration::from_secs(60))
+            .tcp_nodelay(true)
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new());
         Self {
             api_key,
-            client: reqwest::Client::new(),
+            client,
         }
     }
 }
@@ -76,48 +83,67 @@ impl SearchBackend for ExaSearchBackend {
             "contents": { "highlights": true }
         });
 
-        let resp = self
-            .client
-            .post("https://api.exa.ai/search")
-            .bearer_auth(&self.api_key)
-            .json(&body)
-            .send()
-            .await
-            .map_err(|e| format!("Exa 搜索请求失败: {e}"))?;
+        // 重试：网络偶发失败时等 1 秒重试一次（Exa 不限重试，QPS 10 够用）。
+        let mut last_err = String::new();
+        for attempt in 0..2u32 {
+            if attempt > 0 {
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+            }
+            let resp = match self
+                .client
+                .post("https://api.exa.ai/search")
+                .bearer_auth(&self.api_key)
+                .json(&body)
+                .send()
+                .await
+            {
+                Ok(r) => r,
+                Err(e) => {
+                    last_err = format!("Exa 搜索请求失败: {e}");
+                    continue; // 重试
+                }
+            };
 
-        if !resp.status().is_success() {
-            let status = resp.status();
-            let text = resp.text().await.unwrap_or_default();
-            return Err(format!("Exa 搜索失败 (HTTP {status}): {text}"));
-        }
+            if !resp.status().is_success() {
+                let status = resp.status();
+                let text = resp.text().await.unwrap_or_default();
+                last_err = format!("Exa 搜索失败 (HTTP {status}): {text}");
+                // 429/5xx 重试，4xx 不重试
+                if status.as_u16() >= 500 || status.as_u16() == 429 {
+                    continue;
+                }
+                return Err(last_err);
+            }
 
-        let data: serde_json::Value = resp
-            .json()
-            .await
-            .map_err(|e| format!("Exa 响应解析失败: {e}"))?;
+            let data: serde_json::Value = resp
+                .json()
+                .await
+                .map_err(|e| format!("Exa 响应解析失败: {e}"))?;
 
-        let results = data["results"]
-            .as_array()
-            .map(|arr| {
-                arr.iter()
-                    .map(|item| SearchResult {
-                        title: item["title"].as_str().unwrap_or("").to_string(),
-                        url: item["url"].as_str().unwrap_or("").to_string(),
-                        snippet: {
-                            // highlights 是一个字符串数组，拼成一段。
-                            let h = item["highlights"].as_array();
-                            h.map(|arr| arr.iter()
-                                .filter_map(|v| v.as_str())
-                                .collect::<Vec<_>>()
-                                .join("\n"))
-                                .unwrap_or_else(|| item["text"].as_str().unwrap_or("").to_string())
-                        },
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
+            let results = data["results"]
+                .as_array()
+                .map(|arr| {
+                    arr.iter()
+                        .map(|item| SearchResult {
+                            title: item["title"].as_str().unwrap_or("").to_string(),
+                            url: item["url"].as_str().unwrap_or("").to_string(),
+                            snippet: {
+                                let h = item["highlights"].as_array();
+                                h.map(|arr| arr.iter()
+                                    .filter_map(|v| v.as_str())
+                                    .collect::<Vec<_>>()
+                                    .join("\n"))
+                                    .unwrap_or_else(|| item["text"].as_str().unwrap_or("").to_string())
+                            },
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
 
-        Ok(results)
+            return Ok(results);
+        } // end for
+
+        Err(last_err)
     }
 }
 
