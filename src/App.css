@@ -7828,21 +7828,27 @@ input[type="number"] {
   min-width: 0;
   flex-shrink: 1;
 }
-/* Select 触发器对齐对话页 chat-composer__pill-btn 风格：透明背景、无边框、pill 圆角 */
+/* Select 触发器对齐对话页 chat-composer__pill-btn 风格 */
 .home-composer__selectors .lm-select-wrapper .lm-select-trigger {
   background: rgba(255, 255, 255, 0.03);
   border: none;
-  border-radius: var(--radius-pill);
-  padding: 5px 12px;
-  font-size: 12px;
+  padding: 4px 8px;
+  font-size: 11px;
   height: auto;
-  min-height: 30px;
+  min-height: 26px;
+  border-radius: var(--radius-pill);
+  gap: 6px;
 }
 .home-composer__selectors .lm-select-wrapper .lm-select-label {
-  font-size: 12px;
+  font-size: 11px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.home-composer__selectors .lm-select-wrapper .lm-select-trigger:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
   max-width: 120px;
 }
 
