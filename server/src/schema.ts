@@ -8,7 +8,6 @@
 import {
   pgTable,
   uuid,
-  serial,
   text,
   boolean,
   integer,
@@ -27,7 +26,7 @@ export const enterprise = pgTable("enterprise", {
 export const users = pgTable(
   "users",
   {
-    id: serial("id").primaryKey(),
+    id: uuid("id").primaryKey().defaultRandom(),
     enterpriseId: uuid("enterprise_id").references(() => enterprise.id),
     username: text("username").notNull(),
     passwordHash: text("password_hash").notNull(),
@@ -51,7 +50,7 @@ export const llmProviders = pgTable("llm_providers", {
 
 /** LLM 模型（属于某个 provider）。 */
 export const llmModels = pgTable("llm_models", {
-  id: serial("id").primaryKey(),
+  id: uuid("id").primaryKey().defaultRandom(),
   providerId: text("provider_id").references(() => llmProviders.id, { onDelete: "cascade" }),
   modelId: text("model_id").notNull(),
   contextWindow: integer("context_window").default(256000).notNull(),
