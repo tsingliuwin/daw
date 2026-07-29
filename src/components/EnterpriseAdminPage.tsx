@@ -54,6 +54,15 @@ export default function EnterpriseAdminPage(props: {
         body: JSON.stringify({ serverName: val }),
       });
       if (!resp.ok) { const t = await resp.text(); setMsg(`名称保存失败：${t}`); return; }
+      // 同步更新客户端 settings.json 里的企业名称（BrandFooter 读这里显示品牌名）。
+      try {
+        const json = await invoke<string>("load_settings_json");
+        const parsed = JSON.parse(json);
+        const arr = (parsed.enterprises || []) as EnterpriseEnt[];
+        const updated = arr.map((item) => item.id === e.id ? { ...item, name: val } : item);
+        parsed.enterprises = updated;
+        await invoke("save_settings_json", { json: JSON.stringify(parsed, null, 2) });
+      } catch { /* best-effort：服务端已更新，客户端下次 join 会刷新 */ }
       // 更新本地状态。
       setStatus((s) => ({ ...s, serverName: val }));
       setEnt({ ...e, name: val });
