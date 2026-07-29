@@ -36,17 +36,20 @@ enterprise.post("/setup", jwtAuth, async (c) => {
     searchApiKey?: string;
   }>();
 
-  if (!body.serverName || !body.providers || body.providers.length === 0) {
-    return c.json({ error: "企业名称和至少一个 LLM provider 不能为空" }, 400);
+  // 首次完整配置（providers 存在时）才要求 serverName + providers 都有值；
+  // 部分更新（如只改 serverName 或只改 search）允许只传对应字段。
+  if (body.providers !== undefined && (!body.serverName || body.providers.length === 0)) {
+    return c.json({ error: "首次配置需要同时提供企业名称和至少一个 LLM provider" }, 400);
   }
 
-  // 保存到文件 + 更新内存。
-  saveEnterpriseConfig({
-    serverName: body.serverName,
-    providers: body.providers,
-    searchEngine: body.searchEngine ?? "",
-    searchApiKey: body.searchApiKey ?? "",
-  });
+  // 只保存传入的字段（saveEnterpriseConfig 内部合并已有配置）。
+  const update: Record<string, unknown> = {};
+  if (body.serverName !== undefined) update.serverName = body.serverName;
+  if (body.providers !== undefined) update.providers = body.providers;
+  if (body.searchEngine !== undefined) update.searchEngine = body.searchEngine;
+  if (body.searchApiKey !== undefined) update.searchApiKey = body.searchApiKey;
+
+  saveEnterpriseConfig(update);
 
   return c.json({ ok: true, serverName: config.serverName });
 });
