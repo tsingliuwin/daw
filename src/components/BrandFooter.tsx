@@ -1,4 +1,4 @@
-import { createSignal, Show, onMount, onCleanup, For } from "solid-js";
+import { createSignal, Show, onMount, onCleanup, For, createEffect } from "solid-js";
 import { Portal } from "solid-js/web";
 import { invoke } from "@tauri-apps/api/core";
 import { logError } from "../lib/logger";
@@ -57,6 +57,12 @@ export default function BrandFooter(props: {
   // ── 空间状态（面板打开时从后端刷新） ──
   const [enterprises, setEnterprises] = createSignal<EnterpriseInfo[]>([]);
   const [activeSpace, setActiveSpace] = createSignal<string>(props.activeSpace ?? "personal");
+
+  // 父级 props.activeSpace 变化时同步到内部 signal（切换空间后品牌名立即更新）。
+  createEffect(() => {
+    const sp = props.activeSpace;
+    if (sp) setActiveSpace(sp);
+  });
 
   // 浮层根节点引用：用于点击外部判定关闭。
   let popoverRef: HTMLDivElement | undefined;
