@@ -41,6 +41,8 @@ export default function LeftNav(props: {
   onOpenJoinEnterprise?: () => void;
   /** 打开企业管理页面（透传给 BrandFooter，仅企业空间下）。 */
   onOpenEnterpriseAdmin?: () => void;
+  /** 企业信息版本号（变更时递增，触发 BrandFooter 刷新企业列表）。 */
+  enterpriseVersion?: number;
 }) {
   return (
     <div class="left-nav">
@@ -145,6 +147,7 @@ export default function LeftNav(props: {
         onOpenSettings={props.onOpenSettings}
         onOpenJoinEnterprise={props.onOpenJoinEnterprise}
         onOpenEnterpriseAdmin={props.onOpenEnterpriseAdmin}
+        enterpriseVersion={props.enterpriseVersion}
         activeSpace={props.activeSpace}
         onSpaceChanged={props.onSpaceChanged}
       />

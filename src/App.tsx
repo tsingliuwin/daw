@@ -63,6 +63,7 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = createSignal<boolean>(false);
   const [joinEnterpriseOpen, setJoinEnterpriseOpen] = createSignal<boolean>(false);
   const [enterpriseAdminOpen, setEnterpriseAdminOpen] = createSignal<boolean>(false);
+  const [enterpriseVersion, setEnterpriseVersion] = createSignal(0);
   const [busy, setBusy] = createSignal<boolean>(false);
 
   // 在 tasksByWorkspace 中查找 taskId 所属的工作区路径（不存在返回 null）。
@@ -657,6 +658,7 @@ export default function App() {
           activeSpace={activeSpace()}
           onOpenJoinEnterprise={() => setJoinEnterpriseOpen(true)}
           onOpenEnterpriseAdmin={() => setEnterpriseAdminOpen(true)}
+          enterpriseVersion={enterpriseVersion()}
           onSpaceChanged={() => {
             // BrandFooter 已在后端改了 active space（set_active_space / join /
             // leave），读回最新值后走 switchSpace 同步本地并重载工作区与任务。
@@ -784,7 +786,7 @@ export default function App() {
         <div class="app-overlay">
           <EnterpriseAdminPage
             onClose={() => setEnterpriseAdminOpen(false)}
-            onSaved={() => { void loadModelsFromSettings(); }}
+            onSaved={() => { void loadModelsFromSettings(); setEnterpriseVersion(v => v + 1); }}
           />
         </div>
       </Show>

@@ -48,6 +48,8 @@ export default function BrandFooter(props: {
   onOpenJoinEnterprise?: () => void;
   /** 打开企业管理页面（全屏覆盖层，由 App 渲染）。只在企业空间下显示。 */
   onOpenEnterpriseAdmin?: () => void;
+  /** 企业信息版本号（变更时递增，触发刷新企业列表+品牌名）。 */
+  enterpriseVersion?: number;
   /** 兼容 SettingsPage 旧用法（空间面板不触发）。 */
   onServerChanged?: () => void;
 }) {
@@ -59,9 +61,13 @@ export default function BrandFooter(props: {
   const [activeSpace, setActiveSpace] = createSignal<string>(props.activeSpace ?? "personal");
 
   // 父级 props.activeSpace 变化时同步到内部 signal（切换空间后品牌名立即更新）。
+  // 同时监听 enterpriseVersion 变化（企业管理页改了名称后刷新企业列表）。
   createEffect(() => {
     const sp = props.activeSpace;
     if (sp) setActiveSpace(sp);
+    // enterpriseVersion 变化时重新拉取企业列表。
+    props.enterpriseVersion;
+    void refreshSpaces();
   });
 
   // 浮层根节点引用：用于点击外部判定关闭。
