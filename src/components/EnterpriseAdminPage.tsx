@@ -17,7 +17,7 @@ interface EnterpriseEnt {
 /**
  * 企业管理后台首页——从品牌区"管理"按钮打开。
  *
- * 结构：左侧导航（概览/模型管理/搜索配置）+ 右侧内容区，复用 settings-page 样式。
+ * 结构：左侧导航（概览/模型管理/工具管理）+ 右侧内容区，复用 settings-page 样式。
  * 数据来源：从客户端 settings.json 读当前企业的 serverUrl + token，
  * 调服务端 GET /enterprise/status + GET /models + POST /enterprise/setup。
  */
@@ -32,7 +32,7 @@ export default function EnterpriseAdminPage(props: {
   const [busy, setBusy] = createSignal(false);
   const [msg, setMsg] = createSignal("");
 
-  // 搜索配置表单
+  // 工具配置表单
   const [searchEngine, setSearchEngine] = createSignal("");
   const [searchApiKey, setSearchApiKey] = createSignal("");
 
@@ -98,7 +98,7 @@ export default function EnterpriseAdminPage(props: {
     }
   });
 
-  // 保存搜索配置。
+  // 保存工具配置。
   const handleSaveSearch = async () => {
     const e = ent();
     if (!e) return;
@@ -111,7 +111,7 @@ export default function EnterpriseAdminPage(props: {
         body: JSON.stringify({ searchEngine: searchEngine(), searchApiKey: searchApiKey() }),
       });
       if (!resp.ok) { const t = await resp.text(); setMsg(`保存失败：${t}`); return; }
-      setMsg("搜索配置已保存");
+      setMsg("工具配置已保存");
       props.onSaved?.();
     } catch (err) { setMsg(`保存失败：${err}`); } finally { setBusy(false); }
   };
@@ -127,7 +127,7 @@ export default function EnterpriseAdminPage(props: {
           <div class="settings-nav__items">
             <button class="settings-nav-item" classList={{ active: tab() === "overview" }} onClick={() => setTab("overview")}>概览</button>
             <button class="settings-nav-item" classList={{ active: tab() === "llm" }} onClick={() => setTab("llm")}>模型管理</button>
-            <button class="settings-nav-item" classList={{ active: tab() === "search" }} onClick={() => setTab("search")}>搜索配置</button>
+            <button class="settings-nav-item" classList={{ active: tab() === "search" }} onClick={() => setTab("search")}>工具管理</button>
           </div>
           <BrandFooter
             onToggleTheme={() => { const next: Theme = currentTheme() === "light" ? "geek-dark" : "light"; persistTheme(next); }}
@@ -196,7 +196,7 @@ export default function EnterpriseAdminPage(props: {
                 </div>
               </div>
               <div class="settings-row">
-                <label class="settings-label">搜索配置</label>
+                <label class="settings-label">工具管理</label>
                 <div class="settings-control">
                   <span style="font-size: 12px;">{status().hasSearch ? "✅ 已配置" : "❌ 未配置"}</span>
                 </div>
@@ -242,14 +242,14 @@ export default function EnterpriseAdminPage(props: {
             </div>
           </Show>
 
-          {/* 搜索配置 */}
+          {/* 工具配置 */}
           <Show when={tab() === "search"}>
             <div class="settings-section">
-              <h3 class="settings-section-title">搜索服务配置</h3>
-              <p class="settings-section-desc">企业员工使用的搜索服务，由服务端统一管理。</p>
+              <h3 class="settings-section-title">工具管理</h3>
+              <p class="settings-section-desc">企业管理各工具的配置。当前支持搜索工具配置，后续会支持更多工具。</p>
 
               <div class="settings-row">
-                <label class="settings-label">搜索引擎</label>
+                <label class="settings-label">搜索工具</label>
                 <div class="settings-control">
                   <select class="settings-select" value={searchEngine()} onChange={(e) => setSearchEngine(e.currentTarget.value)}>
                     <option value="">未配置</option>
@@ -261,7 +261,7 @@ export default function EnterpriseAdminPage(props: {
               <div class="settings-row">
                 <label class="settings-label">API Key</label>
                 <div class="settings-control">
-                  <input class="settings-input" type="password" value={searchApiKey()} placeholder="搜索服务 API Key" onInput={(e) => setSearchApiKey(e.currentTarget.value)} />
+                  <input class="settings-input" type="password" value={searchApiKey()} placeholder="搜索工具 API Key" onInput={(e) => setSearchApiKey(e.currentTarget.value)} />
                 </div>
               </div>
               <div class="settings-row">
