@@ -87,6 +87,7 @@ pub fn run() {
             commands::fetch_server_models,
             commands::get_enterprises,
             commands::get_active_space,
+            commands::get_current_user_id,
             commands::set_active_space,
             commands::join_enterprise,
             commands::join_enterprise_via_setup,

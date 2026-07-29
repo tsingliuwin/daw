@@ -49,6 +49,7 @@ export default function App() {
   // 当前激活的多企业空间：值为 "personal" 或某企业 UUID。后端按 spaceId 隔离
   // 工作区/任务数据，切换空间需重新加载工作区与任务。
   const [activeSpace, setActiveSpace] = createSignal<string>("personal");
+  const [activeUser, setActiveUser] = createSignal<string>("default");
 
   // ── 模型与选择器 ──
   const [availableModels, setAvailableModels] = createSignal<ModelOption[]>([]);
@@ -191,7 +192,7 @@ export default function App() {
     if (loadedWs.has(wsPath)) return;
     loadedWs.add(wsPath);
     try {
-      const loadedTasks = await invoke<Task[]>("load_workspace_tasks", { workspacePath: wsPath, spaceId: activeSpace() });
+      const loadedTasks = await invoke<Task[]>("load_workspace_tasks", { workspacePath: wsPath, spaceId: activeSpace(), userId: activeUser() });
       // 归一化历史消息（兼容简单的 content 形态）。
       const migrated = loadedTasks
         .map((t) =>
@@ -218,6 +219,7 @@ export default function App() {
         modelId: task.modelId || null,
         tokenUsage: task.tokenUsage ?? null,
         spaceId: activeSpace(),
+        userId: activeUser(),
       });
     } catch (err) {
       logError("agent", "Failed to save task to backend", err);
@@ -282,6 +284,11 @@ export default function App() {
       logError("ui", "Failed to set active space", err);
     }
     setActiveSpace(spaceId);
+    // 切换空间后也要切换用户 ID（个人版=default，企业版=用户名）。
+    try {
+      const uid = await invoke<string>("get_current_user_id");
+      setActiveUser(uid);
+    } catch { /* best-effort */ }
     loadedWs.clear();
     setTasksByWorkspace({});
     setActiveTaskId(null);
@@ -301,6 +308,12 @@ export default function App() {
     try {
       const sp = await invoke<string>("get_active_space");
       setActiveSpace(sp);
+    } catch { /* best-effort */ }
+
+    // 恢复当前用户 ID（个人版="default"，企业版=用户名）。
+    try {
+      const uid = await invoke<string>("get_current_user_id");
+      setActiveUser(uid);
     } catch { /* best-effort */ }
 
     // 从后端 config 表恢复主题（ui.theme）。
@@ -490,7 +503,7 @@ export default function App() {
       }
     }
     try {
-      await invoke("delete_task", { taskId: id, spaceId: activeSpace() });
+      await invoke("delete_task", { taskId: id, spaceId: activeSpace(), userId: activeUser() });
     } catch (err) {
       logError("ui", "Failed to delete task", err);
     }

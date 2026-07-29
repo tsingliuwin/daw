@@ -176,19 +176,23 @@ pub async fn remove_workspace(path: String) -> Result<(), String> {
     let _ = conn.execute("PRAGMA foreign_keys = ON;", []);
 
     // Clean up content files for all tasks under this workspace. Tasks are
-    // space-scoped, so each row carries its own space_id.
+    // space- and user-scoped, so each row carries its own space_id + user_id.
     let mut stmt = conn
-        .prepare("SELECT id, space_id FROM tasks WHERE workspace_path = ?")
+        .prepare("SELECT id, space_id, user_id FROM tasks WHERE workspace_path = ?")
         .map_err(|e| e.to_string())?;
     let rows = stmt
         .query_map([&path], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+            ))
         })
         .map_err(|e| e.to_string())?;
 
     for r in rows {
-        if let Ok((id, space_id)) = r {
-            delete_task_content_files(&space_id, &id);
+        if let Ok((id, space_id, user_id)) = r {
+            delete_task_content_files(&space_id, &user_id, &id);
         }
     }
 
@@ -220,14 +224,15 @@ pub struct Task {
 pub async fn load_workspace_tasks(
     workspace_path: String,
     space_id: String,
+    user_id: String,
 ) -> Result<Vec<Task>, String> {
     tauri::async_runtime::spawn_blocking(move || -> Result<Vec<Task>, String> {
         let conn = db::get_db_conn()?;
         let mut stmt = conn
-            .prepare("SELECT id, name, created_at, saved, model_id, token_usage FROM tasks WHERE workspace_path = ? AND space_id = ? ORDER BY created_at ASC")
+            .prepare("SELECT id, name, created_at, saved, model_id, token_usage FROM tasks WHERE workspace_path = ? AND space_id = ? AND user_id = ? ORDER BY created_at ASC")
             .map_err(|e| e.to_string())?;
         let rows = stmt
-            .query_map(rusqlite::params![&workspace_path, &space_id], |row| {
+            .query_map(rusqlite::params![&workspace_path, &space_id, &user_id], |row| {
                 Ok((
                     row.get::<_, String>(0)?,
                     row.get::<_, String>(1)?,
@@ -239,7 +244,7 @@ pub async fn load_workspace_tasks(
             })
             .map_err(|e| e.to_string())?;
 
-        let chats_dir = db::get_chats_dir(&space_id)?;
+        let chats_dir = db::get_chats_dir(&space_id, &user_id)?;
         let mut tasks = Vec::new();
         for r in rows {
             if let Ok((id, name, created_at, saved, model_id, token_usage_json)) = r {
@@ -277,18 +282,19 @@ pub async fn save_task(
     model_id: Option<String>,
     token_usage: Option<serde_json::Value>,
     space_id: String,
+    user_id: String,
 ) -> Result<(), String> {
     let conn = db::get_db_conn()?;
     let now = now_ms();
     let usage_json = token_usage.map(|v| serde_json::to_string(&v).unwrap_or_default());
     conn.execute(
-        "INSERT OR REPLACE INTO tasks (id, workspace_path, name, kind, created_at, saved, model_id, token_usage, space_id)
-         VALUES (?, ?, ?, 'task', COALESCE((SELECT created_at FROM tasks WHERE id = ?), ?), 1, ?, ?, ?)",
-        rusqlite::params![task_id, workspace_path, name, task_id, now, model_id, usage_json, space_id],
+        "INSERT OR REPLACE INTO tasks (id, workspace_path, name, kind, created_at, saved, model_id, token_usage, space_id, user_id)
+         VALUES (?, ?, ?, 'task', COALESCE((SELECT created_at FROM tasks WHERE id = ?), ?), 1, ?, ?, ?, ?)",
+        rusqlite::params![task_id, workspace_path, name, task_id, now, model_id, usage_json, space_id, user_id],
     )
     .map_err(|e| e.to_string())?;
 
-    let chats_dir = db::get_chats_dir(&space_id)?;
+    let chats_dir = db::get_chats_dir(&space_id, &user_id)?;
     let filepath = chats_dir.join(format!("{task_id}.json"));
     let json_str = serde_json::to_string(&messages).map_err(|e| e.to_string())?;
     std::fs::write(filepath, json_str).map_err(|e| format!("Failed to write chat JSON file: {e}"))?;
@@ -296,9 +302,9 @@ pub async fn save_task(
 }
 
 #[tauri::command]
-pub async fn delete_task(task_id: String, space_id: String) -> Result<(), String> {
+pub async fn delete_task(task_id: String, space_id: String, user_id: String) -> Result<(), String> {
     let conn = db::get_db_conn()?;
-    delete_task_content_files(&space_id, &task_id);
+    delete_task_content_files(&space_id, &user_id, &task_id);
     conn.execute("DELETE FROM tasks WHERE id = ?", [&task_id])
         .map_err(|e| e.to_string())?;
     Ok(())
@@ -654,6 +660,20 @@ pub async fn get_active_space() -> Result<String, String> {
     Ok(active)
 }
 
+/// Return the currently active user id used for per-user data isolation:
+///   * personal space (or empty/missing activeSpace) -> "default"
+///   * enterprise space -> the `username` of the matching `enterprises[]` entry
+///     (the enterprise user's login name, e.g. "admin")
+///   * enterprise not found -> "default"
+///
+/// The source of truth is `settings.json`; this reads it fresh on every call so
+/// it stays correct right after a `join_enterprise` / `set_active_space`.
+#[tauri::command]
+pub async fn get_current_user_id() -> Result<String, String> {
+    let settings = read_settings_value()?;
+    Ok(crate::state::resolve_user_id(&settings))
+}
+
 /// Set the active space (persisted to settings.json and mirrored into the
 /// in-memory `AppState.active_space` cache).
 #[tauri::command]
@@ -977,11 +997,11 @@ pub async fn leave_enterprise(
 // Internals — helpers
 // ===========================================================================
 
-fn delete_task_content_files(space_id: &str, task_id: &str) {
-    // All tasks are chat tasks in M1; the <space>/chats/ file is the only
-    // content file. The chats dir may legitimately not exist yet for a fresh
-    // space, so resolve-and-remove best-effort.
-    if let Ok(dir) = db::get_chats_dir(space_id) {
+fn delete_task_content_files(space_id: &str, user_id: &str, task_id: &str) {
+    // All tasks are chat tasks in M1; the <space>/<user>/chats/ file is the
+    // only content file. The chats dir may legitimately not exist yet for a
+    // fresh space/user, so resolve-and-remove best-effort.
+    if let Ok(dir) = db::get_chats_dir(space_id, user_id) {
         let _ = std::fs::remove_file(dir.join(format!("{task_id}.json")));
     }
 }

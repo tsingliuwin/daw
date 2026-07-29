@@ -50,6 +50,14 @@ pub struct AppState {
     /// cache seeded at startup and kept in sync by `set_active_space` /
     /// `leave_enterprise`.
     pub active_space: Arc<Mutex<String>>,
+    /// The currently active user id ("default" for the personal space, or the
+    /// enterprise user's `username` for the active enterprise space). Source of
+    /// truth is `settings.json` (activeSpace + enterprises[].username); this is
+    /// an in-memory cache seeded at startup by `load_active_user`. Commands that
+    /// need the authoritative value read settings.json directly via
+    /// [`resolve_user_id`].
+    #[allow(dead_code)]
+    pub active_user: Arc<Mutex<String>>,
     /// 搜索后端（None=未配置搜索服务，SearchTool 调时报错提示）。
     pub search_backend: Option<Arc<dyn crate::skill::search::SearchBackend>>,
 }
@@ -63,6 +71,7 @@ impl AppState {
             pending_confirmations: Arc::new(Mutex::new(HashMap::new())),
             aborted_tasks: Arc::new(Mutex::new(HashSet::new())),
             active_space: Arc::new(Mutex::new(load_active_space())),
+            active_user: Arc::new(Mutex::new(load_active_user())),
             search_backend: crate::skill::search::create_search_backend_from_settings(),
         }
     }
@@ -88,6 +97,60 @@ fn load_active_space() -> String {
         .filter(|s| !s.is_empty())
         .map(|s| s.to_string())
         .unwrap_or_else(|| "personal".to_string())
+}
+
+/// Read the active user id from `~/.aioa/settings.json` so the in-memory cache
+/// matches what was last persisted. "default" for the personal space, or the
+/// matching enterprise's `username` otherwise. Falls back to "default" when the
+/// file/field/enterprise is missing/unreadable (the default for a fresh
+/// install).
+fn load_active_user() -> String {
+    let Some(mut home) = get_home_dir() else {
+        return "default".to_string();
+    };
+    home.push(".aioa");
+    home.push("settings.json");
+    let Ok(content) = std::fs::read_to_string(&home) else {
+        return "default".to_string();
+    };
+    let Ok(val) = serde_json::from_str::<serde_json::Value>(&content) else {
+        return "default".to_string();
+    };
+    resolve_user_id(&val)
+}
+
+/// Resolve the active user id from a parsed `settings.json` value. Shared by
+/// [`load_active_user`] (startup cache seed) and the `get_current_user_id`
+/// command (authoritative read). Rules:
+///   * `activeSpace` missing/empty/"personal" -> "default"
+///   * enterprise space -> the `username` of the `enterprises[]` entry whose
+///     `id` equals `activeSpace`
+///   * no matching enterprise -> "default"
+pub fn resolve_user_id(settings: &serde_json::Value) -> String {
+    let active = settings
+        .get("activeSpace")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .unwrap_or("personal");
+    if active == "personal" {
+        return "default".to_string();
+    }
+    settings
+        .get("enterprises")
+        .and_then(|v| v.as_array())
+        .and_then(|arr| {
+            arr.iter().find_map(|e| {
+                let id = e.get("id").and_then(|v| v.as_str()).unwrap_or("");
+                if id == active {
+                    e.get("username")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string())
+                } else {
+                    None
+                }
+            })
+        })
+        .unwrap_or_else(|| "default".to_string())
 }
 
 /// The default workspace directory: `~/.aioa/DefaultProject/`.
