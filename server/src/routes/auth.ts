@@ -78,18 +78,22 @@ auth.post("/setup", async (c) => {
     return c.json({ error: "企业未初始化" }, 500);
   }
 
-  // 创建 admin 用户（若不存在）。首期默认密码 admin，管理员后续可修改。
-  const existing = await db
+  // 如果已有用户，拒绝--签名 URL 仅限首次使用，后续请用账号密码登录。
+  const existingUsers = await db
     .select()
     .from(users)
-    .where(and(eq(users.enterpriseId, ent.id), eq(users.username, "admin")));
-  if (existing.length === 0) {
-    await db.insert(users).values({
-      enterpriseId: ent.id,
-      username: "admin",
-      passwordHash: "admin",
-    });
+    .where(eq(users.enterpriseId, ent.id));
+  if (existingUsers.length > 0) {
+    config.setupToken = null;
+    return c.json({ error: "首次认证已完成，请使用账号密码登录" }, 403);
   }
+
+  // 创建 admin 用户。首期默认密码 admin，管理员后续可修改。
+  await db.insert(users).values({
+    enterpriseId: ent.id,
+    username: "admin",
+    passwordHash: "admin",
+  });
 
   // 签发 JWT（username=admin，24h 有效）。
   const jwt = await new jose.SignJWT({ username: "admin" })

@@ -19,6 +19,7 @@ export default function JoinEnterprisePage(props: {
   const [password, setPassword] = createSignal("");
   const isAdmin = props.mode === "admin";
   const [step, setStep] = createSignal<"address" | "login" | "config">(isAdmin ? "config" : "address");
+  const [configStep, setConfigStep] = createSignal(1); // 1=名称 2=LLM 3=搜索
   const [busy, setBusy] = createSignal(false);
   const [msg, setMsg] = createSignal("");
 
@@ -28,6 +29,8 @@ export default function JoinEnterprisePage(props: {
   const [llmApiKey, setLlmApiKey] = createSignal("");
   const [llmApiFormat, setLlmApiFormat] = createSignal("openai");
   const [llmModels, setLlmModels] = createSignal("");
+  const [searchEngine, setSearchEngine] = createSignal("exa");
+  const [searchApiKey, setSearchApiKey] = createSignal("");
 
   // 管理模式：加载当前企业的配置（从服务端 GET /enterprise/status 拉取）。
   if (isAdmin) {
@@ -128,34 +131,12 @@ export default function JoinEnterprisePage(props: {
     }
   };
 
-  // 保存企业配置（调 setup_enterprise 命令 → POST /enterprise/setup）。
-  const handleSetupEnterprise = async () => {
-    if (!entName().trim()) { setMsg("请输入企业名称"); return; }
-    if (!llmEndpoint().trim() || !llmApiKey().trim()) { setMsg("请填写 LLM 服务地址和 API Key"); return; }
-    if (!llmModels().trim()) { setMsg("请填写至少一个模型 ID"); return; }
+  // 分步保存：每步只保存该步的配置，可跳过。
+  const saveStep = async (data: Record<string, unknown>) => {
     setBusy(true);
     setMsg("");
     try {
-      const models = llmModels().split("\n").map(s => s.trim()).filter(s => s).map(id => ({
-        id,
-        contextWindow: 256000,
-        maxTokens: 64000,
-      }));
-      const configJson = JSON.stringify({
-        serverName: entName().trim(),
-        providers: [{
-          id: "primary",
-          name: entName().trim(),
-          endpoint: llmEndpoint().trim(),
-          apiKey: llmApiKey().trim(),
-          apiFormat: llmApiFormat(),
-          models,
-          enabled: true,
-        }],
-      });
-      await invoke("setup_enterprise", { configJson });
-      setMsg("企业配置已保存！");
-      props.onJoined();
+      await invoke("setup_enterprise", { configJson: JSON.stringify(data) });
     } catch (err) {
       setMsg(`保存失败：${err}`);
     } finally {
@@ -163,6 +144,44 @@ export default function JoinEnterprisePage(props: {
     }
   };
 
+  // 步骤 1：企业名称
+  const handleStep1Next = async () => {
+    if (entName().trim()) {
+      await saveStep({ serverName: entName().trim() });
+      if (msg()) return;
+    }
+    setConfigStep(2);
+    setMsg("");
+  };
+
+  // 步骤 2：LLM 配置
+  const handleStep2Next = async () => {
+    if (llmEndpoint().trim() && llmApiKey().trim() && llmModels().trim()) {
+      const models = llmModels().split("\n").map(s => s.trim()).filter(s => s).map(id => ({
+        id, contextWindow: 256000, maxTokens: 64000,
+      }));
+      await saveStep({
+        providers: [{
+          id: "primary", name: entName().trim() || "primary",
+          endpoint: llmEndpoint().trim(), apiKey: llmApiKey().trim(),
+          apiFormat: llmApiFormat(), models, enabled: true,
+        }],
+      });
+      if (msg()) return;
+    }
+    setConfigStep(3);
+    setMsg("");
+  };
+
+  // 步骤 3：搜索配置 -> 完成
+  const handleStep3Finish = async () => {
+    if (searchEngine().trim() && searchApiKey().trim()) {
+      await saveStep({ searchEngine: searchEngine().trim(), searchApiKey: searchApiKey().trim() });
+      if (msg()) return;
+    }
+    setMsg("配置完成！");
+    props.onJoined();
+  };
   return (
     <div class="settings-page">
       <div class="settings-header" data-tauri-drag-region>
@@ -263,84 +282,104 @@ export default function JoinEnterprisePage(props: {
               </div>
             </Show>
 
-            {/* 步骤 3：企业信息配置（首次认证后） */}
+            {/* 分步配置向导 */}
             <Show when={step() === "config"}>
-              <div class="settings-row">
-                <label class="settings-label">企业名称 <span class="provider-field__hint">必填</span></label>
-                <div class="settings-control">
-                  <input
-                    class="settings-input"
-                    value={entName()}
-                    placeholder="如：研途教育"
-                    onInput={(e) => setEntName(e.currentTarget.value)}
-                  />
-                </div>
+              {/* 步骤进度指示 */}
+              <div style="display: flex; gap: 8px; margin-bottom: 20px; font-size: 12px; color: var(--text-dim);">
+                <span style={configStep() >= 1 ? "color: var(--accent-blue); font-weight: 600;" : ""}>1. 企业名称</span>
+                <span>{"->"}</span>
+                <span style={configStep() >= 2 ? "color: var(--accent-blue); font-weight: 600;" : ""}>2. LLM 配置</span>
+                <span>{"->"}</span>
+                <span style={configStep() >= 3 ? "color: var(--accent-blue); font-weight: 600;" : ""}>3. 搜索配置</span>
               </div>
 
-              <h4 class="settings-section-title" style="margin-top: 20px;">LLM 服务配置</h4>
-              <p class="settings-section-desc">企业员工将使用此配置，无需各自申请 API Key。</p>
+              {/* 步骤 1：企业名称 */}
+              <Show when={configStep() === 1}>
+                <h4 class="settings-section-title">企业名称</h4>
+                <p class="settings-section-desc">设置企业的显示名称，员工在客户端会看到。</p>
+                <div class="settings-row">
+                  <label class="settings-label">名称</label>
+                  <div class="settings-control">
+                    <input class="settings-input" value={entName()} placeholder="如：研途教育" onInput={(e) => setEntName(e.currentTarget.value)} />
+                  </div>
+                </div>
+                <div class="settings-row">
+                  <label class="settings-label" />
+                  <div class="settings-control" style="display: flex; gap: 8px;">
+                    <button class="settings-primary-btn" disabled={busy()} onClick={() => void handleStep1Next()}>保存并继续</button>
+                    <button class="settings-secondary-btn" onClick={() => { setConfigStep(2); setMsg(""); }}>跳过</button>
+                  </div>
+                </div>
+              </Show>
 
-              <div class="settings-row">
-                <label class="settings-label">Base URL <span class="provider-field__hint">填到 /v1</span></label>
-                <div class="settings-control">
-                  <input
-                    class="settings-input"
-                    value={llmEndpoint()}
-                    placeholder="https://api.openai.com/v1"
-                    onInput={(e) => setLlmEndpoint(e.currentTarget.value)}
-                  />
+              {/* 步骤 2：LLM 配置 */}
+              <Show when={configStep() === 2}>
+                <h4 class="settings-section-title">LLM 服务配置</h4>
+                <p class="settings-section-desc">企业员工将使用此配置，无需各自申请 API Key。未配置将无法对话。</p>
+                <div class="settings-row">
+                  <label class="settings-label">Base URL <span class="provider-field__hint">填到 /v1</span></label>
+                  <div class="settings-control">
+                    <input class="settings-input" value={llmEndpoint()} placeholder="https://api.openai.com/v1" onInput={(e) => setLlmEndpoint(e.currentTarget.value)} />
+                  </div>
                 </div>
-              </div>
-              <div class="settings-row">
-                <label class="settings-label">API Key</label>
-                <div class="settings-control">
-                  <input
-                    class="settings-input"
-                    type="password"
-                    value={llmApiKey()}
-                    placeholder="sk-..."
-                    onInput={(e) => setLlmApiKey(e.currentTarget.value)}
-                  />
+                <div class="settings-row">
+                  <label class="settings-label">API Key</label>
+                  <div class="settings-control">
+                    <input class="settings-input" type="password" value={llmApiKey()} placeholder="sk-..." onInput={(e) => setLlmApiKey(e.currentTarget.value)} />
+                  </div>
                 </div>
-              </div>
-              <div class="settings-row">
-                <label class="settings-label">API 格式</label>
-                <div class="settings-control">
-                  <select
-                    class="settings-select"
-                    value={llmApiFormat()}
-                    onChange={(e) => setLlmApiFormat(e.currentTarget.value)}
-                  >
-                    <option value="openai">openai（兼容/OpenAI）</option>
-                    <option value="anthropic">anthropic（Claude）</option>
-                    <option value="responses">responses（OpenAI Responses）</option>
-                  </select>
+                <div class="settings-row">
+                  <label class="settings-label">API 格式</label>
+                  <div class="settings-control">
+                    <select class="settings-select" value={llmApiFormat()} onChange={(e) => setLlmApiFormat(e.currentTarget.value)}>
+                      <option value="openai">openai（兼容/OpenAI）</option>
+                      <option value="anthropic">anthropic（Claude）</option>
+                      <option value="responses">responses（OpenAI Responses）</option>
+                    </select>
+                  </div>
                 </div>
-              </div>
-              <div class="settings-row">
-                <label class="settings-label">模型 ID <span class="provider-field__hint">每行一个</span></label>
-                <div class="settings-control">
-                  <textarea
-                    class="settings-input"
-                    style="min-height: 60px; resize: vertical; font-family: var(--font-mono);"
-                    value={llmModels()}
-                    placeholder={"如：\ndeepseek-v4-pro\ngpt-4o"}
-                    onInput={(e) => setLlmModels(e.currentTarget.value)}
-                  />
+                <div class="settings-row">
+                  <label class="settings-label">模型 ID <span class="provider-field__hint">每行一个</span></label>
+                  <div class="settings-control">
+                    <textarea class="settings-input" style="min-height: 60px; resize: vertical; font-family: var(--font-mono);" value={llmModels()} placeholder={"如：\ndeepseek-v4-pro\ngpt-4o"} onInput={(e) => setLlmModels(e.currentTarget.value)} />
+                  </div>
                 </div>
-              </div>
-              <div class="settings-row">
-                <label class="settings-label" />
-                <div class="settings-control">
-                  <button
-                    class="settings-primary-btn"
-                    disabled={busy()}
-                    onClick={() => void handleSetupEnterprise()}
-                  >
-                    {busy() ? "保存中…" : "保存并进入企业空间"}
-                  </button>
+                <div class="settings-row">
+                  <label class="settings-label" />
+                  <div class="settings-control" style="display: flex; gap: 8px;">
+                    <button class="settings-primary-btn" disabled={busy()} onClick={() => void handleStep2Next()}>保存并继续</button>
+                    <button class="settings-secondary-btn" onClick={() => { setConfigStep(3); setMsg(""); }}>跳过</button>
+                  </div>
                 </div>
-              </div>
+              </Show>
+
+              {/* 步骤 3：搜索配置 */}
+              <Show when={configStep() === 3}>
+                <h4 class="settings-section-title">搜索服务配置</h4>
+                <p class="settings-section-desc">配置后企业员工可以使用联网搜索功能。可跳过，后续在企业管理中配置。</p>
+                <div class="settings-row">
+                  <label class="settings-label">搜索引擎</label>
+                  <div class="settings-control">
+                    <select class="settings-select" value={searchEngine()} onChange={(e) => setSearchEngine(e.currentTarget.value)}>
+                      <option value="exa">Exa</option>
+                      <option value="brave">Brave（待实现）</option>
+                    </select>
+                  </div>
+                </div>
+                <div class="settings-row">
+                  <label class="settings-label">API Key</label>
+                  <div class="settings-control">
+                    <input class="settings-input" type="password" value={searchApiKey()} placeholder="搜索服务 API Key" onInput={(e) => setSearchApiKey(e.currentTarget.value)} />
+                  </div>
+                </div>
+                <div class="settings-row">
+                  <label class="settings-label" />
+                  <div class="settings-control" style="display: flex; gap: 8px;">
+                    <button class="settings-primary-btn" disabled={busy()} onClick={() => void handleStep3Finish()}>保存并进入企业空间</button>
+                    <button class="settings-secondary-btn" onClick={() => { setMsg("配置完成！"); props.onJoined(); }}>跳过</button>
+                  </div>
+                </div>
+              </Show>
             </Show>
 
             <Show when={msg()}>
