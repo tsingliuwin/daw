@@ -67,6 +67,9 @@ export default function BrandFooter(props: {
   // 浮层根节点引用：用于点击外部判定关闭。
   let popoverRef: HTMLDivElement | undefined;
 
+  // 启动时预加载企业列表，让品牌名能立即显示企业名（而非 UUID）。
+  onMount(() => { void refreshSpaces(); });
+
   // 当前空间展示名：personal → 「个人版」；否则查企业名。
   const currentSpaceName = () => {
     const sp = activeSpace();
