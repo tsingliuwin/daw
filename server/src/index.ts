@@ -5,6 +5,8 @@
  * 未来部署到 CloudBase 云函数时，只需把 app 导出，云函数适配器调用它。
  */
 
+import "dotenv/config";
+
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { serve } from "@hono/node-server";
