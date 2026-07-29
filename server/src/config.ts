@@ -1,13 +1,15 @@
 /**
- * 服务端配置——从环境变量读取。
+ * 服务端配置--仅保留运行时不可变的内存状态。
  *
- * 部署时通过 env 注入（CloudBase 云函数的 env 配置 / docker -e / .env 文件）。
- * 本地开发可在 server/ 目录下创建 .env 文件，tsx 会自动加载。
+ * 企业配置（serverName / providers / searchEngine / users 等）已迁移到
+ * PostgreSQL，通过 Drizzle ORM 查询（见 db.ts / schema.ts），不再读 JSON 文件。
+ * 此处只保留：
+ *   - jwtSecret：从 env 读，进程内不变。
+ *   - setupToken：首次运行时生成的随机 token（纯内存，重启后重新生成）。
  */
 
-import fs from "fs";
-import path from "path";
 import crypto from "crypto";
+import { isFirstRun } from "./db.js";
 
 export interface LlmProviderConfig {
   id: string;
@@ -40,152 +42,29 @@ export interface ServerConfig {
   users: UserConfig[];
 }
 
-function parseProviders(): LlmProviderConfig[] {
-  const raw = process.env.LLM_PROVIDERS;
-  if (!raw) return [];
-  try {
-    return JSON.parse(raw);
-  } catch {
-    return [];
-  }
-}
-
-function parseUsers(): UserConfig[] {
-  const raw = process.env.USERS;
-  if (!raw) {
-    // 默认一个 demo 用户
-    return [{ username: "admin", password: "admin" }];
-  }
-  try {
-    return JSON.parse(raw);
-  } catch {
-    return [{ username: "admin", password: "admin" }];
-  }
-}
-
 /**
- * 企业唯一 ID——服务端首次启动时生成 UUID，持久化到 .enterprise-id 文件。
- * 客户端首次连接时从 /client-config 获取，作为数据隔离的 key。
+ * 运行时内存状态：只有 jwtSecret（从 env 读）和 setupToken（首次运行时生成，
+ * 纯内存，重启后重新生成）。其余配置从 DB 实时查询。
  */
-function getOrCreateEnterpriseId(): string {
-  const idFile = path.resolve(process.cwd(), ".enterprise-id");
-  try {
-    if (fs.existsSync(idFile)) {
-      return fs.readFileSync(idFile, "utf-8").trim();
-    }
-  } catch { /* 文件读取失败，继续生成新的 */ }
-  const id = crypto.randomUUID();
-  try {
-    fs.writeFileSync(idFile, id, "utf-8");
-  } catch { /* 写入失败也不影响运行——内存里有 ID */ }
-  return id;
-}
-
-/**
- * 首次启动设置 token——服务端首次运行（无用户配置）时生成一个随机 token，
- * 持久化到 .setup-token 文件，有效期 15 分钟。管理员复制签名 URL 粘贴到
- * 客户端完成首次认证。用完即删（一次性）。
- */
-function getOrCreateSetupToken(): string | null {
-  const tokenFile = path.resolve(process.cwd(), ".setup-token");
-  try {
-    if (fs.existsSync(tokenFile)) {
-      const content = fs.readFileSync(tokenFile, "utf-8").trim();
-      const parsed = JSON.parse(content);
-      // 检查是否过期（15 分钟）。
-      if (Date.now() - parsed.createdAt < 15 * 60 * 1000) {
-        return parsed.token;
-      }
-      // 过期了，删除文件。
-      fs.unlinkSync(tokenFile);
-    }
-  } catch { /* 文件读取失败，继续生成新的 */ }
-  const token = crypto.randomUUID();
-  try {
-    fs.writeFileSync(tokenFile, JSON.stringify({ token, createdAt: Date.now() }), "utf-8");
-  } catch { /* 写入失败也不影响运行 */ }
-  return token;
-}
-
-/** 删除 setup token（认证成功后调用，一次性）。 */
-export function deleteSetupToken() {
-  const tokenFile = path.resolve(process.cwd(), ".setup-token");
-  try { fs.unlinkSync(tokenFile); } catch { /* 忽略 */ }
-}
-
-/** 是否首次运行（用户列表只有默认 demo 或为空）。 */
-export function isFirstRun(): boolean {
-  return config.users.length === 0 ||
-    (config.users.length === 1 && config.users[0].username === "admin" && config.users[0].password === "admin");
-}
-
-export const config: ServerConfig & { enterpriseId: string; setupToken: string | null } = {
+export const config: { jwtSecret: string; setupToken: string | null } = {
   jwtSecret: process.env.JWT_SECRET || "aioa-dev-secret-change-me",
-  serverName: process.env.SERVER_NAME || "AIOA 工作台",
-  providers: parseProviders(),
-  searchEngine: process.env.SEARCH_ENGINE || "",
-  searchApiKey: process.env.SEARCH_API_KEY || "",
-  users: parseUsers(),
-  enterpriseId: getOrCreateEnterpriseId(),
-  setupToken: null, // 在 index.ts 启动时设置（需要知道端口）
+  setupToken: null,
 };
 
-/** 生成 setup token 并返回签名 URL（在 index.ts 启动时调用）。 */
-export function initSetupToken(port: number): string | null {
-  if (!isFirstRun()) {
+/**
+ * 首次运行（无用户）时生成 setup token 并返回签名 URL（在 index.ts 启动时调用）。
+ * token 纯内存保存，重启后重新生成；用完即清空（一次性）。
+ */
+export async function initSetupToken(
+  enterpriseId: string,
+  port: number,
+): Promise<string | null> {
+  const firstRun = await isFirstRun(enterpriseId);
+  if (!firstRun) {
     config.setupToken = null;
     return null;
   }
-  const token = getOrCreateSetupToken();
+  const token = crypto.randomUUID();
   config.setupToken = token;
-  if (token) {
-    return `http://localhost:${port}/auth/setup?token=${token}`;
-  }
-  return null;
-}
-
-/**
- * 从 enterprise-config.json 加载企业配置，覆盖 env 的默认值。
- * 在服务端启动时调用（如果文件存在，说明已经配过企业信息）。
- */
-export function loadEnterpriseConfig() {
-  const configFile = path.resolve(process.cwd(), "enterprise-config.json");
-  try {
-    if (!fs.existsSync(configFile)) return;
-    const raw = fs.readFileSync(configFile, "utf-8");
-    const saved = JSON.parse(raw) as Partial<ServerConfig>;
-    if (saved.serverName) config.serverName = saved.serverName;
-    if (saved.providers) config.providers = saved.providers;
-    if (saved.searchEngine !== undefined) config.searchEngine = saved.searchEngine;
-    if (saved.searchApiKey !== undefined) config.searchApiKey = saved.searchApiKey;
-  } catch { /* 文件读取失败，用 env 默认值 */ }
-}
-
-/**
- * 保存企业配置到 enterprise-config.json。
- * 管理员首次配置后调用——持久化 serverName/providers/searchEngine/searchApiKey。
- */
-export function saveEnterpriseConfig(data: {
-  serverName?: string;
-  providers?: LlmProviderConfig[];
-  searchEngine?: string;
-  searchApiKey?: string;
-}) {
-  const configFile = path.resolve(process.cwd(), "enterprise-config.json");
-  try {
-    // 读现有配置（如果文件已存在），合并新值。
-    let existing: Partial<ServerConfig> = {};
-    try {
-      if (fs.existsSync(configFile)) {
-        existing = JSON.parse(fs.readFileSync(configFile, "utf-8"));
-      }
-    } catch { /* 忽略 */ }
-    const merged = { ...existing, ...data };
-    fs.writeFileSync(configFile, JSON.stringify(merged, null, 2), "utf-8");
-    // 同步更新内存里的 config。
-    if (data.serverName) config.serverName = data.serverName;
-    if (data.providers) config.providers = data.providers;
-    if (data.searchEngine !== undefined) config.searchEngine = data.searchEngine;
-    if (data.searchApiKey !== undefined) config.searchApiKey = data.searchApiKey;
-  } catch { /* 写入失败不影响运行 */ }
+  return `http://localhost:${port}/auth/setup?token=${token}`;
 }

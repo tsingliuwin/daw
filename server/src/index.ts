@@ -15,18 +15,16 @@ import models from "./routes/models.js";
 import chat from "./routes/chat.js";
 import search from "./routes/search.js";
 import enterprise from "./routes/enterprise.js";
-import { config, initSetupToken, loadEnterpriseConfig } from "./config.js";
-
-// 启动时加载已保存的企业配置（覆盖 env 默认值）。
-loadEnterpriseConfig();
+import { initSetupToken } from "./config.js";
+import { initDatabase, closePool } from "./db.js";
 
 const app = new Hono();
 
-// CORS——允许桌面客户端（Tauri webview）跨域请求。
+// CORS--允许桌面客户端（Tauri webview）跨域请求。
 app.use("*", cors({ origin: "*" }));
 
 // 健康检查。
-app.get("/health", (c) => c.json({ status: "ok", serverName: config.serverName }));
+app.get("/health", (c) => c.json({ status: "ok" }));
 
 // 路由挂载。
 app.route("/auth", auth);
@@ -39,27 +37,45 @@ app.route("/enterprise", enterprise);
 // 启动（本地开发用；CloudBase 部署时由适配器调用 app）。
 const port = parseInt(process.env.PORT || "3000", 10);
 
-serve({ fetch: app.fetch, port }, (info) => {
-  console.log(`AIOA 工作台服务端运行在 http://localhost:${info.port}`);
-  console.log(`  服务名: ${config.serverName}`);
-  console.log(`  用户数: ${config.users.length}`);
-  console.log(`  LLM Provider 数: ${config.providers.length}`);
-  console.log(`  搜索引擎: ${config.searchEngine || "未配置"}`);
+/**
+ * 启动流程：先初始化 DB（迁移 + 默认企业）-> 首次运行则生成 setup token ->
+ * 启动 HTTP 服务。initDatabase 是异步的，必须在 serve 之前 await。
+ */
+async function main() {
+  const enterpriseId = await initDatabase();
 
-  // 首次运行：生成签名 URL 并打印到控制台。
-  const setupUrl = initSetupToken(info.port);
-  if (setupUrl) {
-    console.log("");
-    console.log("═══════════════════════════════════════════════════");
-    console.log("  首次启动——复制以下链接到客户端完成认证：");
-    console.log("");
-    console.log(`  ${setupUrl}`);
-    console.log("");
-    console.log("  （有效期 15 分钟，认证成功后自动失效）");
-    console.log("═══════════════════════════════════════════════════");
-    console.log("");
-  }
+  // 首次运行：生成签名 URL（纯内存 token，重启后重新生成）。
+  const setupUrl = await initSetupToken(enterpriseId, port);
+
+  serve({ fetch: app.fetch, port }, (info) => {
+    console.log(`AIOA 工作台服务端运行在 http://localhost:${info.port}`);
+
+    if (setupUrl) {
+      console.log("");
+      console.log("═══════════════════════════════════════════════════");
+      console.log("  首次启动--复制以下链接到客户端完成认证：");
+      console.log("");
+      console.log(`  ${setupUrl}`);
+      console.log("");
+      console.log("  （有效期 15 分钟，认证成功后自动失效）");
+      console.log("═══════════════════════════════════════════════════");
+      console.log("");
+    }
+  });
+}
+
+main().catch((e) => {
+  console.error("启动失败:", e);
+  process.exit(1);
 });
+
+// 优雅退出：关闭 PG 连接池。
+async function shutdown() {
+  await closePool();
+  process.exit(0);
+}
+process.on("SIGINT", shutdown);
+process.on("SIGTERM", shutdown);
 
 // 导出 app 供 CloudBase 云函数适配器使用。
 export default app;

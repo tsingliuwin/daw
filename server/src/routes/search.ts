@@ -2,12 +2,14 @@
  * 搜索代理路由：POST /search
  *
  * JWT 保护。接收 { query, num_results } 转发到 Exa/Brave，返回搜索结果。
- * 客户端企业模式下搜索走这里（不用本地 key）。
+ * 客户端企业模式下搜索走这里（不用本地 key）。engine + apiKey 从 PG 读取。
  */
 
 import { Hono } from "hono";
-import { config } from "../config.js";
+import { eq } from "drizzle-orm";
 import { jwtAuth } from "../middleware/jwt.js";
+import { db } from "../db.js";
+import { enterprise, searchConfig } from "../schema.js";
 
 const search = new Hono();
 
@@ -18,20 +20,33 @@ search.post("/", jwtAuth, async (c) => {
     return c.json({ error: "query 不能为空" }, 400);
   }
 
-  if (!config.searchApiKey) {
+  // 取首期单企业 + 搜索配置。
+  const entRows = await db.select().from(enterprise).limit(1);
+  const ent = entRows[0];
+  if (!ent) {
+    return c.json({ error: "服务端未配置搜索服务" }, 500);
+  }
+
+  const cfgRows = await db
+    .select()
+    .from(searchConfig)
+    .where(eq(searchConfig.enterpriseId, ent.id));
+  const cfg = cfgRows[0];
+
+  if (!cfg || !cfg.apiKey) {
     return c.json({ error: "服务端未配置搜索服务" }, 500);
   }
 
   const num = Math.min(10, Math.max(1, body.num_results ?? 5));
 
   // Exa 搜索。
-  if (config.searchEngine === "exa") {
+  if (cfg.engine === "exa") {
     try {
       const resp = await fetch("https://api.exa.ai/search", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${config.searchApiKey}`,
+          Authorization: `Bearer ${cfg.apiKey}`,
         },
         body: JSON.stringify({
           query: body.query,
@@ -64,7 +79,7 @@ search.post("/", jwtAuth, async (c) => {
 
   // TODO: Brave 搜索。
 
-  return c.json({ error: `不支持的搜索引擎: ${config.searchEngine}` }, 400);
+  return c.json({ error: `不支持的搜索引擎: ${cfg.engine}` }, 400);
 });
 
 export default search;
