@@ -36,6 +36,32 @@ export default function EnterpriseAdminPage(props: {
   const [searchEngine, setSearchEngine] = createSignal("");
   const [searchApiKey, setSearchApiKey] = createSignal("");
 
+  // 企业名称编辑状态。
+  const [editingName, setEditingName] = createSignal(false);
+  const [nameInput, setNameInput] = createSignal("");
+
+  // 保存企业名称：POST /enterprise/setup（只改 serverName）。
+  const handleSaveName = async () => {
+    const val = nameInput().trim();
+    const e = ent();
+    setEditingName(false);
+    if (!val || !e) return;
+    if (val === (status().serverName || e.name)) return;
+    try {
+      const resp = await fetch(`${e.serverUrl}/enterprise/setup`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${e.token}` },
+        body: JSON.stringify({ serverName: val }),
+      });
+      if (!resp.ok) { const t = await resp.text(); setMsg(`名称保存失败：${t}`); return; }
+      // 更新本地状态。
+      setStatus((s) => ({ ...s, serverName: val }));
+      setEnt({ ...e, name: val });
+      setMsg("企业名称已更新");
+      props.onSaved?.();
+    } catch (err) { setMsg(`名称保存失败：${err}`); }
+  };
+
   // 获取当前企业信息 + 从服务端拉数据。
   onMount(async () => {
     try {
@@ -111,7 +137,33 @@ export default function EnterpriseAdminPage(props: {
               <div class="settings-row">
                 <label class="settings-label">企业名称</label>
                 <div class="settings-control">
-                  <span style="font-size: 13px; color: var(--text-primary);">{status().serverName || ent()?.name || "—"}</span>
+                  <Show
+                    when={!editingName()}
+                    fallback={
+                      <input
+                        class="settings-input"
+                        value={nameInput()}
+                        onInput={(e) => setNameInput(e.currentTarget.value)}
+                        onBlur={() => void handleSaveName()}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") void handleSaveName();
+                          if (e.key === "Escape") { setEditingName(false); setNameInput(""); }
+                        }}
+                        ref={(el) => { setTimeout(() => { el?.focus(); el?.select(); }, 0); }}
+                      />
+                    }
+                  >
+                    <span
+                      style="font-size: 13px; color: var(--text-primary); cursor: text; border-radius: 3px; padding: 1px 4px; margin-left: -4px;"
+                      class="provider-card__name--editable"
+                      title="点击修改名称"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setEditingName(true);
+                        setNameInput(status().serverName || ent()?.name || "");
+                      }}
+                    >{status().serverName || ent()?.name || "—"}</span>
+                  </Show>
                 </div>
               </div>
               <div class="settings-row">
