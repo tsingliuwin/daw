@@ -17,7 +17,7 @@ interface EnterpriseEnt {
 /**
  * 企业管理后台首页——从品牌区"管理"按钮打开。
  *
- * 结构：左侧导航（概览/LLM配置/搜索配置）+ 右侧内容区，复用 settings-page 样式。
+ * 结构：左侧导航（概览/模型管理/搜索配置）+ 右侧内容区，复用 settings-page 样式。
  * 数据来源：从客户端 settings.json 读当前企业的 serverUrl + token，
  * 调服务端 GET /enterprise/status + GET /models + POST /enterprise/setup。
  */
@@ -126,7 +126,7 @@ export default function EnterpriseAdminPage(props: {
         <nav class="settings-nav">
           <div class="settings-nav__items">
             <button class="settings-nav-item" classList={{ active: tab() === "overview" }} onClick={() => setTab("overview")}>概览</button>
-            <button class="settings-nav-item" classList={{ active: tab() === "llm" }} onClick={() => setTab("llm")}>LLM 配置</button>
+            <button class="settings-nav-item" classList={{ active: tab() === "llm" }} onClick={() => setTab("llm")}>模型管理</button>
             <button class="settings-nav-item" classList={{ active: tab() === "search" }} onClick={() => setTab("search")}>搜索配置</button>
           </div>
           <BrandFooter
@@ -188,7 +188,7 @@ export default function EnterpriseAdminPage(props: {
                 </div>
               </div>
               <div class="settings-row">
-                <label class="settings-label">LLM 配置</label>
+                <label class="settings-label">模型管理</label>
                 <div class="settings-control">
                   <span style="font-size: 12px;">
                     {status().hasProviders ? `✅ 已配置（${models().reduce((n, p) => n + p.models.length, 0)} 个模型）` : "❌ 未配置"}
@@ -204,13 +204,13 @@ export default function EnterpriseAdminPage(props: {
             </div>
           </Show>
 
-          {/* LLM 配置 */}
+          {/* 模型管理 */}
           <Show when={tab() === "llm"}>
             <div class="settings-section">
-              <h3 class="settings-section-title">LLM 服务配置</h3>
-              <p class="settings-section-desc">企业员工使用的 LLM 配置，由服务端统一管理。</p>
+              <h3 class="settings-section-title">模型管理</h3>
+              <p class="settings-section-desc">企业员工使用的模型配置，由服务端统一管理。</p>
 
-              <Show when={models().length > 0} fallback={<div class="empty-hint">尚未配置 LLM 服务商</div>}>
+              <Show when={models().length > 0} fallback={<div class="empty-hint">尚未配置模型服务商</div>}>
                 <For each={models()}>
                   {(prov) => (
                     <div class="provider-card">
@@ -235,7 +235,7 @@ export default function EnterpriseAdminPage(props: {
                 <label class="settings-label" />
                 <div class="settings-control">
                   <span style="font-size: 11.5px; color: var(--text-dim);">
-                    LLM 配置变更请通过服务端环境变量或 enterprise-config.json 修改。
+                    模型配置变更请通过企业管理或服务端配置修改。
                   </span>
                 </div>
               </div>
