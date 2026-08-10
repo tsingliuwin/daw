@@ -148,7 +148,139 @@ impl SearchBackend for ExaSearchBackend {
 }
 
 // ---------------------------------------------------------------------------
-// SearchTool——对 LLM 暴露的 rig Tool
+// 豆包搜索后端（火山引擎）
+// ---------------------------------------------------------------------------
+
+/// 豆包搜索（火山引擎）后端。
+///
+/// 文档: https://docs.volcengine.com/docs/87772/2272953
+/// API Key 接入: POST https://open.feedcoopapi.com/search_api/web_search
+/// 鉴权: Authorization: Bearer <API_KEY>
+pub struct DoubaoSearchBackend {
+    api_key: String,
+    client: reqwest::Client,
+}
+
+impl DoubaoSearchBackend {
+    pub fn new(api_key: String) -> Self {
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(30))
+            .connect_timeout(std::time::Duration::from_secs(10))
+            .pool_idle_timeout(std::time::Duration::from_secs(60))
+            .tcp_nodelay(true)
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new());
+        Self { api_key, client }
+    }
+}
+
+#[async_trait]
+impl SearchBackend for DoubaoSearchBackend {
+    fn name(&self) -> &str {
+        "豆包"
+    }
+
+    async fn search(&self, query: &str, num_results: usize) -> Result<Vec<SearchResult>, String> {
+        // 豆包 Custom 版 web 搜索。NeedUrl=true 过滤掉无链接的"火山如意"卡片结果，
+        // 保证每条结果都有可点击的落地页。
+        let body = json!({
+            "Query": query,
+            "SearchType": "web",
+            "Count": num_results,
+            "Filter": { "NeedUrl": true }
+        });
+
+        // 重试：网络偶发失败或服务端 10500/700429 时等 1 秒重试一次（默认 5 QPS 够用）。
+        let mut last_err = String::new();
+        for attempt in 0..2u32 {
+            if attempt > 0 {
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+            }
+            let resp = match self
+                .client
+                .post("https://open.feedcoopapi.com/search_api/web_search")
+                .bearer_auth(&self.api_key)
+                .json(&body)
+                .send()
+                .await
+            {
+                Ok(r) => r,
+                Err(e) => {
+                    last_err = format!("豆包搜索请求失败: {e}");
+                    continue; // 重试
+                }
+            };
+
+            if !resp.status().is_success() {
+                let status = resp.status();
+                let text = resp.text().await.unwrap_or_default();
+                last_err = format!("豆包搜索失败 (HTTP {status}): {text}");
+                // 429/5xx 重试，4xx 不重试
+                if status.as_u16() >= 500 || status.as_u16() == 429 {
+                    continue;
+                }
+                return Err(last_err);
+            }
+
+            let data: serde_json::Value = resp
+                .json()
+                .await
+                .map_err(|e| format!("豆包响应解析失败: {e}"))?;
+
+            // 豆包即使在 HTTP 200 下也可能返回业务错误（ResponseMetadata.Error）。
+            // 10500 InnerError / 700429 限流 可重试；其它业务错误（参数/权限/额度）不重试。
+            if let Some(err) = data.get("ResponseMetadata").and_then(|m| m.get("Error")) {
+                let code = err
+                    .get("CodeN")
+                    .and_then(|v| v.as_i64())
+                    .or_else(|| {
+                        err.get("Code")
+                            .and_then(|v| v.as_str())
+                            .and_then(|s| s.parse::<i64>().ok())
+                    })
+                    .unwrap_or(0);
+                let message = err
+                    .get("Message")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("未知错误");
+                last_err = format!("豆包搜索失败 ({code}): {message}");
+                if code == 10500 || code == 700429 {
+                    continue;
+                }
+                return Err(last_err);
+            }
+
+            let results = data
+                .get("Result")
+                .and_then(|r| r.get("WebResults"))
+                .and_then(|w| w.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .map(|item| SearchResult {
+                            title: item["Title"].as_str().unwrap_or("").to_string(),
+                            url: item["Url"].as_str().unwrap_or("").to_string(),
+                            // 文档推荐 Summary 用于大模型场景（500~1000字），
+                            // Snippet 仅约200字且"强烈不建议用于大模型"，作为 fallback。
+                            snippet: item["Summary"]
+                                .as_str()
+                                .filter(|s| !s.is_empty())
+                                .or_else(|| item["Snippet"].as_str())
+                                .unwrap_or("")
+                                .to_string(),
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+
+            return Ok(results);
+        } // end for
+
+        Err(last_err)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// SearchTool--对 LLM 暴露的 rig Tool
 // ---------------------------------------------------------------------------
 
 /// 搜索工具的参数。
@@ -286,6 +418,7 @@ pub fn create_search_backend_from_settings() -> Option<Arc<dyn SearchBackend>> {
     }
     match engine {
         "exa" => Some(Arc::new(ExaSearchBackend::new(api_key))),
+        "doubao" => Some(Arc::new(DoubaoSearchBackend::new(api_key))),
         _ => None,
     }
 }

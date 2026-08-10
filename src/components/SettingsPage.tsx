@@ -338,6 +338,7 @@ export default function SettingsPage(props: {
                   >
                     <option value="">未配置</option>
                     <option value="exa">Exa</option>
+                    <option value="doubao">豆包</option>
                     <option value="brave">Brave（待实现）</option>
                   </select>
                 </div>
@@ -349,7 +350,13 @@ export default function SettingsPage(props: {
                     class="settings-input"
                     type="password"
                     value={(settings().search as any)?.apiKey ?? ""}
-                    placeholder="在 exa.ai/dashboard 获取"
+                    placeholder={
+                      (settings().search as any)?.engine === "doubao"
+                        ? "在火山引擎控制台获取 API Key"
+                        : (settings().search as any)?.engine === "exa"
+                          ? "在 exa.ai/dashboard 获取"
+                          : "输入搜索服务 API Key"
+                    }
                     onInput={(e) => updateSetting("search", { ...(settings().search as any ?? {}), engine: (settings().search as any)?.engine ?? "exa", apiKey: e.currentTarget.value })}
                   />
                 </div>
