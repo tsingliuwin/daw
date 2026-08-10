@@ -89,9 +89,8 @@ export default function SettingsPage(props: {
   const [editingProviderId, setEditingProviderId] = createSignal<string | null>(null);
   const [tempName, setTempName] = createSignal("");
 
-  // 读取 settings.json 刷新本地状态。onMount 和品牌区登录/断开企业服务端后
-  // （onServerChanged）都会调它，保证通用设置页里的搜索服务、provider 等字段
-  // 与磁盘一致。企业模式服务端配置已迁至品牌区弹出面板（BrandFooter）。
+  // 读取 settings.json 刷新本地状态（onMount 时调一次），保证通用设置页里的
+  // 搜索服务、provider 等字段与磁盘一致。
   const loadSettings = async () => {
     try {
       const json = await invoke<string>("load_settings_json");
@@ -282,11 +281,6 @@ export default function SettingsPage(props: {
             }}
             isDarkTheme={currentTheme() !== "light"}
             onCloseSettings={props.onClose}
-            onServerChanged={() => {
-              // 企业模式登录/断开后刷新本地 settings 状态，并通知父级重载模型列表。
-              void loadSettings();
-              props.onProvidersChanged?.([]);
-            }}
           />
         </nav>
 

@@ -83,16 +83,6 @@ pub fn run() {
             commands::resolve_tool_confirmation,
             commands::abort_task,
             commands::test_llm_connection,
-            commands::login_to_server,
-            commands::fetch_server_models,
-            commands::get_enterprises,
-            commands::get_active_space,
-            commands::get_current_user_id,
-            commands::set_active_space,
-            commands::join_enterprise,
-            commands::join_enterprise_via_setup,
-            commands::setup_enterprise,
-            commands::leave_enterprise,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

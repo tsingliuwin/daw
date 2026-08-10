@@ -12,8 +12,6 @@ import LeftNav from "./components/LeftNav";
 import ChatView from "./components/ChatView";
 import HomeView from "./components/HomeView";
 import SettingsPage from "./components/SettingsPage";
-import JoinEnterprisePage from "./components/JoinEnterprisePage";
-import EnterpriseAdminPage from "./components/EnterpriseAdminPage";
 
 /**
  * 应用主布局与状态中枢。相比 lakemind 大幅精简：
@@ -46,11 +44,6 @@ export default function App() {
   // （tokio::spawn 后立即返回），真正的流式通过 agent-event 异步回来，
   // streamingTaskId 用于在流式期间锁定输入、显示 Stop 按钮。
   const [streamingTaskId, setStreamingTaskId] = createSignal<string | null>(null);
-  // 当前激活的多企业空间：值为 "personal" 或某企业 UUID。后端按 spaceId 隔离
-  // 工作区/任务数据，切换空间需重新加载工作区与任务。
-  const [activeSpace, setActiveSpace] = createSignal<string>("personal");
-  const [activeUser, setActiveUser] = createSignal<string>("default");
-
   // ── 模型与选择器 ──
   const [availableModels, setAvailableModels] = createSignal<ModelOption[]>([]);
   const [modelCtxWindows, setModelCtxWindows] = createSignal<Record<string, number>>({});
@@ -62,9 +55,6 @@ export default function App() {
   const [leftOpen, setLeftOpen] = createSignal<boolean>(true);
   const [consoleOpen, setConsoleOpen] = createSignal<boolean>(false);
   const [settingsOpen, setSettingsOpen] = createSignal<boolean>(false);
-  const [joinEnterpriseOpen, setJoinEnterpriseOpen] = createSignal<boolean>(false);
-  const [enterpriseAdminOpen, setEnterpriseAdminOpen] = createSignal<boolean>(false);
-  const [enterpriseVersion, setEnterpriseVersion] = createSignal(0);
   const [busy, setBusy] = createSignal<boolean>(false);
 
   // 在 tasksByWorkspace 中查找 taskId 所属的工作区路径（不存在返回 null）。
@@ -111,8 +101,6 @@ export default function App() {
   });
 
   // 加载 settings.json → 收集可用模型为可选项。
-  // 企业模式：settings.json 有 server.url + server.token 时，从服务端 /models
-  // 拉取模型列表（无需本地 key）；否则保持个人模式，从本地 providers 读。
   async function loadModelsFromSettings() {
     try {
       const json = await invoke<string>("load_settings_json");
@@ -121,36 +109,7 @@ export default function App() {
       const models: ModelOption[] = [];
       const ctxMap: Record<string, number> = {};
 
-      // 企业模式：连了服务端就从服务端拉模型列表。
-      const server = loaded.server;
-      if (server && server.url && server.token) {
-        try {
-          const raw = await invoke<string>("fetch_server_models");
-          const data = JSON.parse(raw) as {
-            providers?: {
-              id: string;
-              name?: string;
-              models?: { id: string; contextWindow: number; maxTokens?: number }[];
-            }[];
-          };
-          for (const prov of data.providers || []) {
-            for (const m of prov.models || []) {
-              if (!m.id || !m.id.trim()) continue; // 跳过空 id 的模型行（未填完）
-              const opt: ModelOption = {
-                providerId: prov.id,
-                providerName: prov.name || prov.id,
-                modelId: m.id,
-                contextWindow: m.contextWindow,
-              };
-              models.push(opt);
-              if (m.contextWindow) ctxMap[modelKeyOf(opt)] = m.contextWindow;
-            }
-          }
-        } catch (err) {
-          logError("ui", "Failed to fetch server models", err);
-        }
-      } else if (loaded.providers) {
-        // 个人模式：从 settings.json providers 读已启用的模型。
+      if (loaded.providers) {
         for (const prov of loaded.providers) {
           if (prov.enabled && prov.models) {
             for (const m of prov.models) {
@@ -192,7 +151,7 @@ export default function App() {
     if (loadedWs.has(wsPath)) return;
     loadedWs.add(wsPath);
     try {
-      const loadedTasks = await invoke<Task[]>("load_workspace_tasks", { workspacePath: wsPath, spaceId: activeSpace(), userId: activeUser() });
+      const loadedTasks = await invoke<Task[]>("load_workspace_tasks", { workspacePath: wsPath, spaceId: "personal", userId: "default" });
       // 归一化历史消息（兼容简单的 content 形态）。
       const migrated = loadedTasks
         .map((t) =>
@@ -218,8 +177,8 @@ export default function App() {
         messages: task.messages ?? [],
         modelId: task.modelId || null,
         tokenUsage: task.tokenUsage ?? null,
-        spaceId: activeSpace(),
-        userId: activeUser(),
+        spaceId: "personal",
+        userId: "default",
       });
     } catch (err) {
       logError("agent", "Failed to save task to backend", err);
@@ -227,8 +186,7 @@ export default function App() {
   }
 
   // 加载工作区列表并为每个工作区加载任务，恢复 workspace.last 决定初始
-  // activeTaskId 与首页工作区下拉选中项。onMount 首次加载与 switchSpace 切换
-  // 空间后的重载共用此逻辑。
+  // activeTaskId 与首页工作区下拉选中项。onMount 首次加载走此逻辑。
   async function reloadWorkspacesAndTasks() {
     setBusy(true);
     try {
@@ -274,46 +232,11 @@ export default function App() {
     }
   }
 
-  // 切换当前激活的多企业空间（"personal" 或企业 UUID）。后端 set_active_space
-  // 持久化后清空本地任务缓存，重新加载工作区+任务，并刷新模型列表（企业/个人
-  // 模型来源不同）。
-  async function switchSpace(spaceId: string) {
-    try {
-      await invoke("set_active_space", { spaceId });
-    } catch (err) {
-      logError("ui", "Failed to set active space", err);
-    }
-    setActiveSpace(spaceId);
-    // 切换空间后也要切换用户 ID（个人版=default，企业版=用户名）。
-    try {
-      const uid = await invoke<string>("get_current_user_id");
-      setActiveUser(uid);
-    } catch { /* best-effort */ }
-    loadedWs.clear();
-    setTasksByWorkspace({});
-    setActiveTaskId(null);
-    await reloadWorkspacesAndTasks();
-    void loadModelsFromSettings();
-  }
-
   onMount(async () => {
     // 恢复工作区折叠态（localStorage）。
     try {
       const saved = localStorage.getItem("ws_collapsed");
       if (saved) setCollapsedWs(JSON.parse(saved));
-    } catch { /* best-effort */ }
-
-    // 恢复上次激活的多企业空间（personal 或企业 UUID）。必须在加载工作区任务
-    // 之前完成——load_workspace_tasks 等命令需要 spaceId 参数。
-    try {
-      const sp = await invoke<string>("get_active_space");
-      setActiveSpace(sp);
-    } catch { /* best-effort */ }
-
-    // 恢复当前用户 ID（个人版="default"，企业版=用户名）。
-    try {
-      const uid = await invoke<string>("get_current_user_id");
-      setActiveUser(uid);
     } catch { /* best-effort */ }
 
     // 从后端 config 表恢复主题（ui.theme）。
@@ -503,7 +426,7 @@ export default function App() {
       }
     }
     try {
-      await invoke("delete_task", { taskId: id, spaceId: activeSpace(), userId: activeUser() });
+      await invoke("delete_task", { taskId: id, spaceId: "personal", userId: "default" });
     } catch (err) {
       logError("ui", "Failed to delete task", err);
     }
@@ -668,19 +591,6 @@ export default function App() {
             const next: Theme = currentTheme() === "light" ? "geek-dark" : "light";
             persistTheme(next);
           }}
-          activeSpace={activeSpace()}
-          onOpenJoinEnterprise={() => setJoinEnterpriseOpen(true)}
-          onOpenEnterpriseAdmin={() => setEnterpriseAdminOpen(true)}
-          enterpriseVersion={enterpriseVersion()}
-          onSpaceChanged={() => {
-            // BrandFooter 已在后端改了 active space（set_active_space / join /
-            // leave），读回最新值后走 switchSpace 同步本地并重载工作区与任务。
-            void (async () => {
-              let sp = "personal";
-              try { sp = await invoke<string>("get_active_space"); } catch { /* best-effort */ }
-              await switchSpace(sp);
-            })();
-          }}
         />
       </Show>
 
@@ -775,34 +685,6 @@ export default function App() {
         </div>
       </Show>
 
-      {/* 加入企业页面（覆盖层） */}
-      <Show when={joinEnterpriseOpen()}>
-        <div class="app-overlay">
-          <JoinEnterprisePage
-            onClose={() => setJoinEnterpriseOpen(false)}
-            onJoined={() => {
-              setJoinEnterpriseOpen(false);
-              // 空间切换交给 onSpaceChanged 回调——join_enterprise 后
-              // BrandFooter 的 onSpaceChanged 会触发 switchSpace。
-              void (async () => {
-                let sp = "personal";
-                try { sp = await invoke<string>("get_active_space"); } catch { /* best-effort */ }
-                await switchSpace(sp);
-              })();
-            }}
-          />
-        </div>
-      </Show>
-
-      {/* 企业管理后台（覆盖层） */}
-      <Show when={enterpriseAdminOpen()}>
-        <div class="app-overlay">
-          <EnterpriseAdminPage
-            onClose={() => setEnterpriseAdminOpen(false)}
-            onSaved={() => { void loadModelsFromSettings(); setEnterpriseVersion(v => v + 1); }}
-          />
-        </div>
-      </Show>
     </div>
   );
 }
