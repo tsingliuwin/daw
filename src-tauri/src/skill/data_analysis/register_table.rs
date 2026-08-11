@@ -109,21 +109,16 @@ impl Tool for RegisterTableTool {
             // 构造视图的远程引用路径。
             let remote_ref = if db_type == "postgres" {
                 // postgres 类型：先检测是不是 foreign table（Hologres MaxCompute 外表）。
-                // foreign table 不能通过 catalog.schema.table 访问（postgres_scanner
-                // 无法 catalog 外表），需要用 postgres_query 下推。
-                let conn_str = build_pg_conn_str(&conn_record);
-
-                // 用 postgres_query 下推查 pg_catalog.pg_class 判断 relkind。
+                // 用 catalog 别名调 postgres_query（和 lakemind 一致）。
                 let parts: Vec<&str> = table_name_clone.splitn(2, '.').collect();
                 let (schema, tbl) = if parts.len() == 2 { (parts[0], parts[1]) } else { ("public", parts[0]) };
                 let check_sql = format!(
                     "SELECT count(*) FROM pg_catalog.pg_class c \
                      JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace \
-                     WHERE c.relkind = 'f' AND n.nspname = '{}' AND c.relname = '{}'",
-                    schema.replace('\'', "''"), tbl.replace('\'', "''")
+                     WHERE c.relkind = ''f'' AND n.nspname = ''{}'' AND c.relname = ''{}''",
+                    schema, tbl
                 );
-                let check_escaped = check_sql.replace('\'', "''");
-                let sql = format!("SELECT * FROM postgres_query('{}', '{}')", conn_str.replace('\'', "''"), check_escaped);
+                let sql = format!("SELECT * FROM postgres_query('{}', '{}')", catalog_clone, check_sql);
 
                 let is_foreign: i64 = guard.query_row(&sql, [], |r| r.get(0)).unwrap_or(0);
 
@@ -131,7 +126,7 @@ impl Tool for RegisterTableTool {
                     // foreign table：用 postgres_query 下推创建视图。
                     let inner = format!("SELECT * FROM \"{}\".\"{}\"", schema, tbl);
                     let inner_escaped = inner.replace('\'', "''");
-                    format!("postgres_query('{}', '{}')", conn_str.replace('\'', "''"), inner_escaped)
+                    format!("postgres_query('{}', '{}')", catalog_clone, inner_escaped)
                 } else {
                     // 普通表：走 catalog 引用。
                     format!("{}.{}", catalog_clone, table_name_clone)

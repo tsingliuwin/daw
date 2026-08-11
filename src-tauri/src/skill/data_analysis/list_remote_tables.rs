@@ -78,22 +78,21 @@ impl Tool for ListRemoteTablesTool {
         };
 
         let db_type = conn_record.db_type.clone();
+        let catalog = workspace_attach_alias(&conn_record.name);
         let tables_res = tokio::task::spawn_blocking(move || -> Result<Vec<(String, String)>, String> {
             let guard = duckdb_conn.blocking_lock();
 
             if db_type == "postgres" {
                 // postgres 类型：用 postgres_query 下推查 information_schema，
-                // 不触发 DuckDB postgres 扩展的 catalog 元数据扫描（兼容 Hologres）。
-                let conn_str = build_pg_conn_str(&conn_record);
-                // 内层 SQL 查远程的 information_schema.tables。
-                // 内层 SQL 的单引号要转义成 '' 避免和外层 postgres_query 的引号冲突。
+                // 传 catalog 别名（db_xxx）而非连接串——postgres_query 用已 ATTACH 的
+                // catalog 别名解析连接，不重新初始化 catalog（避免元数据扫描）。
+                // 内层 SQL 的单引号转义成 '' 避免和外层引号冲突。
                 let inner_sql = "SELECT table_schema, table_name FROM information_schema.tables \
                     WHERE table_schema NOT IN (''pg_catalog'', ''information_schema'') \
                     ORDER BY table_schema, table_name";
                 let sql = format!(
                     "SELECT * FROM postgres_query('{}', '{}')",
-                    conn_str.replace('\'', "''"),
-                    inner_sql
+                    catalog, inner_sql
                 );
                 let mut stmt = guard.prepare(&sql).map_err(|e| e.to_string())?;
                 let rows = stmt
