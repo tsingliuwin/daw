@@ -8173,4 +8173,60 @@ input[type="number"] {
 .chart-fullscreen-body { flex: 1; min-height: 0; display: flex; padding: 24px; box-sizing: border-box; }
 .chart-fullscreen-canvas { width: 100%; height: 100%; background: transparent; border: none; box-sizing: border-box; }
 
+/* ─── 数据源管理 ─── */
+
+.ds-form { max-width: 600px; }
+.ds-form__header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+.ds-form__cancel { background: none; border: none; color: var(--text-dim, #9aa0a6); cursor: pointer; font-size: 13px; }
+.ds-form__cancel:hover { color: var(--text-primary, #fff); }
+.ds-form__actions { display: flex; align-items: center; gap: 12px; margin-top: 20px; }
+
+.ds-type-cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 20px; }
+.ds-type-card {
+  border: 2px solid rgba(255,255,255,0.08); border-radius: 8px; padding: 14px;
+  cursor: pointer; text-align: center; transition: border-color 0.15s ease, background 0.15s ease;
+}
+.ds-type-card:hover { border-color: rgba(255,255,255,0.2); }
+.ds-type-card.selected { border-color: var(--accent-blue, #5b8ff9); background: rgba(91,143,249,0.08); }
+.ds-type-card__icon {
+  width: 36px; height: 36px; border-radius: 8px; display: flex; align-items: center; justify-content: center;
+  font-size: 13px; font-weight: 700; margin: 0 auto 8px;
+}
+.ds-type-card__name { font-size: 12px; color: var(--text-secondary, rgba(255,255,255,0.7)); }
+
+.ds-test-btn {
+  padding: 6px 16px; border: 1px solid rgba(255,255,255,0.15); border-radius: 6px;
+  background: transparent; color: var(--text-secondary, rgba(255,255,255,0.7)); cursor: pointer; font-size: 13px;
+}
+.ds-test-btn:hover { background: rgba(255,255,255,0.06); }
+.ds-test-btn:disabled { opacity: 0.5; cursor: default; }
+.ds-test-ok { font-size: 12px; color: var(--accent-green, #10b981); }
+.ds-test-err { font-size: 12px; color: var(--accent-red, #ef4444); max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.ds-list-item {
+  display: flex; align-items: center; gap: 12px; padding: 12px 0;
+  border-bottom: 1px solid rgba(255,255,255,0.04);
+}
+.ds-type-badge {
+  font-size: 10px; font-weight: 600; text-transform: uppercase; padding: 2px 8px; border-radius: 4px;
+  flex-shrink: 0;
+}
+.ds-type-badge[data-type="postgres"] { background: rgba(80,160,255,0.15); color: #50a0ff; }
+.ds-type-badge[data-type="mysql"] { background: rgba(255,140,0,0.15); color: #ff8c00; }
+.ds-type-badge[data-type="sqlite"] { background: rgba(16,185,129,0.15); color: #10b981; }
+.ds-list-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.ds-list-name { font-size: 14px; color: var(--text-primary, #e0e0e0); font-weight: 500; }
+.ds-list-summary { font-size: 11px; color: var(--text-dim, #9aa0a6); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ds-link-btn {
+  padding: 4px 12px; border: 1px solid rgba(255,255,255,0.15); border-radius: 4px;
+  background: transparent; color: var(--text-dim, #9aa0a6); cursor: pointer; font-size: 12px; flex-shrink: 0;
+}
+.ds-link-btn.linked { background: rgba(91,143,249,0.15); border-color: rgba(91,143,249,0.3); color: #5b8ff9; }
+.ds-edit-btn, .ds-del-btn {
+  padding: 4px 10px; border: none; border-radius: 4px; background: transparent;
+  color: var(--text-dim, #9aa0a6); cursor: pointer; font-size: 12px; flex-shrink: 0;
+}
+.ds-edit-btn:hover { color: var(--text-primary, #fff); background: rgba(255,255,255,0.06); }
+.ds-del-btn:hover { color: var(--accent-red, #ef4444); background: rgba(239,68,68,0.1); }
+
 

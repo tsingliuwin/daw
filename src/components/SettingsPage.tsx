@@ -1,4 +1,4 @@
-import { Index, Show, For, createSignal, onMount } from "solid-js";
+import { Index, Show, For, createSignal, createEffect, onMount } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
 import { logError } from "../lib/logger";
 import { currentTheme, persistTheme, currentZoom, setCurrentZoom, type Theme } from "../lib/theme";
@@ -41,7 +41,7 @@ interface ModelTestEntry {
   msg?: string;
 }
 
-type SettingsTab = "general" | "modelSettings";
+type SettingsTab = "general" | "modelSettings" | "dataSources";
 
 // 供 Select 组件用：value 是后端格式名，label 是更友好的展示。
 const API_FORMAT_OPTIONS = [
@@ -65,6 +65,8 @@ export default function SettingsPage(props: {
   initialTab?: SettingsTab;
   /** providers 变更后通知父级刷新可用模型列表。 */
   onProvidersChanged?: (providers: ModelProvider[]) => void;
+  /** 当前活跃工作区路径（数据源 link 用）。 */
+  workspacePath?: string;
 }) {
   const [activeTab, setActiveTab] = createSignal<SettingsTab>(props.initialTab ?? "general");
   const [settings, setSettings] = createSignal<AppSettings>({});
@@ -123,21 +125,105 @@ export default function SettingsPage(props: {
     }
   };
 
-  // ── 数据源管理 helper ──
-  const dataSources = (): DataSourceConfig[] => (settings().dataSources as DataSourceConfig[]) ?? [];
-  const updateDataSources = (list: DataSourceConfig[]) => updateSetting("dataSources", list);
-  const addDataSource = () => {
-    updateDataSources([
-      ...dataSources(),
-      { id: `ds-${Date.now()}`, name: "", dbType: "postgres", host: "localhost", port: 5432, databaseName: "", username: "", password: "", sslMode: "disable" },
-    ]);
+  // ── 数据源管理（db_connections，独立于 settings.json）──
+  const [connections, setConnections] = createSignal<DataSourceConfig[]>([]);
+  const [editingConn, setEditingConn] = createSignal<DataSourceConfig | null>(null);
+  const [testStatus, setTestStatus] = createSignal<{ status: "idle" | "testing" | "success" | "error"; msg?: string }>({ status: "idle" });
+  const [linkedConns, setLinkedConns] = createSignal<Record<string, boolean>>({});
+  // 表单信号
+  const [formId, setFormId] = createSignal("");
+  const [formName, setFormName] = createSignal("");
+  const [formType, setFormType] = createSignal<DataSourceConfig["dbType"]>("postgres");
+  const [formHost, setFormHost] = createSignal("localhost");
+  const [formPort, setFormPort] = createSignal(5432);
+  const [formDatabase, setFormDatabase] = createSignal("");
+  const [formUser, setFormUser] = createSignal("");
+  const [formPassword, setFormPassword] = createSignal("");
+  const [formSslMode, setFormSslMode] = createSignal("disable");
+
+  const loadConnections = async () => {
+    try {
+      const list = await invoke<DataSourceConfig[]>("get_db_connections");
+      setConnections(list);
+    } catch (err) { logError("ui", "Failed to load db connections", err); }
   };
-  const updateDataSource = (index: number, patch: Partial<DataSourceConfig>) => {
-    updateDataSources(dataSources().map((ds, i) => (i === index ? { ...ds, ...patch } : ds)));
+  const loadWorkspaceLinks = async () => {
+    if (!props.workspacePath) return;
+    try {
+      const linked = await invoke<DataSourceConfig[]>("list_workspace_connections", { wsPath: props.workspacePath });
+      setLinkedConns(Object.fromEntries(linked.map((c) => [c.id, true])));
+    } catch (err) { logError("ui", "Failed to load workspace links", err); }
   };
-  const removeDataSource = (index: number) => {
-    updateDataSources(dataSources().filter((_, i) => i !== index));
+
+  const startAddConnection = () => {
+    setFormId(`ds-${Date.now()}`);
+    setFormName(""); setFormType("postgres");
+    setFormHost("localhost"); setFormPort(5432);
+    setFormDatabase(""); setFormUser(""); setFormPassword(""); setFormSslMode("disable");
+    setTestStatus({ status: "idle" });
+    setEditingConn({} as DataSourceConfig);
   };
+  const startEditConnection = (c: DataSourceConfig) => {
+    setFormId(c.id); setFormName(c.name); setFormType(c.dbType);
+    setFormHost(c.host); setFormPort(c.port); setFormDatabase(c.databaseName);
+    setFormUser(c.username); setFormPassword(c.password); setFormSslMode(c.sslMode);
+    setTestStatus({ status: "idle" });
+    setEditingConn(c);
+  };
+  const formToConnData = (): DataSourceConfig => ({
+    id: formId(), name: formName(), dbType: formType(),
+    host: formHost(), port: formPort(), databaseName: formDatabase(),
+    username: formUser(), password: formPassword(), sslMode: formSslMode(),
+  });
+  const handleTestConnection = async () => {
+    setTestStatus({ status: "testing" });
+    try {
+      const msg = await invoke<string>("test_db_connection", { config: formToConnData() });
+      setTestStatus({ status: "success", msg });
+    } catch (err) {
+      setTestStatus({ status: "error", msg: String(err) });
+    }
+  };
+  const handleSaveConnection = async () => {
+    try {
+      await invoke("upsert_db_connection", { config: formToConnData() });
+      setEditingConn(null);
+      await loadConnections();
+    } catch (err) { logError("ui", "Failed to save connection", err); alert(`保存失败: ${err}`); }
+  };
+  const handleDeleteConnection = async (id: string) => {
+    if (!confirm("确定删除此数据源？")) return;
+    try {
+      await invoke("delete_db_connection", { id });
+      await loadConnections();
+      await loadWorkspaceLinks();
+    } catch (err) { alert(`删除失败: ${err}`); }
+  };
+  const handleToggleLink = async (connId: string) => {
+    if (!props.workspacePath) { alert("无法确定当前工作区"); return; }
+    const isLinked = !!linkedConns()[connId];
+    try {
+      if (isLinked) {
+        await invoke("unlink_connection_from_workspace", { wsPath: props.workspacePath, connId });
+      } else {
+        await invoke("link_connection_to_workspace", { wsPath: props.workspacePath, connId });
+      }
+      await loadWorkspaceLinks();
+    } catch (err) { alert(`操作失败: ${err}`); }
+  };
+  const selectDbType = (t: DataSourceConfig["dbType"]) => {
+    setFormType(t);
+    if (t === "postgres" && (formPort() === 3306 || formPort() === 0)) setFormPort(5432);
+    if (t === "mysql" && (formPort() === 5432 || formPort() === 0)) setFormPort(3306);
+  };
+
+  // 数据源 tab 打开时加载数据
+  createEffect(() => {
+    if (activeTab() === "dataSources") {
+      void loadConnections();
+      void loadWorkspaceLinks();
+    }
+  });
 
   const updateProviderProperty = (providerId: string, property: keyof ModelProvider, value: unknown) => {
     if (property === "endpoint" || property === "apiKey" || property === "apiFormat" || property === "models") {
@@ -289,6 +375,11 @@ export default function SettingsPage(props: {
               classList={{ active: activeTab() === "modelSettings" }}
               onClick={() => setActiveTab("modelSettings")}
             >模型服务商</button>
+            <button
+              class="settings-nav-item"
+              classList={{ active: activeTab() === "dataSources" }}
+              onClick={() => setActiveTab("dataSources")}
+            >数据源</button>
           </div>
           {/* 共用品牌区：主题切换 + 返回首页（等同右上角关闭，免去鼠标移动） */}
           <BrandFooter
@@ -378,48 +469,6 @@ export default function SettingsPage(props: {
                   />
                 </div>
               </div>
-
-              {/* 数据源配置 */}
-              <div class="settings-section-head" style="margin-top: 20px;">
-                <h4 class="settings-section-title">数据源</h4>
-              </div>
-              <p class="settings-section-desc">配置数据分析任务可连接的数据库（Postgres / MySQL / SQLite）。配置后重启应用生效。</p>
-
-              <For each={(settings().dataSources as DataSourceConfig[]) ?? []} fallback={<div class="empty-hint">尚未配置数据源。</div>}>
-                {(ds, i) => (
-                  <div class="settings-row" style="flex-wrap: wrap; gap: 8px; align-items: center;">
-                    <input
-                      class="settings-input"
-                      style="flex: 1; min-width: 120px;"
-                      value={ds.name}
-                      placeholder="名称"
-                      onInput={(e) => updateDataSource(i(), { name: e.currentTarget.value })}
-                    />
-                    <select
-                      class="settings-select"
-                      style="width: auto;"
-                      value={ds.dbType}
-                      onChange={(e) => updateDataSource(i(), { dbType: e.currentTarget.value as DataSourceConfig["dbType"] })}
-                    >
-                      <option value="postgres">Postgres</option>
-                      <option value="mysql">MySQL</option>
-                      <option value="sqlite">SQLite</option>
-                    </select>
-                    <Show when={ds.dbType !== "sqlite"}>
-                      <input class="settings-input" style="flex: 1; min-width: 100px;" value={ds.host} placeholder="host" onInput={(e) => updateDataSource(i(), { host: e.currentTarget.value })} />
-                      <input class="settings-input" style="width: 70px;" type="number" value={ds.port} placeholder="port" onInput={(e) => updateDataSource(i(), { port: parseInt(e.currentTarget.value) || 0 })} />
-                      <input class="settings-input" style="flex: 1; min-width: 100px;" value={ds.databaseName} placeholder="database" onInput={(e) => updateDataSource(i(), { databaseName: e.currentTarget.value })} />
-                      <input class="settings-input" style="flex: 1; min-width: 80px;" value={ds.username} placeholder="user" onInput={(e) => updateDataSource(i(), { username: e.currentTarget.value })} />
-                      <input class="settings-input" style="flex: 1; min-width: 80px;" type="password" value={ds.password} placeholder="password" onInput={(e) => updateDataSource(i(), { password: e.currentTarget.value })} />
-                    </Show>
-                    <Show when={ds.dbType === "sqlite"}>
-                      <input class="settings-input" style="flex: 1; min-width: 200px;" value={ds.databaseName} placeholder="数据库文件路径（如 C:/data/my.db）" onInput={(e) => updateDataSource(i(), { databaseName: e.currentTarget.value })} />
-                    </Show>
-                    <button class="settings-add-btn" style="padding: 4px 10px;" title="删除" onClick={() => removeDataSource(i())}>✕</button>
-                  </div>
-                )}
-              </For>
-              <button class="settings-add-btn" style="margin-top: 8px;" onClick={addDataSource}>+ 添加数据源</button>
 
             </div>
           </Show>
@@ -648,6 +697,128 @@ export default function SettingsPage(props: {
                       </button>
                       <button class="settings-primary-btn" onClick={() => handleCreateNewProvider()}>保存</button>
                     </div>
+                  </div>
+                </div>
+              </Show>
+            </div>
+          </Show>
+
+          {/* 数据源管理 tab */}
+          <Show when={activeTab() === "dataSources"}>
+            <div class="settings-section">
+              <Show when={editingConn()} fallback={
+                <div>
+                  <div class="settings-section-head">
+                    <div>
+                      <h3 class="settings-section-title">数据源管理</h3>
+                      <p class="settings-section-desc">配置数据分析任务可连接的数据库。link 到当前工作区后即可查询。</p>
+                    </div>
+                    <button class="settings-add-btn" onClick={startAddConnection}>+ 新建连接</button>
+                  </div>
+                  <For each={connections()} fallback={<div class="empty-hint">尚未配置数据源，点击右上角"新建连接"。</div>}>
+                    {(c) => (
+                      <div class="ds-list-item">
+                        <span class="ds-type-badge" data-type={c.dbType}>{c.dbType}</span>
+                        <div class="ds-list-info">
+                          <span class="ds-list-name">{c.name}</span>
+                          <span class="ds-list-summary">
+                            {c.dbType === "sqlite" ? c.databaseName : `${c.username}@${c.host}:${c.port}/${c.databaseName}`}
+                          </span>
+                        </div>
+                        <Show when={props.workspacePath}>
+                          <button
+                            class="ds-link-btn"
+                            classList={{ linked: !!linkedConns()[c.id] }}
+                            title={linkedConns()[c.id] ? "已启用，点击禁用" : "点击启用到当前工作区"}
+                            onClick={() => void handleToggleLink(c.id)}
+                          >
+                            {linkedConns()[c.id] ? "已启用" : "启用"}
+                          </button>
+                        </Show>
+                        <button class="ds-edit-btn" title="编辑" onClick={() => startEditConnection(c)}>编辑</button>
+                        <button class="ds-del-btn" title="删除" onClick={() => void handleDeleteConnection(c.id)}>✕</button>
+                      </div>
+                    )}
+                  </For>
+                </div>
+              }>
+                <div class="ds-form">
+                  <div class="ds-form__header">
+                    <h4 class="settings-section-title">{connections().find((c) => c.id === formId()) ? "编辑连接" : "添加连接"}</h4>
+                    <button class="ds-form__cancel" onClick={() => setEditingConn(null)}>取消</button>
+                  </div>
+                  <div class="ds-type-cards">
+                    <div class="ds-type-card" classList={{ selected: formType() === "postgres" }} onClick={() => selectDbType("postgres")}>
+                      <div class="ds-type-card__icon" style="background: rgba(80,160,255,0.15); color: #50a0ff;">PG</div>
+                      <div class="ds-type-card__name">PostgreSQL</div>
+                    </div>
+                    <div class="ds-type-card" classList={{ selected: formType() === "mysql" }} onClick={() => selectDbType("mysql")}>
+                      <div class="ds-type-card__icon" style="background: rgba(255,140,0,0.15); color: #ff8c00;">MY</div>
+                      <div class="ds-type-card__name">MySQL</div>
+                    </div>
+                    <div class="ds-type-card" classList={{ selected: formType() === "sqlite" }} onClick={() => selectDbType("sqlite")}>
+                      <div class="ds-type-card__icon" style="background: rgba(16,185,129,0.15); color: #10b981;">DB</div>
+                      <div class="ds-type-card__name">SQLite</div>
+                    </div>
+                  </div>
+                  <div class="settings-row">
+                    <label class="settings-label">连接名称</label>
+                    <div class="settings-control">
+                      <input class="settings-input" value={formName()} placeholder="如 local_postgres" onInput={(e) => setFormName(e.currentTarget.value)} />
+                    </div>
+                  </div>
+                  <Show when={formType() !== "sqlite"}>
+                    <div class="settings-row">
+                      <label class="settings-label">主机</label>
+                      <div class="settings-control"><input class="settings-input" value={formHost()} onInput={(e) => setFormHost(e.currentTarget.value)} /></div>
+                    </div>
+                    <div class="settings-row">
+                      <label class="settings-label">端口</label>
+                      <div class="settings-control"><input class="settings-input" type="number" value={formPort()} onInput={(e) => setFormPort(parseInt(e.currentTarget.value) || 0)} /></div>
+                    </div>
+                    <div class="settings-row">
+                      <label class="settings-label">数据库</label>
+                      <div class="settings-control"><input class="settings-input" value={formDatabase()} onInput={(e) => setFormDatabase(e.currentTarget.value)} /></div>
+                    </div>
+                    <div class="settings-row">
+                      <label class="settings-label">用户名</label>
+                      <div class="settings-control"><input class="settings-input" value={formUser()} onInput={(e) => setFormUser(e.currentTarget.value)} /></div>
+                    </div>
+                    <div class="settings-row">
+                      <label class="settings-label">密码</label>
+                      <div class="settings-control"><input class="settings-input" type="password" value={formPassword()} onInput={(e) => setFormPassword(e.currentTarget.value)} /></div>
+                    </div>
+                    <Show when={formType() === "postgres"}>
+                      <div class="settings-row">
+                        <label class="settings-label">SSL</label>
+                        <div class="settings-control">
+                          <select class="settings-select" value={formSslMode()} onChange={(e) => setFormSslMode(e.currentTarget.value)}>
+                            <option value="disable">disable</option>
+                            <option value="require">require</option>
+                            <option value="verify-ca">verify-ca</option>
+                            <option value="verify-full">verify-full</option>
+                          </select>
+                        </div>
+                      </div>
+                    </Show>
+                  </Show>
+                  <Show when={formType() === "sqlite"}>
+                    <div class="settings-row">
+                      <label class="settings-label">数据库文件</label>
+                      <div class="settings-control"><input class="settings-input" value={formDatabase()} placeholder="如 C:/data/my.db" onInput={(e) => setFormDatabase(e.currentTarget.value)} /></div>
+                    </div>
+                  </Show>
+                  <div class="ds-form__actions">
+                    <button class="ds-test-btn" onClick={() => void handleTestConnection()} disabled={testStatus().status === "testing"}>
+                      {testStatus().status === "testing" ? "测试中…" : "测试连接"}
+                    </button>
+                    <Show when={testStatus().status === "success"}>
+                      <span class="ds-test-ok">✓ {testStatus().msg}</span>
+                    </Show>
+                    <Show when={testStatus().status === "error"}>
+                      <span class="ds-test-err">✕ {testStatus().msg}</span>
+                    </Show>
+                    <button class="settings-add-btn" style="margin-left: auto;" onClick={() => void handleSaveConnection()}>保存</button>
                   </div>
                 </div>
               </Show>

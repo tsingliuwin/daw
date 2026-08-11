@@ -44,6 +44,9 @@ pub struct DataSourceConfig {
     pub username: String,
     pub password: String,
     pub ssl_mode: String,
+    /// Creation timestamp (Unix ms). Set by upsert_db_connection.
+    #[serde(default)]
+    pub created_at: i64,
 }
 
 // ---------------------------------------------------------------------------

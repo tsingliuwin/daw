@@ -17,6 +17,8 @@ use std::fs;
 use std::path::PathBuf;
 use rusqlite::Connection;
 
+use crate::model::DataSourceConfig;
+
 /// Get the system home directory
 pub fn get_home_dir() -> Option<PathBuf> {
     std::env::var("HOME")
@@ -224,6 +226,39 @@ pub fn init_global_db() -> Result<(), String> {
     )
     .map_err(|e| format!("Failed to create workspace_connections table: {e}"))?;
 
+    // db_connections: 数据分析场景的外部数据库连接（postgres/mysql/sqlite）。
+    // 与 oa_connections 分开——这里是 DuckDB ATTACH 用的数据源连接。
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS db_connections (
+            id            TEXT PRIMARY KEY,
+            name          TEXT NOT NULL,
+            db_type       TEXT NOT NULL,
+            host          TEXT NOT NULL,
+            port          INTEGER NOT NULL,
+            database_name TEXT NOT NULL,
+            username      TEXT NOT NULL,
+            password      TEXT NOT NULL,
+            ssl_mode      TEXT NOT NULL DEFAULT 'disable',
+            created_at    INTEGER NOT NULL
+        )",
+        [],
+    )
+    .map_err(|e| format!("Failed to create db_connections table: {e}"))?;
+
+    // workspace_db_connections: 工作区↔数据源多对多关联。
+    // link 时 ATTACH 到 DuckDB 会话，unlink 时 DETACH。
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS workspace_db_connections (
+            workspace_path TEXT NOT NULL,
+            connection_id  TEXT NOT NULL,
+            PRIMARY KEY (workspace_path, connection_id),
+            FOREIGN KEY(workspace_path) REFERENCES workspaces(path) ON DELETE CASCADE,
+            FOREIGN KEY(connection_id) REFERENCES db_connections(id) ON DELETE CASCADE
+        )",
+        [],
+    )
+    .map_err(|e| format!("Failed to create workspace_db_connections table: {e}"))?;
+
     // Seed the default workspace on first run.
     let count: i64 = conn
         .query_row("SELECT COUNT(*) FROM workspaces", [], |row| row.get(0))
@@ -426,4 +461,121 @@ fn migrate_legacy_chats() {
             }
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// db_connections: 数据分析数据源 CRUD
+// ---------------------------------------------------------------------------
+
+/// Row → DataSourceConfig 映射。
+fn row_to_conn(r: &rusqlite::Row) -> rusqlite::Result<DataSourceConfig> {
+    Ok(DataSourceConfig {
+        id: r.get(0)?,
+        name: r.get(1)?,
+        db_type: r.get(2)?,
+        host: r.get(3)?,
+        port: r.get(4)?,
+        database_name: r.get(5)?,
+        username: r.get(6)?,
+        password: r.get(7)?,
+        ssl_mode: r.get(8)?,
+        created_at: r.get(9)?,
+    })
+}
+
+const CONN_COLS: &str = "id, name, db_type, host, port, database_name, username, password, ssl_mode, created_at";
+
+pub fn list_db_connections() -> Result<Vec<DataSourceConfig>, String> {
+    let conn = get_db_conn()?;
+    let mut stmt = conn
+        .prepare(&format!("SELECT {CONN_COLS} FROM db_connections ORDER BY created_at"))
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map([], row_to_conn)
+        .map_err(|e| e.to_string())?;
+    let mut out = Vec::new();
+    for r in rows {
+        out.push(r.map_err(|e| e.to_string())?);
+    }
+    Ok(out)
+}
+
+pub fn get_db_connection(id: &str) -> Result<Option<DataSourceConfig>, String> {
+    let conn = get_db_conn()?;
+    let mut stmt = conn
+        .prepare(&format!("SELECT {CONN_COLS} FROM db_connections WHERE id = ?"))
+        .map_err(|e| e.to_string())?;
+    let mut rows = stmt.query([id]).map_err(|e| e.to_string())?;
+    if let Some(r) = rows.next().map_err(|e| e.to_string())? {
+        return Ok(Some(row_to_conn(r).map_err(|e| e.to_string())?));
+    }
+    Ok(None)
+}
+
+pub fn create_db_connection(r: &DataSourceConfig) -> Result<(), String> {
+    let conn = get_db_conn()?;
+    conn.execute(
+        "INSERT INTO db_connections (id, name, db_type, host, port, database_name, username, password, ssl_mode, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        rusqlite::params![r.id, r.name, r.db_type, r.host, r.port, r.database_name, r.username, r.password, r.ssl_mode, r.created_at],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+pub fn update_db_connection(r: &DataSourceConfig) -> Result<(), String> {
+    let conn = get_db_conn()?;
+    conn.execute(
+        "UPDATE db_connections SET name=?, db_type=?, host=?, port=?, database_name=?, username=?, password=?, ssl_mode=? WHERE id=?",
+        rusqlite::params![r.name, r.db_type, r.host, r.port, r.database_name, r.username, r.password, r.ssl_mode, r.id],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+pub fn delete_db_connection(id: &str) -> Result<(), String> {
+    let conn = get_db_conn()?;
+    conn.execute("DELETE FROM db_connections WHERE id = ?", [id])
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// 列出某工作区已 link 的数据源。
+pub fn list_workspace_db_connections(ws_path: &str) -> Result<Vec<DataSourceConfig>, String> {
+    let conn = get_db_conn()?;
+    let mut stmt = conn
+        .prepare(
+            "SELECT c.id, c.name, c.db_type, c.host, c.port, c.database_name, c.username, c.password, c.ssl_mode, c.created_at
+             FROM db_connections c
+             INNER JOIN workspace_db_connections w ON c.id = w.connection_id
+             WHERE w.workspace_path = ? ORDER BY c.created_at",
+        )
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map([ws_path], row_to_conn)
+        .map_err(|e| e.to_string())?;
+    let mut out = Vec::new();
+    for r in rows {
+        out.push(r.map_err(|e| e.to_string())?);
+    }
+    Ok(out)
+}
+
+pub fn link_workspace_db_connection(ws_path: &str, conn_id: &str) -> Result<(), String> {
+    let conn = get_db_conn()?;
+    conn.execute(
+        "INSERT OR IGNORE INTO workspace_db_connections (workspace_path, connection_id) VALUES (?, ?)",
+        rusqlite::params![ws_path, conn_id],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+pub fn unlink_workspace_db_connection(ws_path: &str, conn_id: &str) -> Result<(), String> {
+    let conn = get_db_conn()?;
+    conn.execute(
+        "DELETE FROM workspace_db_connections WHERE workspace_path = ? AND connection_id = ?",
+        rusqlite::params![ws_path, conn_id],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
 }

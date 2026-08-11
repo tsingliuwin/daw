@@ -65,3 +65,13 @@ pub fn attach_all(conn: &duckdb::Connection, sources: &[DataSourceConfig]) -> Re
     }
     Ok(())
 }
+
+/// DETACH 单个数据源（unlink 时调用）。
+pub fn detach_one(conn: &duckdb::Connection, name: &str) -> Result<(), String> {
+    let alias = workspace_attach_alias(name);
+    let sql = format!("DETACH {};", alias);
+    conn.execute(&sql, [])
+        .map_err(|e| format!("DETACH 数据源 {} 失败: {e}", name))?;
+    tracing::info!(category = "link", "DETACH 数据源: {} ({})", name, alias);
+    Ok(())
+}

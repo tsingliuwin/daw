@@ -86,8 +86,23 @@ fn open_duckdb() -> (
     // 限制内存使用（不加 threads=1——那是 DuckLake 单写者才需要的）。
     let _ = conn.execute_batch("PRAGMA memory_limit='4GB';");
 
-    // ATTACH settings.json 中配置的全部数据源。
-    let sources = crate::duckdb::load_data_sources();
+    // 从 SQLite 查 DefaultProject 工作区已 link 的数据源并 ATTACH。
+    // 如果 db_connections 表为空但 settings.json 有 dataSources（P1 遗留），
+    // 自动迁移到表 + link 到 DefaultProject。
+    let ws_path = "DefaultProject";
+    let mut sources = crate::db::list_workspace_db_connections(ws_path).unwrap_or_default();
+    if sources.is_empty() {
+        // 迁移兼容：P1 的 settings.json dataSources → SQLite 表
+        let legacy = crate::duckdb::load_data_sources();
+        if !legacy.is_empty() {
+            tracing::info!(category = "system", "迁移 {} 个 P1 settings.json 数据源到 SQLite", legacy.len());
+            for r in &legacy {
+                let _ = crate::db::create_db_connection(r);
+                let _ = crate::db::link_workspace_db_connection(ws_path, &r.id);
+            }
+            sources = crate::db::list_workspace_db_connections(ws_path).unwrap_or_default();
+        }
+    }
     if !sources.is_empty() {
         if let Err(e) = crate::duckdb::attach::attach_all(&conn, &sources) {
             tracing::warn!(category = "link", "启动 ATTACH 数据源失败: {e}");

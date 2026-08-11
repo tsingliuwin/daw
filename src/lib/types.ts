@@ -202,6 +202,7 @@ export interface DataSourceConfig {
   username: string;
   password: string;
   sslMode: string;
+  createdAt?: number;
 }
 
 export interface Workspace {

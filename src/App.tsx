@@ -689,6 +689,7 @@ export default function App() {
           <SettingsPage
             onClose={() => setSettingsOpen(false)}
             onProvidersChanged={() => { void loadModelsFromSettings(); }}
+            workspacePath={activeTaskId() ? findTaskWorkspace(activeTaskId()!) ?? homeWorkspacePath() : homeWorkspacePath()}
           />
         </div>
       </Show>

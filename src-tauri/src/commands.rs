@@ -490,6 +490,110 @@ pub async fn save_image_from_base64(
 }
 
 // ===========================================================================
+// Data source (db_connections) management
+// ===========================================================================
+
+#[tauri::command]
+pub async fn get_db_connections() -> Result<Vec<crate::model::DataSourceConfig>, String> {
+    crate::db::list_db_connections()
+}
+
+#[tauri::command]
+pub async fn upsert_db_connection(config: crate::model::DataSourceConfig) -> Result<(), String> {
+    if config.id.is_empty() || config.name.trim().is_empty() {
+        return Err("连接 ID 和名称不能为空".to_string());
+    }
+    // upsert：存在则 update，不存在则 create。
+    let existing = crate::db::get_db_connection(&config.id)?;
+    if existing.is_some() {
+        crate::db::update_db_connection(&config)?;
+    } else {
+        let mut rec = config;
+        rec.created_at = crate::db::now_ms();
+        crate::db::create_db_connection(&rec)?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn delete_db_connection(id: String) -> Result<(), String> {
+    crate::db::delete_db_connection(&id)?;
+    Ok(())
+}
+
+/// 测试数据源连接（不影响主会话）。open_in_memory + ATTACH + DETACH 验证。
+#[tauri::command]
+pub async fn test_db_connection(config: crate::model::DataSourceConfig) -> Result<String, String> {
+    let conn = duckdb::Connection::open_in_memory()
+        .map_err(|e| format!("打开测试连接失败: {e}"))?;
+    crate::duckdb::attach::attach_one(&conn, &config)
+        .map(|_| {
+            // 成功后 DETACH 清理。
+            let alias = crate::duckdb::attach::workspace_attach_alias(&config.name);
+            let _ = conn.execute(&format!("DETACH {alias};"), []);
+            "连接成功".to_string()
+        })
+}
+
+/// link 数据源到工作区（持久化 + 立即 ATTACH 到主会话，失败则回滚 link）。
+#[tauri::command]
+pub async fn link_connection_to_workspace(
+    ws_path: String,
+    conn_id: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    // 1. 持久化 link
+    crate::db::link_workspace_db_connection(&ws_path, &conn_id)?;
+    // 2. 立即 ATTACH 到主会话
+    let conn_record = crate::db::get_db_connection(&conn_id)?
+        .ok_or_else(|| "数据源不存在".to_string())?;
+    if let Some(duckdb_conn) = &state.duckdb {
+        let dc = duckdb_conn.clone();
+        let rec = conn_record.clone();
+        let result = tokio::task::spawn_blocking(move || {
+            let guard = dc.blocking_lock();
+            crate::duckdb::attach::attach_one(&guard, &rec)
+        }).await
+        .map_err(|e| format!("线程生成失败: {e}"))?;
+        if let Err(e) = result {
+            // ATTACH 失败 → 回滚 link，保证 UI truthful
+            let _ = crate::db::unlink_workspace_db_connection(&ws_path, &conn_id);
+            return Err(format!("ATTACH 失败（已回滚）: {e}"));
+        }
+    }
+    Ok(())
+}
+
+/// unlink 数据源（删 link + DETACH）。
+#[tauri::command]
+pub async fn unlink_connection_from_workspace(
+    ws_path: String,
+    conn_id: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    crate::db::unlink_workspace_db_connection(&ws_path, &conn_id)?;
+    // DETACH 从主会话
+    let conn_record = crate::db::get_db_connection(&conn_id)?;
+    if let (Some(duckdb_conn), Some(rec)) = (&state.duckdb, conn_record) {
+        let dc = duckdb_conn.clone();
+        let name = rec.name.clone();
+        let _ = tokio::task::spawn_blocking(move || {
+            let guard = dc.blocking_lock();
+            crate::duckdb::attach::detach_one(&guard, &name)
+        }).await;
+    }
+    Ok(())
+}
+
+/// 列出某工作区已 link 的数据源。
+#[tauri::command]
+pub async fn list_workspace_connections(
+    ws_path: String,
+) -> Result<Vec<crate::model::DataSourceConfig>, String> {
+    crate::db::list_workspace_db_connections(&ws_path)
+}
+
+// ===========================================================================
 // Internals — helpers
 // ===========================================================================
 

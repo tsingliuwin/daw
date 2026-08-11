@@ -85,6 +85,13 @@ pub fn run() {
             commands::abort_task,
             commands::test_llm_connection,
             commands::save_image_from_base64,
+            commands::get_db_connections,
+            commands::upsert_db_connection,
+            commands::delete_db_connection,
+            commands::test_db_connection,
+            commands::link_connection_to_workspace,
+            commands::unlink_connection_from_workspace,
+            commands::list_workspace_connections,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
