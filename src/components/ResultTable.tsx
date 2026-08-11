@@ -37,9 +37,10 @@ function VirtualGrid(props: { result: SqlResult; compact?: boolean }) {
   let scrollRef: HTMLDivElement | undefined;
   const [viewportH] = createSignal(props.compact ? 220 : 400);
 
-  // 从 SqlResult 构造 ColumnDef 数组。
+  // 从 SqlResult 构造 ColumnDef 数组。用 accessorFn 按列索引取值。
   const columns: ColumnDef<JsonValue[], unknown>[] = props.result.columns.map((col, i) => ({
     id: col,
+    accessorFn: (row: JsonValue[]) => row[i],
     header: () => (
       <div class="result-th" style={{ width: `${CELL_W}px` }}>
         <span class="result-th-name" title={col}>{col}</span>
