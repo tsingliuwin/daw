@@ -309,6 +309,10 @@ export default function App() {
               elapsedMs: s.elapsedMs,
               result: s.result,
             });
+          } else if (kind === "chart" && payload.segment) {
+            // chart segment：push 进消息 segments 列表，ChatView 渲染 ChartSegment。
+            const s = payload.segment;
+            segments = [...segments, s];
           } else if (kind === "usage" && payload.text) {
             // 通过 mergeUsage 把 usage 事件折叠进 task 的持久化 TokenUsage。
             try {
