@@ -28,10 +28,8 @@ pub fn build_attach_sql(r: &DataSourceConfig, alias: &str) -> String {
         if r.ssl_mode != "disable" {
             conn_str.push_str(&format!(" sslmode={}", r.ssl_mode));
         }
-        // pg_experimental_disable_scan: 跳过 ATTACH 时的 catalog 元数据扫描，
-        // 避免 Hologres 等兼容 PG 协议但系统目录表有差异的数据库报错。
-        // READ_ONLY: 数据源只读（联邦查询模式不写远程）。
-        format!("ATTACH '{}' AS {alias} (TYPE postgres, READ_ONLY, pg_experimental_disable_scan);", conn_str)
+        // READ_ONLY: 联邦查询模式不写远程。
+        format!("ATTACH '{}' AS {alias} (TYPE postgres, READ_ONLY);", conn_str)
     } else {
         // mysql
         format!(
