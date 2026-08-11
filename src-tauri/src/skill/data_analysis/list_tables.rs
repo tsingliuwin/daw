@@ -52,15 +52,18 @@ impl Tool for ListTablesTool {
 
         let tables_res = tokio::task::spawn_blocking(move || -> Result<Vec<String>, String> {
             let guard = conn.blocking_lock();
-            // 用 SHOW TABLES 列出当前 catalog 的表和视图（已注册的视图 + 本地表）。
-            // 不用 duckdb_tables()/duckdb_views()——这些函数会枚举所有 catalog 的
-            // 元数据（包括 ATTACH 的 Hologres），触发 postgres 扩展的元数据扫描。
-            let mut stmt = guard.prepare("SHOW TABLES").map_err(|e| e.to_string())?;
+            // 查当前 catalog 的表和视图（已注册的视图 + 本地表）。
+            // 用 information_schema.tables 限制 table_catalog 排除 db_ 前缀的远程 catalog，
+            // 避免触发 postgres 扩展的元数据扫描。
+            let sql = "
+                SELECT table_name FROM information_schema.tables
+                WHERE table_schema = 'main'
+                AND table_catalog NOT LIKE 'db_%'
+                ORDER BY table_name
+            ";
+            let mut stmt = guard.prepare(sql).map_err(|e| e.to_string())?;
             let rows = stmt
-                .query_map([], |r| {
-                    let name: String = r.get(0)?;
-                    Ok(name.rsplit('.').next().unwrap_or(&name).to_string())
-                })
+                .query_map([], |r| r.get::<_, String>(0))
                 .map_err(|e| e.to_string())?;
             let mut list = Vec::new();
             for r in rows {
