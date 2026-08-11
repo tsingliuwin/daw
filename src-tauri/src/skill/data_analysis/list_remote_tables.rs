@@ -60,15 +60,14 @@ impl Tool for ListRemoteTablesTool {
         let catalog_clone = catalog.clone();
         let tables_res = tokio::task::spawn_blocking(move || -> Result<Vec<(String, String)>, String> {
             let guard = conn.blocking_lock();
-            // 用 SHOW TABLES 命令列出 catalog 下的表（不走 information_schema，
-            // 不触发 postgres 扩展的内部元数据扫描，兼容 Hologres 等非标准 PG）。
-            // SHOW TABLES 返回 schema.table 两列。
-            let sql = format!("SHOW ALL TABLES IN {}", catalog_clone);
-            let mut stmt = guard.prepare(&sql).map_err(|e| e.to_string())?;
+            // 用 USE + SHOW TABLES 列出 catalog 下的表（走 DuckDB 原生命令，
+            // 不触发 postgres 扩展的元数据扫描，兼容 Hologres）。
+            // SHOW TABLES 返回 name 列，格式为 "schema.table" 或 "table"。
+            guard.execute_batch(&format!("USE {}", catalog_clone)).map_err(|e| e.to_string())?;
+            let mut stmt = guard.prepare("SHOW TABLES").map_err(|e| e.to_string())?;
             let rows = stmt
                 .query_map([], |r| {
                     let name: String = r.get(0)?;
-                    // SHOW ALL TABLES 返回 "schema.table" 格式
                     let parts: Vec<&str> = name.splitn(2, '.').collect();
                     let schema = if parts.len() == 2 { parts[0].to_string() } else { "main".to_string() };
                     let table = if parts.len() == 2 { parts[1].to_string() } else { parts[0].to_string() };
@@ -79,6 +78,8 @@ impl Tool for ListRemoteTablesTool {
             for r in rows {
                 list.push(r.map_err(|e| e.to_string())?);
             }
+            // 切回默认 catalog，避免影响后续查询。
+            let _ = guard.execute_batch("USE memory");
             Ok(list)
         })
         .await
