@@ -38,6 +38,7 @@ impl Tool for ListConnectionsTool {
 
         let start = std::time::Instant::now();
         let ws_path = self.app_state.workspace_path.lock().await.clone();
+        tracing::info!(category = "agent", "list_connections: workspace_path={}", ws_path);
         let result = tokio::task::spawn_blocking(move || -> Result<Vec<crate::model::DataSourceConfig>, String> {
             crate::db::list_workspace_db_connections(&ws_path).map_err(|e| e.to_string())
         })

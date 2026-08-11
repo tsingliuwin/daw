@@ -118,6 +118,18 @@ fn open_duckdb() -> (
             sources = crate::db::list_workspace_db_connections(ws_path).unwrap_or_default();
         }
     }
+    // 兜底修复：如果 db_connections 表有连接但 workspace_db_connections 没有 link
+    // （P3 创建连接但没手动点"启用"），自动 link 到 DefaultProject。
+    if sources.is_empty() {
+        let all_conns = crate::db::list_db_connections().unwrap_or_default();
+        if !all_conns.is_empty() {
+            tracing::info!(category = "system", "自动 link {} 个未关联的数据源到 DefaultProject", all_conns.len());
+            for r in &all_conns {
+                let _ = crate::db::link_workspace_db_connection(ws_path, &r.id);
+            }
+            sources = crate::db::list_workspace_db_connections(ws_path).unwrap_or_default();
+        }
+    }
     if !sources.is_empty() {
         if let Err(e) = crate::duckdb::attach::attach_all(&conn, &sources) {
             tracing::warn!(category = "link", "启动 ATTACH 数据源失败: {e}");

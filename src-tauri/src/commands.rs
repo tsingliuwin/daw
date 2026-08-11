@@ -499,18 +499,36 @@ pub async fn get_db_connections() -> Result<Vec<crate::model::DataSourceConfig>,
 }
 
 #[tauri::command]
-pub async fn upsert_db_connection(config: crate::model::DataSourceConfig) -> Result<(), String> {
+pub async fn upsert_db_connection(
+    config: crate::model::DataSourceConfig,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
     if config.id.is_empty() || config.name.trim().is_empty() {
         return Err("连接 ID 和名称不能为空".to_string());
     }
-    // upsert：存在则 update，不存在则 create。
+    // upsert：存在则 update，不存在则 create + 自动 link 到 DefaultProject。
     let existing = crate::db::get_db_connection(&config.id)?;
+    let is_new = existing.is_none();
     if existing.is_some() {
         crate::db::update_db_connection(&config)?;
     } else {
-        let mut rec = config;
+        let mut rec = config.clone();
         rec.created_at = crate::db::now_ms();
         crate::db::create_db_connection(&rec)?;
+    }
+
+    // 新建连接自动 link 到 DefaultProject + 立即 ATTACH。
+    if is_new {
+        let ws_path = "DefaultProject".to_string();
+        crate::db::link_workspace_db_connection(&ws_path, &config.id)?;
+        if let Some(duckdb_conn) = &state.duckdb {
+            let dc = duckdb_conn.clone();
+            let rec = config.clone();
+            let _ = tokio::task::spawn_blocking(move || {
+                let guard = dc.blocking_lock();
+                crate::duckdb::attach::attach_one(&guard, &rec)
+            }).await;
+        }
     }
     Ok(())
 }
