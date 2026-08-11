@@ -53,7 +53,8 @@ impl Tool for DescribeTableTool {
         );
 
         let start = std::time::Instant::now();
-        let conn = match &self.app_state.duckdb {
+        let duckdb_guard = self.app_state.duckdb.lock().await;
+        let conn = match &*duckdb_guard {
             Some(c) => c.clone(),
             None => {
                 let msg = "DuckDB 引擎未初始化。请检查是否配置了数据源并重启应用。".to_string();
@@ -64,7 +65,7 @@ impl Tool for DescribeTableTool {
                 return Err(ToolError(msg));
             }
         };
-        let ih = self.app_state.interrupt_handle.as_ref()
+        let ih = self.app_state.interrupt_handle.lock().await.as_ref()
             .and_then(|h| h.lock().ok().map(|g| g.clone()));
 
         let table_name_string = table_name.to_string();

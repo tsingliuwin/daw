@@ -93,6 +93,8 @@ pub fn run() {
             commands::link_connection_to_workspace,
             commands::unlink_connection_from_workspace,
             commands::list_workspace_connections,
+            commands::check_data_analysis_env,
+            commands::install_data_analysis_env,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

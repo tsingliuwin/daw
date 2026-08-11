@@ -1,4 +1,6 @@
-import { For, Show, createMemo, createSignal } from "solid-js";
+import { For, Show, createMemo, createSignal, onCleanup } from "solid-js";
+import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import type { ModelOption, Workspace } from "../lib/types";
 import { logoSrc } from "../lib/theme";
 import Select from "./Select";
@@ -48,15 +50,46 @@ export default function HomeView(props: {
   selectedScenario: "task" | "data_analysis";
   /** 切换场景。 */
   onSelectScenario: (s: "task" | "data_analysis") => void;
+  /** 数据分析环境是否就绪（DuckLake 扩展已安装）。 */
+  dataAnalysisReady: boolean;
+  /** 数据分析环境就绪状态变化时通知父级。 */
+  onDataAnalysisReadyChange: () => void;
   /** 用户在首页输入并发送第一条消息。App 负责新建 task + 触发 agent。 */
   onSubmit: (prompt: string) => void;
   /** 打开设置页（模型未配置时的引导按钮）。 */
   onOpenSettings: () => void;
 }) {
   const [input, setInput] = createSignal("");
+  // 数据分析环境安装状态。
+  const [installStep, setInstallStep] = createSignal<{ step: string; message: string } | null>(null);
 
   const hasModels = createMemo(() => props.availableModels.length > 0);
-  const canSend = createMemo(() => input().trim().length > 0 && hasModels());
+  const canSend = createMemo(() => {
+    if (!input().trim() || !hasModels()) return false;
+    // 数据分析场景需要环境就绪。
+    if (props.selectedScenario === "data_analysis" && !props.dataAnalysisReady) return false;
+    return true;
+  });
+
+  // 启用数据分析环境。
+  const handleEnableDataAnalysis = async () => {
+    setInstallStep({ step: "starting", message: "正在启动安装…" });
+    const unlisten = await listen<{ step: string; message: string }>("ducklake-install", (event) => {
+      const payload = event.payload;
+      setInstallStep({ step: payload.step, message: payload.message });
+      if (payload.step === "done") {
+        props.onDataAnalysisReadyChange();
+        setInstallStep(null);
+      }
+    });
+    try {
+      await invoke("install_data_analysis_env");
+    } catch (err) {
+      setInstallStep({ step: "error", message: String(err) });
+    }
+    // 安装完成后或出错时清理 listener（done/error 已在上面处理）。
+    onCleanup(() => { unlisten(); });
+  };
 
   // 工作区选项 = 历史工作区 + 末尾「选择新文件夹...」特殊项。
   const workspaceOptions = createMemo(() => [
@@ -112,6 +145,32 @@ export default function HomeView(props: {
             {SCENARIOS.find((s) => s.id === props.selectedScenario)?.subtitle ?? SCENARIOS[0].subtitle}
           </p>
         </div>
+
+        {/* 数据分析环境未就绪时的启用面板 */}
+        <Show when={props.selectedScenario === "data_analysis" && !props.dataAnalysisReady}>
+          <div class="home-view__enable-panel">
+            <Show when={!installStep()}>
+              <p class="home-view__enable-hint">数据分析需要安装 DuckLake 扩展，点击下方按钮启用。</p>
+              <button class="home-view__enable-btn" onClick={() => void handleEnableDataAnalysis()}>
+                启用数据分析
+              </button>
+            </Show>
+            <Show when={installStep() && installStep()!.step !== "done" && installStep()!.step !== "error"}>
+              <div class="home-view__install-progress">
+                <span class="home-view__install-spinner" />
+                <span class="home-view__install-msg">{installStep()!.message}</span>
+              </div>
+            </Show>
+            <Show when={installStep()?.step === "error"}>
+              <div class="home-view__install-error">
+                <span>✕ 安装失败：{installStep()!.message}</span>
+                <button class="home-view__enable-btn" onClick={() => void handleEnableDataAnalysis()}>
+                  重试
+                </button>
+              </div>
+            </Show>
+          </div>
+        </Show>
 
         {/* 输入框 */}
         <div class="home-composer">

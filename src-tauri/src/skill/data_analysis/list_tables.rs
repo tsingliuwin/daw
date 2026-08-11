@@ -38,7 +38,8 @@ impl Tool for ListTablesTool {
 
         let start = std::time::Instant::now();
 
-        let conn = match &self.app_state.duckdb {
+        let duckdb_guard = self.app_state.duckdb.lock().await;
+        let conn = match &*duckdb_guard {
             Some(c) => c.clone(),
             None => {
                 let msg = "DuckDB 引擎未初始化。请检查是否配置了数据源并重启应用。".to_string();

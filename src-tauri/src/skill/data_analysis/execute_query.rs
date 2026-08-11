@@ -57,7 +57,8 @@ impl Tool for ExecuteQueryTool {
 
         let start = std::time::Instant::now();
 
-        let conn = match &self.app_state.duckdb {
+        let duckdb_guard = self.app_state.duckdb.lock().await;
+        let conn = match &*duckdb_guard {
             Some(c) => c.clone(),
             None => {
                 let msg = "DuckDB 引擎未初始化，无法执行查询。请检查应用日志。".to_string();
@@ -68,7 +69,7 @@ impl Tool for ExecuteQueryTool {
                 return Err(ToolError(msg));
             }
         };
-        let ih = self.app_state.interrupt_handle.as_ref()
+        let ih = self.app_state.interrupt_handle.lock().await.as_ref()
             .and_then(|h| h.lock().ok().map(|g| g.clone()));
 
         let sql_string = sql.to_string();

@@ -490,6 +490,131 @@ pub async fn save_image_from_base64(
 }
 
 // ===========================================================================
+// Data analysis environment management
+// ===========================================================================
+
+/// 检查数据分析环境是否就绪（DuckLake 扩展已安装 + lake 已 ATTACH）。
+#[tauri::command]
+pub async fn check_data_analysis_env(state: tauri::State<'_, AppState>) -> Result<bool, String> {
+    Ok(state.duckdb_ready.load(std::sync::atomic::Ordering::Relaxed))
+}
+
+/// 安装数据分析环境（DuckLake + sqlite 扩展 + ATTACH lake）。
+/// 逐步发 "ducklake-install" 事件给前端展示进度。
+#[tauri::command]
+pub async fn install_data_analysis_env(
+    window: tauri::Window,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    use tauri::Emitter;
+    // 如果已就绪，直接返回。
+    if state.duckdb_ready.load(std::sync::atomic::Ordering::Relaxed) {
+        let _ = window.emit("ducklake-install", serde_json::json!({ "step": "done", "message": "已就绪" }));
+        return Ok(());
+    }
+
+    let ws_dir = match crate::db::get_aioa_dir() {
+        Ok(mut p) => { p.push("DefaultProject"); p }
+        Err(e) => return Err(format!("无法定位工作区目录: {e}")),
+    };
+    let state_inner = state.inner().clone();
+
+    tokio::spawn(async move {
+        let window = window;
+        let state = state_inner;
+
+        let result = {
+            let window_inner = window.clone();
+            tokio::task::spawn_blocking(move || -> Result<(std::sync::Arc<tokio::sync::Mutex<duckdb::Connection>>, std::sync::Arc<std::sync::Mutex<std::sync::Arc<duckdb::InterruptHandle>>>), String> {
+                use std::sync::Arc;
+                let conn = duckdb::Connection::open_in_memory()
+                    .map_err(|e| format!("DuckDB 打开失败: {e}"))?;
+                let _ = conn.execute_batch("PRAGMA memory_limit='4GB';\nPRAGMA threads=1;");
+
+                // Step 1: INSTALL ducklake
+                let _ = window_inner.emit("ducklake-install", serde_json::json!({
+                    "step": "install_ducklake", "message": "正在下载 ducklake 扩展…"
+                }));
+                if conn.execute("LOAD ducklake;", []).is_err() {
+                    if let Err(e) = conn.execute("INSTALL ducklake;", []) {
+                        tracing::warn!(category = "duckdb", "INSTALL ducklake failed: {e}");
+                    }
+                    conn.execute("LOAD ducklake;", [])
+                        .map_err(|e| format!("ducklake 扩展加载失败: {e}"))?;
+                }
+
+                // Step 2: INSTALL sqlite
+                let _ = window_inner.emit("ducklake-install", serde_json::json!({
+                    "step": "install_sqlite", "message": "正在下载 sqlite 扩展…"
+                }));
+                if conn.execute("LOAD sqlite;", []).is_err() {
+                    if let Err(e) = conn.execute("INSTALL sqlite;", []) {
+                        tracing::warn!(category = "duckdb", "INSTALL sqlite failed: {e}");
+                    }
+                    conn.execute("LOAD sqlite;", [])
+                        .map_err(|e| format!("sqlite 扩展加载失败: {e}"))?;
+                }
+
+                // Step 3: ATTACH lake
+                let _ = window_inner.emit("ducklake-install", serde_json::json!({
+                    "step": "attach_lake", "message": "正在初始化数据湖…"
+                }));
+                crate::duckdb::lake::attach_workspace_lake(&conn, &ws_dir)?;
+
+                // Step 4: ATTACH 外部数据源
+                let _ = window_inner.emit("ducklake-install", serde_json::json!({
+                    "step": "attach_sources", "message": "正在连接数据源…"
+                }));
+                let ws_path = "DefaultProject";
+                let sources = crate::db::list_workspace_db_connections(ws_path).unwrap_or_default();
+                if !sources.is_empty() {
+                    if let Err(e) = crate::duckdb::attach::attach_all(&conn, &sources) {
+                        tracing::warn!(category = "link", "ATTACH 数据源失败: {e}");
+                    }
+                }
+
+                let ih = conn.interrupt_handle();
+                let conn_arc = Arc::new(tokio::sync::Mutex::new(conn));
+                let ih_arc = Arc::new(std::sync::Mutex::new(ih));
+                Ok((conn_arc, ih_arc))
+            }).await
+        };
+
+        match result {
+            Ok(Ok((conn_arc, ih_arc))) => {
+                // 更新 AppState。
+                {
+                    let mut duckdb_guard = state.duckdb.lock().await;
+                    *duckdb_guard = Some(conn_arc);
+                }
+                {
+                    let mut ih_guard = state.interrupt_handle.lock().await;
+                    *ih_guard = Some(ih_arc);
+                }
+                state.duckdb_ready.store(true, std::sync::atomic::Ordering::Relaxed);
+                let _ = window.emit("ducklake-install", serde_json::json!({
+                    "step": "done", "message": "数据分析环境已就绪"
+                }));
+            }
+            Ok(Err(e)) => {
+                tracing::error!(category = "system", "数据分析环境安装失败: {e}");
+                let _ = window.emit("ducklake-install", serde_json::json!({
+                    "step": "error", "message": e
+                }));
+            }
+            Err(e) => {
+                let msg = format!("线程生成失败: {e}");
+                tracing::error!(category = "system", "数据分析环境安装失败: {msg}");
+                let _ = window.emit("ducklake-install", serde_json::json!({
+                    "step": "error", "message": msg
+                }));
+            }
+        }
+    });
+    Ok(())
+}
+
+// ===========================================================================
 // Data source (db_connections) management
 // ===========================================================================
 
@@ -521,7 +646,8 @@ pub async fn upsert_db_connection(
     if is_new {
         let ws_path = "DefaultProject".to_string();
         crate::db::link_workspace_db_connection(&ws_path, &config.id)?;
-        if let Some(duckdb_conn) = &state.duckdb {
+        let duckdb_guard = state.duckdb.lock().await;
+    if let Some(duckdb_conn) = &*duckdb_guard {
             let dc = duckdb_conn.clone();
             let rec = config.clone();
             let _ = tokio::task::spawn_blocking(move || {
@@ -565,7 +691,8 @@ pub async fn link_connection_to_workspace(
     // 2. 立即 ATTACH 到主会话
     let conn_record = crate::db::get_db_connection(&conn_id)?
         .ok_or_else(|| "数据源不存在".to_string())?;
-    if let Some(duckdb_conn) = &state.duckdb {
+    let duckdb_guard = state.duckdb.lock().await;
+    if let Some(duckdb_conn) = &*duckdb_guard {
         let dc = duckdb_conn.clone();
         let rec = conn_record.clone();
         let result = tokio::task::spawn_blocking(move || {
@@ -592,7 +719,8 @@ pub async fn unlink_connection_from_workspace(
     crate::db::unlink_workspace_db_connection(&ws_path, &conn_id)?;
     // DETACH 从主会话
     let conn_record = crate::db::get_db_connection(&conn_id)?;
-    if let (Some(duckdb_conn), Some(rec)) = (&state.duckdb, conn_record) {
+    let duckdb_guard = state.duckdb.lock().await;
+    if let (Some(duckdb_conn), Some(rec)) = (&*duckdb_guard, conn_record) {
         let dc = duckdb_conn.clone();
         let name = rec.name.clone();
         let _ = tokio::task::spawn_blocking(move || {

@@ -77,7 +77,8 @@ impl Tool for DropObjectTool {
         }
 
         // 执行。
-        let conn = match &self.app_state.duckdb {
+        let duckdb_guard = self.app_state.duckdb.lock().await;
+        let conn = match &*duckdb_guard {
             Some(c) => c.clone(),
             None => {
                 let msg = "DuckDB 引擎未初始化".to_string();

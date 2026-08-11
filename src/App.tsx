@@ -58,6 +58,8 @@ export default function App() {
   const [busy, setBusy] = createSignal<boolean>(false);
   /** 暂存"新建任务"时选择的场景（由 LeftNav 按钮设置，submitTaskFromHome 消费）。 */
   const [pendingScenario, setPendingScenario] = createSignal<"task" | "data_analysis">("task");
+  /** 数据分析环境是否就绪（DuckLake 扩展已安装）。 */
+  const [dataAnalysisReady, setDataAnalysisReady] = createSignal(false);
 
   // 在 tasksByWorkspace 中查找 taskId 所属的工作区路径（不存在返回 null）。
   function findTaskWorkspace(taskId: string): string | null {
@@ -236,6 +238,12 @@ export default function App() {
   }
 
   onMount(async () => {
+    // 检查数据分析环境是否就绪。
+    try {
+      const ready = await invoke<boolean>("check_data_analysis_env");
+      setDataAnalysisReady(ready);
+    } catch { /* best-effort */ }
+
     // 恢复工作区折叠态（localStorage）。
     try {
       const saved = localStorage.getItem("ws_collapsed");
@@ -628,6 +636,8 @@ export default function App() {
                 onSelectConfirm={setSelectedConfirm}
                 selectedScenario={pendingScenario()}
                 onSelectScenario={setPendingScenario}
+                dataAnalysisReady={dataAnalysisReady()}
+                onDataAnalysisReadyChange={async () => { const r = await invoke<boolean>("check_data_analysis_env"); setDataAnalysisReady(r); }}
                 onSubmit={submitTaskFromHome}
                 onOpenSettings={() => setSettingsOpen(true)}
               />
