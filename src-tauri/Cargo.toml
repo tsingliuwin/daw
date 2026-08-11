@@ -36,6 +36,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 rfd = "0.15"
 base64 = "0.22"
+walkdir = "2"
 
 [profile.dev]
 debug = 0

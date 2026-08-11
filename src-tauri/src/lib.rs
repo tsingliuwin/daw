@@ -15,6 +15,7 @@ mod db;
 mod duckdb;
 mod logging;
 mod model;
+mod okf;
 mod skill;
 mod state;
 mod usage;

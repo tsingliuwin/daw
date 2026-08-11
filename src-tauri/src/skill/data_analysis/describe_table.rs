@@ -69,10 +69,29 @@ impl Tool for DescribeTableTool {
 
         let table_name_string = table_name.to_string();
         let hard_secs = QUERY_HARD_TIMEOUT_SECS;
-        let blocking_fut = tokio::task::spawn_blocking(move || -> Result<SqlResult, String> {
+        let ws_dir = self.app_state.workspace_dir.lock().await.to_string_lossy().to_string();
+        let blocking_fut = tokio::task::spawn_blocking(move || -> Result<(SqlResult, Option<String>, std::collections::HashMap<String, String>, Vec<String>), String> {
             let guard = conn.blocking_lock();
             let sql = format!("DESCRIBE {}", table_name_string);
-            execute::run_query(&guard, &sql, None).map_err(|e| e.to_string())
+            let query_res = execute::run_query(&guard, &sql, None).map_err(|e| e.to_string())?;
+
+            // OKF：解析表的业务释义和关联关系。
+            // 如果 OKF 文件不存在，用 DESCRIBE 结果自动生成骨架（空业务释义）。
+            let okf_file = crate::okf::get_okf_dir(&ws_dir)
+                .join("tables")
+                .join(format!("{table_name_string}.md"));
+            if !okf_file.exists() {
+                // 自动生成骨架：从 DESCRIBE 结果提取列信息。
+                let columns: Vec<crate::okf::ColumnInfo> = query_res.rows.iter().map(|r| {
+                    let name = r.get(0).map(|v: &serde_json::Value| v.to_string().trim_matches('"').to_string()).unwrap_or_default();
+                    let ty = r.get(1).map(|v: &serde_json::Value| v.to_string()).unwrap_or_default();
+                    let nullable = r.get(2).map(|v: &serde_json::Value| v.to_string().to_uppercase().contains("YES")).unwrap_or(true);
+                    (name, ty, nullable)
+                }).collect();
+                let _ = crate::okf::write_table_okf(&ws_dir, &table_name_string, &columns, None);
+            }
+            let (okf_title, col_comments, relations) = crate::okf::parse_column_semantics(&ws_dir, &table_name_string);
+            Ok((query_res, okf_title, col_comments, relations))
         });
         let desc_res = if hard_secs > 0 {
             match tokio::time::timeout(std::time::Duration::from_secs(hard_secs), blocking_fut).await {
@@ -94,23 +113,33 @@ impl Tool for DescribeTableTool {
 
         let elapsed = start.elapsed().as_millis() as u64;
         match desc_res {
-            Ok(res) => {
+            Ok((res, okf_title, col_comments, relations)) => {
                 let n = res.rows.len();
-                // DESCRIBE 返回的列：column_name, column_type, null, key, default, extra。
                 let col_lines: Vec<String> = res.rows.iter().map(|r| {
                     let name = r.get(0).map(|v: &serde_json::Value| v.to_string()).unwrap_or_default();
                     let ty = r.get(1).map(|v: &serde_json::Value| v.to_string()).unwrap_or_default();
                     let null = r.get(2).map(|v: &serde_json::Value| v.to_string()).unwrap_or_default();
-                    format!("{} (类型: {}, 允许空: {})", name.trim_matches('"'), ty, null)
+                    let clean_name = name.trim_matches('"').to_string();
+                    let comment = col_comments.get(&clean_name).map(|c| format!(", 释义: {c}")).unwrap_or_default();
+                    format!("{clean_name} (类型: {ty}, 允许空: {null}){comment}")
                 }).collect();
 
-                let summary = format!("结构分析完成，{} 共 {} 个字段", table_name, n);
+                let mut title_part = String::new();
+                if let Some(t) = &okf_title {
+                    title_part = format!(" (业务名称: {t})");
+                }
+                let mut rels_part = String::new();
+                if !relations.is_empty() {
+                    rels_part = format!("\n\n关联关系:\n{}", relations.iter().map(|r| format!("- {r}")).collect::<Vec<_>>().join("\n"));
+                }
+
+                let summary = format!("结构分析完成，{}{} 共 {} 个字段", table_name, title_part, n);
                 let payload = serde_json::to_value(&res).ok();
                 emit_tool_result(
                     &self.window, &self.task_id, &call_id, "ok",
                     summary, None, payload, Some(elapsed), None,
                 );
-                Ok(format!("表 {} 的列结构如下:\n{}", table_name, col_lines.join("\n")))
+                Ok(format!("表 {}{} 的列结构如下:\n{}{}", table_name, title_part, col_lines.join("\n"), rels_part))
             }
             Err(err) => {
                 emit_tool_result(
