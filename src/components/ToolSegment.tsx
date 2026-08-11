@@ -70,6 +70,7 @@ export default function ToolSegment(props: {
     const hasArgs = s.args && typeof s.args === "object" && Object.keys(s.args as object).length > 0;
     return !!(
       s.status === "awaiting" || // awaiting: 始终展开，展示 detail + 确认按钮
+      s.status === "error" || // error: 始终可展开，展示错误详情
       s.detail ||
       s.payload != null ||
       hasArgs ||

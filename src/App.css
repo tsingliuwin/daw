@@ -5717,6 +5717,7 @@ button.lm-select-trigger:hover:not(:disabled) {
   word-break: break-word;
   line-height: 1.5;
   margin: 0 0 6px 0;
+  user-select: text;
 }
 .tool-seg--running .tool-seg__status {
   color: var(--accent-blue);
@@ -5779,6 +5780,11 @@ button.lm-select-trigger:hover:not(:disabled) {
   white-space: nowrap;
   flex: 0 1 auto;
   min-width: 0;
+  user-select: text;
+  cursor: text;
+}
+.tool-seg__summary {
+  user-select: text;
 }
 .tool-seg__chevron {
   opacity: 0;
