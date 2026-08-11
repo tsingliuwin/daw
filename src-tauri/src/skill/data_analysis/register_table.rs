@@ -153,7 +153,8 @@ impl Tool for RegisterTableTool {
         match result {
             Ok(remote_ref) => {
                 let summary = format!("已注册视图 {} -> {}", local_name, remote_ref);
-                emit_tool_result(&self.window, &self.task_id, &call_id, "ok", summary.clone(), None, None, Some(elapsed), None);
+                let detail = format!("CREATE OR REPLACE VIEW \"{}\" AS SELECT * FROM {};", local_name, remote_ref);
+                emit_tool_result(&self.window, &self.task_id, &call_id, "ok", summary.clone(), Some(detail), None, Some(elapsed), None);
                 Ok(format!("{summary}。后续可用 {} 作为表名查询。", local_name))
             }
             Err(err) => {
