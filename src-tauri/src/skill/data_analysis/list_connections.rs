@@ -67,7 +67,7 @@ impl Tool for ListConnectionsTool {
                 } else {
                     format!("当前已连接的数据源（{} 个）：\n{}", conns.len(), lines.join("\n"))
                 };
-                emit_tool_result(&self.window, &self.task_id, &call_id, "ok", summary, None, None, Some(elapsed), None);
+                emit_tool_result(&self.window, &self.task_id, &call_id, "ok", summary, None, None, Some(elapsed), Some(out.clone()));
                 Ok(out)
             }
             Err(err) => {
