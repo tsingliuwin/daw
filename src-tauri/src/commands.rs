@@ -283,14 +283,16 @@ pub async fn save_task(
     token_usage: Option<serde_json::Value>,
     space_id: String,
     user_id: String,
+    kind: Option<String>,
 ) -> Result<(), String> {
     let conn = db::get_db_conn()?;
     let now = now_ms();
     let usage_json = token_usage.map(|v| serde_json::to_string(&v).unwrap_or_default());
+    let kind = kind.unwrap_or_else(|| "task".to_string());
     conn.execute(
         "INSERT OR REPLACE INTO tasks (id, workspace_path, name, kind, created_at, saved, model_id, token_usage, space_id, user_id)
-         VALUES (?, ?, ?, 'task', COALESCE((SELECT created_at FROM tasks WHERE id = ?), ?), 1, ?, ?, ?, ?)",
-        rusqlite::params![task_id, workspace_path, name, task_id, now, model_id, usage_json, space_id, user_id],
+         VALUES (?, ?, ?, ?, COALESCE((SELECT created_at FROM tasks WHERE id = ?), ?), 1, ?, ?, ?, ?)",
+        rusqlite::params![task_id, workspace_path, name, kind, task_id, now, model_id, usage_json, space_id, user_id],
     )
     .map_err(|e| e.to_string())?;
 
@@ -357,11 +359,13 @@ pub async fn start_agent_task(
     history_json: String,
     priority: Option<String>,
     confirm_mode: Option<String>,
+    kind: Option<String>,
     state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
     let app_state = state.inner().clone();
     let priority = priority.unwrap_or_else(|| "均衡".to_string());
     let confirm_mode = confirm_mode.unwrap_or_else(|| "变更前确认".to_string());
+    let scenario = crate::skill::Scenario::from_kind(&kind.unwrap_or_else(|| "task".to_string()));
     tokio::spawn(async move {
         if let Err(e) = crate::agent::run_agent_task_stream(
             window.clone(),
@@ -372,6 +376,7 @@ pub async fn start_agent_task(
             history_json,
             priority,
             confirm_mode,
+            scenario,
             app_state,
         )
         .await

@@ -7990,5 +7990,105 @@ input[type="number"] {
   background: rgba(59, 130, 246, 0.12);
 }
 
+/* ─── ResultTable（SQL 查询结果表格）────────────────────────────────────── */
 
+.result-wrap {
+  border: 1px solid var(--border-color, rgba(255, 255, 255, 0.08));
+  border-radius: 6px;
+  overflow: hidden;
+  margin-top: 8px;
+  background: var(--bg-elevated, rgba(255, 255, 255, 0.02));
+}
+
+.result-wrap--compact {
+  max-height: 240px;
+}
+
+.result-empty {
+  padding: 16px;
+  text-align: center;
+  color: var(--text-muted, rgba(255, 255, 255, 0.4));
+  font-size: 13px;
+}
+
+.result-scroll {
+  overflow: auto;
+  position: relative;
+  scrollbar-width: thin;
+}
+
+.result-thead {
+  display: flex;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--bg-elevated-2, rgba(255, 255, 255, 0.06));
+  border-bottom: 1px solid var(--border-color, rgba(255, 255, 255, 0.1));
+}
+
+.result-th {
+  padding: 6px 10px;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--border-color, rgba(255, 255, 255, 0.05));
+  overflow: hidden;
+}
+
+.result-th-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary, #e0e0e0);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.result-th-type {
+  font-size: 10px;
+  color: var(--text-muted, rgba(255, 255, 255, 0.35));
+  font-family: monospace;
+}
+
+.result-row {
+  display: flex;
+  align-items: center;
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  border-bottom: 1px solid var(--border-color, rgba(255, 255, 255, 0.04));
+}
+
+.result-row:hover {
+  background: var(--bg-hover, rgba(255, 255, 255, 0.03));
+}
+
+.result-row-idx {
+  position: absolute;
+  text-align: center;
+  font-size: 11px;
+  color: var(--text-muted, rgba(255, 255, 255, 0.3));
+  line-height: 28px;
+  background: var(--bg-elevated-2, rgba(255, 255, 255, 0.03));
+  border-right: 1px solid var(--border-color, rgba(255, 255, 255, 0.05));
+}
+
+.result-cell {
+  padding: 0 10px;
+  font-size: 12px;
+  line-height: 28px;
+  color: var(--text-secondary, rgba(255, 255, 255, 0.75));
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  border-right: 1px solid var(--border-color, rgba(255, 255, 255, 0.04));
+}
+
+.result-truncated {
+  padding: 6px 10px;
+  font-size: 11px;
+  color: var(--accent-orange, #f59e0b);
+  text-align: center;
+  border-top: 1px solid var(--border-color, rgba(255, 255, 255, 0.08));
+}
 

@@ -20,9 +20,11 @@ use super::events::{
 };
 use super::wire::{ChatMessageDto, Segment};
 use crate::skill::builtin::GetCurrentTimeTool;
+use crate::skill::data_analysis::{describe_table::DescribeTableTool, execute_query::ExecuteQueryTool, list_tables::ListTablesTool, sample_data::SampleDataTool};
 use crate::skill::search::SearchTool;
+use crate::skill::Scenario;
 use crate::state::AppState;
-use crate::usage::{self, PREAMBLE};
+use crate::usage::{self, DATA_ANALYSIS_PREAMBLE, PREAMBLE};
 
 /// Rebuild the LLM chat history from persisted messages.
 ///
@@ -293,6 +295,7 @@ pub(crate) async fn run_agent_task_stream(
     history_json: String,
     priority: String,
     #[allow(unused_variables)] confirm_mode: String,
+    scenario: Scenario,
     app_state: AppState,
 ) -> Result<(), String> {
     // 1. Get model provider config
@@ -327,11 +330,13 @@ pub(crate) async fn run_agent_task_stream(
         }
     }
 
-    // Factory closure that builds a fresh set of 基座内置 tool instances. Called
+    // Factory closures that build fresh tool instances per scenario. Called
     // once per provider branch AND once per 429-retry (rig consumes the tools
     // when building the agent, so each retry needs a fresh set).
-    // 未来：skill 的工具也在这里按 registry.enabled_skill_ids() 条件构造。
-    let build_tools = || -> (GetCurrentTimeTool, SearchTool) {
+    //
+    // rig 的 Tool trait 非 dyn-compatible，无法 Box<dyn Tool> 收集，因此不同
+    // scenario 返回不同具体类型元组，在 provider 分支里编译期链式 .tool()。
+    let build_general_tools = || -> (GetCurrentTimeTool, SearchTool) {
         (
             GetCurrentTimeTool {
                 app_state: app_state.clone(),
@@ -345,14 +350,54 @@ pub(crate) async fn run_agent_task_stream(
             },
         )
     };
+    let build_data_tools = || -> (GetCurrentTimeTool, ExecuteQueryTool, ListTablesTool, DescribeTableTool, SampleDataTool) {
+        (
+            GetCurrentTimeTool {
+                app_state: app_state.clone(),
+                task_id: task_id.clone(),
+                window: window.clone(),
+            },
+            ExecuteQueryTool {
+                app_state: app_state.clone(),
+                task_id: task_id.clone(),
+                window: window.clone(),
+            },
+            ListTablesTool {
+                app_state: app_state.clone(),
+                task_id: task_id.clone(),
+                window: window.clone(),
+            },
+            DescribeTableTool {
+                app_state: app_state.clone(),
+                task_id: task_id.clone(),
+                window: window.clone(),
+            },
+            SampleDataTool {
+                app_state: app_state.clone(),
+                task_id: task_id.clone(),
+                window: window.clone(),
+            },
+        )
+    };
 
     // Estimate the input token cost before the stream starts so the UI panel
     // shows data immediately.
-    let (time_tool, search_tool) = build_tools();
-    let tool_defs = vec![
-        time_tool.definition(String::new()).await,
-        search_tool.definition(String::new()).await,
-    ];
+    let tool_defs: Vec<_> = match scenario {
+        Scenario::General => {
+            let (t, s) = build_general_tools();
+            vec![t.definition(String::new()).await, s.definition(String::new()).await]
+        }
+        Scenario::DataAnalysis => {
+            let (t, e, l, d, sd) = build_data_tools();
+            vec![
+                t.definition(String::new()).await,
+                e.definition(String::new()).await,
+                l.definition(String::new()).await,
+                d.definition(String::new()).await,
+                sd.definition(String::new()).await,
+            ]
+        }
+    };
     let tools_json = serde_json::to_string(&tool_defs).unwrap_or_default();
 
     // Inject the current date/time so the agent can resolve relative time
@@ -363,7 +408,11 @@ pub(crate) async fn run_agent_task_stream(
         weekday_cn()
     );
 
-    let combined_preamble = format!("{}\n\n{}", PREAMBLE, now_line);
+    let base_preamble = match scenario {
+        Scenario::General => PREAMBLE,
+        Scenario::DataAnalysis => DATA_ANALYSIS_PREAMBLE,
+    };
+    let combined_preamble = format!("{}\n\n{}", base_preamble, now_line);
     let preamble_raw = usage::estimate_tokens(&combined_preamble);
     let tools_raw = usage::estimate_tokens(&tools_json);
     let prompt_t = usage::estimate_tokens(&prompt);
@@ -383,104 +432,159 @@ pub(crate) async fn run_agent_task_stream(
     let mut attempt: usize = 0;
     loop {
         attempt += 1;
-        let (time_tool, search_tool) = build_tools();
 
-        let outcome = if format == "openai" {
-            let base_url = sanitize_endpoint(&provider.endpoint);
-            let client: rig_core::providers::openai::Client = rig_core::providers::openai::Client::builder()
-                .api_key(&provider.api_key)
-                .base_url(&base_url)
-                .build()
-                .map_err(|e| format!("构建 OpenAI 客户端失败: {e}"))?;
-            let mut agent_builder = client
-                .completions_api()
-                .agent(&model_id)
-                .preamble(&combined_preamble)
-                .max_tokens(max_tokens_limit)
-                .tool(time_tool)
-                .tool(search_tool);
-            if model_id.starts_with("o1") || model_id.starts_with("o3") {
-                agent_builder = agent_builder.additional_params(json!({"reasoning_effort": effort}));
+        let outcome = match scenario {
+            Scenario::General => {
+                let (time_tool, search_tool) = build_general_tools();
+                if format == "openai" {
+                    let base_url = sanitize_endpoint(&provider.endpoint);
+                    let client: rig_core::providers::openai::Client = rig_core::providers::openai::Client::builder()
+                        .api_key(&provider.api_key)
+                        .base_url(&base_url)
+                        .build()
+                        .map_err(|e| format!("构建 OpenAI 客户端失败: {e}"))?;
+                    let mut agent_builder = client
+                        .completions_api()
+                        .agent(&model_id)
+                        .preamble(&combined_preamble)
+                        .max_tokens(max_tokens_limit)
+                        .tool(time_tool)
+                        .tool(search_tool);
+                    if model_id.starts_with("o1") || model_id.starts_with("o3") {
+                        agent_builder = agent_builder.additional_params(json!({"reasoning_effort": effort}));
+                    }
+                    let agent = agent_builder.build();
+                    let stream = agent
+                        .stream_chat(prompt.clone(), rig_history.clone())
+                        .multi_turn(100)
+                        .await;
+                    run_stream_loop(window.clone(), task_id.clone(), &app_state, stream, input_est, &provider.api_format, preamble_raw, tools_raw).await
+                } else if format == "responses" {
+                    let base_url = sanitize_endpoint(&provider.endpoint);
+                    let client: rig_core::providers::openai::Client = rig_core::providers::openai::Client::builder()
+                        .api_key(&provider.api_key)
+                        .base_url(&base_url)
+                        .build()
+                        .map_err(|e| format!("构建 OpenAI 客户端失败: {e}"))?;
+                    let mut agent_builder = client
+                        .agent(&model_id)
+                        .preamble(&combined_preamble)
+                        .max_tokens(max_tokens_limit)
+                        .tool(time_tool)
+                        .tool(search_tool);
+                    if model_id.starts_with("o1") || model_id.starts_with("o3") {
+                        agent_builder = agent_builder.additional_params(json!({"reasoning_effort": effort}));
+                    }
+                    let agent = agent_builder.build();
+                    let stream = agent
+                        .stream_chat(prompt.clone(), rig_history.clone())
+                        .multi_turn(100)
+                        .await;
+                    run_stream_loop(window.clone(), task_id.clone(), &app_state, stream, input_est, &provider.api_format, preamble_raw, tools_raw).await
+                } else if format == "anthropic" {
+                    let base_url = sanitize_endpoint(&provider.endpoint);
+                    let client: rig_core::providers::anthropic::Client =
+                        rig_core::providers::anthropic::Client::builder()
+                            .api_key(provider.api_key.clone())
+                            .base_url(&base_url)
+                            .build()
+                            .map_err(|e| format!("构建 Anthropic 客户端失败: {e}"))?;
+                    let agent = client
+                        .agent(&model_id)
+                        .preamble(&combined_preamble)
+                        .max_tokens(4096)
+                        .tool(time_tool)
+                        .tool(search_tool)
+                        .build();
+                    let stream = agent
+                        .stream_chat(prompt.clone(), rig_history.clone())
+                        .multi_turn(100)
+                        .await;
+                    run_stream_loop(window.clone(), task_id.clone(), &app_state, stream, input_est, &provider.api_format, preamble_raw, tools_raw).await
+                } else {
+                    return Err(format!("不支持的 API 格式: {}", provider.api_format));
+                }
             }
-            let agent = agent_builder.build();
-            let stream = agent
-                .stream_chat(prompt.clone(), rig_history.clone())
-                .multi_turn(100)
-                .await;
-            run_stream_loop(
-                window.clone(),
-                task_id.clone(),
-                &app_state,
-                stream,
-                input_est,
-                &provider.api_format,
-                preamble_raw,
-                tools_raw,
-            )
-            .await
-        } else if format == "responses" {
-            let base_url = sanitize_endpoint(&provider.endpoint);
-            let client: rig_core::providers::openai::Client = rig_core::providers::openai::Client::builder()
-                .api_key(&provider.api_key)
-                .base_url(&base_url)
-                .build()
-                .map_err(|e| format!("构建 OpenAI 客户端失败: {e}"))?;
-            let mut agent_builder = client
-                .agent(&model_id)
-                .preamble(&combined_preamble)
-                .max_tokens(max_tokens_limit)
-                .tool(time_tool)
-                .tool(search_tool);
-            if model_id.starts_with("o1") || model_id.starts_with("o3") {
-                agent_builder = agent_builder.additional_params(json!({"reasoning_effort": effort}));
+            Scenario::DataAnalysis => {
+                let (time_tool, exec_tool, list_tool, desc_tool, sample_tool) = build_data_tools();
+                if format == "openai" {
+                    let base_url = sanitize_endpoint(&provider.endpoint);
+                    let client: rig_core::providers::openai::Client = rig_core::providers::openai::Client::builder()
+                        .api_key(&provider.api_key)
+                        .base_url(&base_url)
+                        .build()
+                        .map_err(|e| format!("构建 OpenAI 客户端失败: {e}"))?;
+                    let mut agent_builder = client
+                        .completions_api()
+                        .agent(&model_id)
+                        .preamble(&combined_preamble)
+                        .max_tokens(max_tokens_limit)
+                        .tool(time_tool)
+                        .tool(exec_tool)
+                        .tool(list_tool)
+                        .tool(desc_tool)
+                        .tool(sample_tool);
+                    if model_id.starts_with("o1") || model_id.starts_with("o3") {
+                        agent_builder = agent_builder.additional_params(json!({"reasoning_effort": effort}));
+                    }
+                    let agent = agent_builder.build();
+                    let stream = agent
+                        .stream_chat(prompt.clone(), rig_history.clone())
+                        .multi_turn(100)
+                        .await;
+                    run_stream_loop(window.clone(), task_id.clone(), &app_state, stream, input_est, &provider.api_format, preamble_raw, tools_raw).await
+                } else if format == "responses" {
+                    let base_url = sanitize_endpoint(&provider.endpoint);
+                    let client: rig_core::providers::openai::Client = rig_core::providers::openai::Client::builder()
+                        .api_key(&provider.api_key)
+                        .base_url(&base_url)
+                        .build()
+                        .map_err(|e| format!("构建 OpenAI 客户端失败: {e}"))?;
+                    let mut agent_builder = client
+                        .agent(&model_id)
+                        .preamble(&combined_preamble)
+                        .max_tokens(max_tokens_limit)
+                        .tool(time_tool)
+                        .tool(exec_tool)
+                        .tool(list_tool)
+                        .tool(desc_tool)
+                        .tool(sample_tool);
+                    if model_id.starts_with("o1") || model_id.starts_with("o3") {
+                        agent_builder = agent_builder.additional_params(json!({"reasoning_effort": effort}));
+                    }
+                    let agent = agent_builder.build();
+                    let stream = agent
+                        .stream_chat(prompt.clone(), rig_history.clone())
+                        .multi_turn(100)
+                        .await;
+                    run_stream_loop(window.clone(), task_id.clone(), &app_state, stream, input_est, &provider.api_format, preamble_raw, tools_raw).await
+                } else if format == "anthropic" {
+                    let base_url = sanitize_endpoint(&provider.endpoint);
+                    let client: rig_core::providers::anthropic::Client =
+                        rig_core::providers::anthropic::Client::builder()
+                            .api_key(provider.api_key.clone())
+                            .base_url(&base_url)
+                            .build()
+                            .map_err(|e| format!("构建 Anthropic 客户端失败: {e}"))?;
+                    let agent = client
+                        .agent(&model_id)
+                        .preamble(&combined_preamble)
+                        .max_tokens(4096)
+                        .tool(time_tool)
+                        .tool(exec_tool)
+                        .tool(list_tool)
+                        .tool(desc_tool)
+                        .tool(sample_tool)
+                        .build();
+                    let stream = agent
+                        .stream_chat(prompt.clone(), rig_history.clone())
+                        .multi_turn(100)
+                        .await;
+                    run_stream_loop(window.clone(), task_id.clone(), &app_state, stream, input_est, &provider.api_format, preamble_raw, tools_raw).await
+                } else {
+                    return Err(format!("不支持的 API 格式: {}", provider.api_format));
+                }
             }
-            let agent = agent_builder.build();
-            let stream = agent
-                .stream_chat(prompt.clone(), rig_history.clone())
-                .multi_turn(100)
-                .await;
-            run_stream_loop(
-                window.clone(),
-                task_id.clone(),
-                &app_state,
-                stream,
-                input_est,
-                &provider.api_format,
-                preamble_raw,
-                tools_raw,
-            )
-            .await
-        } else if format == "anthropic" {
-            let base_url = sanitize_endpoint(&provider.endpoint);
-            let client: rig_core::providers::anthropic::Client =
-                rig_core::providers::anthropic::Client::builder()
-                    .api_key(provider.api_key.clone())
-                    .base_url(&base_url)
-                    .build()
-                    .map_err(|e| format!("构建 Anthropic 客户端失败: {e}"))?;
-            let agent = client
-                .agent(&model_id)
-                .preamble(&combined_preamble)
-                .max_tokens(4096)
-                .tool(time_tool)
-                .build();
-            let stream = agent
-                .stream_chat(prompt.clone(), rig_history.clone())
-                .multi_turn(100)
-                .await;
-            run_stream_loop(
-                window.clone(),
-                task_id.clone(),
-                &app_state,
-                stream,
-                input_est,
-                &provider.api_format,
-                preamble_raw,
-                tools_raw,
-            )
-            .await
-        } else {
-            return Err(format!("不支持的 API 格式: {}", provider.api_format));
         };
 
         match outcome {

@@ -2,12 +2,49 @@
 //!
 //! These structs are the wire format: `src/lib/types.ts` mirrors them 1:1.
 //! Keep both in sync when changing.
-//!
-//! (Migrated from lakemind with all DuckDB/data-lake types removed — the OA
-//! tools carry structured results as `serde_json::Value` payloads instead of
-//! `SqlResult`, so no row/column DTO is needed here.)
 
 use serde::{Deserialize, Serialize};
+
+// ---------------------------------------------------------------------------
+// SQL query result (data-analysis scenario)
+// ---------------------------------------------------------------------------
+
+/// Result of an ad-hoc SQL execution. Returned to the frontend as the
+/// `payload` of a `tool_result` event and rendered by `ResultTable.tsx`.
+/// Mirrors `src/lib/types.ts` `SqlResult`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SqlResult {
+    pub columns: Vec<String>,
+    pub column_types: Vec<String>,
+    /// Rows as heterogeneous JSON values (numbers, strings, null, ...).
+    pub rows: Vec<Vec<serde_json::Value>>,
+    /// Number of rows actually returned (== rows.len()).
+    pub row_count: usize,
+    /// True when a SELECT exceeded the row cap and was truncated.
+    pub truncated: bool,
+    pub elapsed_ms: u64,
+}
+
+/// External data-source connection config. Stored in `settings.json` under the
+/// `dataSources` array; DuckDB ATTACHes each one at startup.
+/// Mirrors `src/lib/types.ts` `DataSourceConfig`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DataSourceConfig {
+    pub id: String,
+    /// Display name; also the source of the DuckDB catalog alias (`db_<safe>`).
+    pub name: String,
+    #[serde(rename = "dbType")]
+    pub db_type: String, // "postgres" | "mysql" | "sqlite"
+    pub host: String,
+    pub port: i32,
+    /// For sqlite: the local file path (host/port/user/password unused).
+    pub database_name: String,
+    pub username: String,
+    pub password: String,
+    pub ssl_mode: String,
+}
 
 // ---------------------------------------------------------------------------
 // Unified logging

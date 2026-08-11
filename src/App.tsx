@@ -56,6 +56,8 @@ export default function App() {
   const [consoleOpen, setConsoleOpen] = createSignal<boolean>(false);
   const [settingsOpen, setSettingsOpen] = createSignal<boolean>(false);
   const [busy, setBusy] = createSignal<boolean>(false);
+  /** 暂存"新建任务"时选择的场景（由 LeftNav 按钮设置，submitTaskFromHome 消费）。 */
+  const [pendingScenario, setPendingScenario] = createSignal<"task" | "data_analysis">("task");
 
   // 在 tasksByWorkspace 中查找 taskId 所属的工作区路径（不存在返回 null）。
   function findTaskWorkspace(taskId: string): string | null {
@@ -179,6 +181,7 @@ export default function App() {
         tokenUsage: task.tokenUsage ?? null,
         spaceId: "personal",
         userId: "default",
+        kind: task.kind ?? "task",
       });
     } catch (err) {
       logError("agent", "Failed to save task to backend", err);
@@ -370,8 +373,9 @@ export default function App() {
 
   // 「新建任务」按钮：只跳回首页（HomeView），不创建空任务。真正建任务发生在
   // submitTaskFromHome 中（用户敲下第一条消息后）。LeftNav 顶部按钮与工作区 header
-  // 「+」都走这里。
-  function goToHome() {
+  // 「+」都走这里。scenario 参数用于区分"新建数据分析任务"。
+  function goToHome(scenario: "task" | "data_analysis" = "task") {
+    setPendingScenario(scenario);
     setActiveTaskId(null);
   }
 
@@ -445,6 +449,7 @@ export default function App() {
     if (!wsPath) return;
     const id = `task-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
     const name = prompt.trim().replace(/\n/g, " ").slice(0, 40) || "新任务";
+    const scenario = pendingScenario();
     const newT: Task = {
       id,
       name,
@@ -452,6 +457,7 @@ export default function App() {
       messages: [],
       saved: false,
       modelId: selectedModel() || undefined,
+      kind: scenario,
     };
     setTasksByWorkspace((prev) => ({
       ...prev,
@@ -512,6 +518,7 @@ export default function App() {
         historyJson,
         priority: selectedPriority(),
         confirmMode: selectedConfirm(),
+        kind: task.kind ?? "task",
       });
     } catch (err) {
       logError("agent", "Failed to start agent task", err);
@@ -581,7 +588,8 @@ export default function App() {
           onToggleWorkspace={toggleWorkspace}
           onSelectTask={selectTask}
           onDeleteTask={deleteTask}
-          onNewTask={goToHome}
+          onNewTask={() => goToHome("task")}
+          onNewAnalysisTask={() => goToHome("data_analysis")}
           busy={busy()}
           leftOpen={leftOpen()}
           onToggleLeft={() => setLeftOpen(!leftOpen())}

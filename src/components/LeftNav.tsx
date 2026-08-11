@@ -26,6 +26,8 @@ export default function LeftNav(props: {
   onDeleteTask: (id: string) => void;
   /** 新建任务：跳回首页（不预建空任务），发送内容时才真正建任务。 */
   onNewTask: () => void;
+  /** 新建数据分析任务：跳回首页并标记场景为 data_analysis。 */
+  onNewAnalysisTask: () => void;
   busy?: boolean;
   leftOpen: boolean;
   onToggleLeft: () => void;
@@ -73,6 +75,20 @@ export default function LeftNav(props: {
             </svg>
           </span>
           <span class="action-label">新建任务</span>
+        </button>
+        <button
+          class="ln-action-btn"
+          title="新建数据分析任务"
+          onClick={() => props.onNewAnalysisTask()}
+          disabled={props.busy}
+        >
+          <span class="action-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M3 3v18h18"></path>
+              <path d="M7 14l4-4 4 4 5-5"></path>
+            </svg>
+          </span>
+          <span class="action-label">数据分析</span>
         </button>
       </div>
 

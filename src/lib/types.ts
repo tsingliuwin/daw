@@ -147,9 +147,8 @@ export interface TokenUsage {
 }
 
 /**
- * 一个 OA 任务（用户通过对话发起的一次办公流程，如请假/报销/审批）。
- * 相比 lakemind 去掉了 sql/kind 字段——aioa 统一为「任务」语义。后端
- * `commands::Task` 结构对应（serde camelCase，wire 格式一致）。
+ * 一个任务（用户通过对话发起的一次流程）。
+ * kind 区分场景：task=通用对话，data_analysis=数据分析。
  */
 export interface Task {
   id: string;
@@ -163,6 +162,35 @@ export interface Task {
   modelId?: string;
   /** 累计 token 用量（持久化，伴随任务全生命周期）。 */
   tokenUsage?: TokenUsage;
+  /** 任务场景类型，决定 agent 工具集和 preamble。默认 "task"。 */
+  kind?: "task" | "data_analysis";
+}
+
+// ---------------------------------------------------------------------------
+// 数据分析 —— SqlResult / DataSourceConfig（与 src-tauri/src/model.rs 对应）
+// ---------------------------------------------------------------------------
+
+/** SQL 查询结果（execute_query / describe_table / sample_data 工具的 payload）。 */
+export interface SqlResult {
+  columns: string[];
+  columnTypes: string[];
+  rows: JsonValue[][];
+  rowCount: number;
+  truncated: boolean;
+  elapsedMs: number;
+}
+
+/** 外部数据源连接配置（存 settings.json 的 dataSources 数组）。 */
+export interface DataSourceConfig {
+  id: string;
+  name: string;
+  dbType: "postgres" | "mysql" | "sqlite";
+  host: string;
+  port: number;
+  databaseName: string;
+  username: string;
+  password: string;
+  sslMode: string;
 }
 
 export interface Workspace {

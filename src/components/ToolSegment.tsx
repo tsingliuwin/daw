@@ -1,21 +1,23 @@
 import { Show, For, createSignal } from "solid-js";
-import type { Segment } from "../lib/types";
+import type { Segment, SqlResult } from "../lib/types";
+import ResultTable from "./ResultTable";
 
-/** OA 工具的人类可读标签。未知工具回退到原始 tool 名。 */
+/** 工具的人类可读标签。未知工具回退到原始 tool 名。 */
 const TOOL_LABELS: Record<string, string> = {
   get_current_time: "获取当前时间",
-  get_leave_balance: "查询年假余额",
-  submit_leave: "提交请假",
+  search: "搜索",
+  execute_query: "执行查询",
+  list_tables: "列出数据表",
+  describe_table: "表结构",
+  sample_data: "采样数据",
 };
 
-/** OA 工具常用的参数键名映射（仅用于详情展示，未知键回退原样）。 */
+/** 工具常用的参数键名映射（仅用于详情展示，未知键回退原样）。 */
 const ARG_KEY_LABELS: Record<string, string> = {
-  days: "天数",
-  leaveType: "请假类型",
-  startDate: "开始日期",
-  endDate: "结束日期",
-  reason: "事由",
-  userId: "员工ID",
+  sql: "SQL",
+  table_name: "表名",
+  query: "查询词",
+  num_results: "结果数",
 };
 
 /**
@@ -47,6 +49,17 @@ export default function ToolSegment(props: {
       return Object.entries(p as Record<string, unknown>);
     }
     return [];
+  };
+
+  /** 探测 payload 是否是 SqlResult（columns 数组 + rows 二维数组）。 */
+  const payloadSqlResult = (): SqlResult | null => {
+    const p = t()?.payload;
+    if (p == null || typeof p !== "object" || Array.isArray(p)) return null;
+    const obj = p as Record<string, unknown>;
+    if (Array.isArray(obj.columns) && Array.isArray(obj.rows)) {
+      return obj as unknown as SqlResult;
+    }
+    return null;
   };
 
   const hasBody = () => {
@@ -158,24 +171,32 @@ export default function ToolSegment(props: {
             <div class="tool-seg__detail-line">{t()!.detail}</div>
           </Show>
 
-          {/* 结构化 payload：对象 → 键值对列表；其它 → JSON 字符串预览。 */}
+          {/* 结构化 payload：
+              - SqlResult（columns+rows）→ 虚拟滚动表格
+              - 普通对象 → 键值对列表
+              - 其它 → JSON 字符串预览 */}
           <Show when={t()?.payload != null}>
-            <Show
-              when={payloadEntries().length > 0}
-              fallback={
-                <pre class="tool-seg__payload-json">{JSON.stringify(t()?.payload, null, 2)}</pre>
-              }
-            >
-              <div class="tool-seg__payload">
-                <For each={payloadEntries()}>
-                  {([key, val]) => (
-                    <div class="tool-seg__payload-row">
-                      <span class="tool-seg__payload-key">{ARG_KEY_LABELS[key] ?? key}</span>
-                      <span class="tool-seg__payload-val">{formatVal(val)}</span>
-                    </div>
-                  )}
-                </For>
-              </div>
+            <Show when={payloadSqlResult()}>
+              {(sr) => <ResultTable result={sr()} compact />}
+            </Show>
+            <Show when={!payloadSqlResult()}>
+              <Show
+                when={payloadEntries().length > 0}
+                fallback={
+                  <pre class="tool-seg__payload-json">{JSON.stringify(t()?.payload, null, 2)}</pre>
+                }
+              >
+                <div class="tool-seg__payload">
+                  <For each={payloadEntries()}>
+                    {([key, val]) => (
+                      <div class="tool-seg__payload-row">
+                        <span class="tool-seg__payload-key">{ARG_KEY_LABELS[key] ?? key}</span>
+                        <span class="tool-seg__payload-val">{formatVal(val)}</span>
+                      </div>
+                    )}
+                  </For>
+                </div>
+              </Show>
             </Show>
           </Show>
 

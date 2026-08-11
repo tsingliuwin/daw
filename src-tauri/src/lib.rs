@@ -12,6 +12,7 @@
 mod agent;
 mod commands;
 mod db;
+mod duckdb;
 mod logging;
 mod model;
 mod skill;

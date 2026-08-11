@@ -22,6 +22,7 @@
 
 pub mod builtin;
 pub mod context;
+pub mod data_analysis;
 pub mod registry;
 pub mod search;
 
@@ -39,4 +40,25 @@ pub trait Skill: Send + Sync {
     fn name(&self) -> &str;
     /// 领域 preamble（注入 LLM，拼接在通用基座 preamble 之后）。
     fn preamble(&self) -> &str;
+}
+
+/// 任务场景。在任务创建时绑定（存 task.kind），决定 preamble、工具集、交互模式。
+/// runner 根据 scenario 编译期构造不同工具集（绕过 rig Tool 非 dyn-compatible 限制）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Scenario {
+    /// 通用对话（get_current_time + search）。
+    General,
+    /// 数据分析（get_current_time + execute_query / list_tables / describe_table / sample_data）。
+    DataAnalysis,
+}
+
+impl Scenario {
+    /// 从 task 的 kind 字段解析场景。
+    pub fn from_kind(kind: &str) -> Self {
+        if kind == "data_analysis" {
+            Scenario::DataAnalysis
+        } else {
+            Scenario::General
+        }
+    }
 }

@@ -1,7 +1,8 @@
-import { Index, Show, createSignal, onMount } from "solid-js";
+import { Index, Show, For, createSignal, onMount } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
 import { logError } from "../lib/logger";
 import { currentTheme, persistTheme, currentZoom, setCurrentZoom, type Theme } from "../lib/theme";
+import type { DataSourceConfig } from "../lib/types";
 import BrandFooter from "./BrandFooter";
 import Select from "./Select";
 
@@ -120,6 +121,22 @@ export default function SettingsPage(props: {
     if (key === "providers") {
       props.onProvidersChanged?.((updated.providers as ModelProvider[]) ?? []);
     }
+  };
+
+  // ── 数据源管理 helper ──
+  const dataSources = (): DataSourceConfig[] => (settings().dataSources as DataSourceConfig[]) ?? [];
+  const updateDataSources = (list: DataSourceConfig[]) => updateSetting("dataSources", list);
+  const addDataSource = () => {
+    updateDataSources([
+      ...dataSources(),
+      { id: `ds-${Date.now()}`, name: "", dbType: "postgres", host: "localhost", port: 5432, databaseName: "", username: "", password: "", sslMode: "disable" },
+    ]);
+  };
+  const updateDataSource = (index: number, patch: Partial<DataSourceConfig>) => {
+    updateDataSources(dataSources().map((ds, i) => (i === index ? { ...ds, ...patch } : ds)));
+  };
+  const removeDataSource = (index: number) => {
+    updateDataSources(dataSources().filter((_, i) => i !== index));
   };
 
   const updateProviderProperty = (providerId: string, property: keyof ModelProvider, value: unknown) => {
@@ -361,6 +378,48 @@ export default function SettingsPage(props: {
                   />
                 </div>
               </div>
+
+              {/* 数据源配置 */}
+              <div class="settings-section-head" style="margin-top: 20px;">
+                <h4 class="settings-section-title">数据源</h4>
+              </div>
+              <p class="settings-section-desc">配置数据分析任务可连接的数据库（Postgres / MySQL / SQLite）。配置后重启应用生效。</p>
+
+              <For each={(settings().dataSources as DataSourceConfig[]) ?? []} fallback={<div class="empty-hint">尚未配置数据源。</div>}>
+                {(ds, i) => (
+                  <div class="settings-row" style="flex-wrap: wrap; gap: 8px; align-items: center;">
+                    <input
+                      class="settings-input"
+                      style="flex: 1; min-width: 120px;"
+                      value={ds.name}
+                      placeholder="名称"
+                      onInput={(e) => updateDataSource(i(), { name: e.currentTarget.value })}
+                    />
+                    <select
+                      class="settings-select"
+                      style="width: auto;"
+                      value={ds.dbType}
+                      onChange={(e) => updateDataSource(i(), { dbType: e.currentTarget.value as DataSourceConfig["dbType"] })}
+                    >
+                      <option value="postgres">Postgres</option>
+                      <option value="mysql">MySQL</option>
+                      <option value="sqlite">SQLite</option>
+                    </select>
+                    <Show when={ds.dbType !== "sqlite"}>
+                      <input class="settings-input" style="flex: 1; min-width: 100px;" value={ds.host} placeholder="host" onInput={(e) => updateDataSource(i(), { host: e.currentTarget.value })} />
+                      <input class="settings-input" style="width: 70px;" type="number" value={ds.port} placeholder="port" onInput={(e) => updateDataSource(i(), { port: parseInt(e.currentTarget.value) || 0 })} />
+                      <input class="settings-input" style="flex: 1; min-width: 100px;" value={ds.databaseName} placeholder="database" onInput={(e) => updateDataSource(i(), { databaseName: e.currentTarget.value })} />
+                      <input class="settings-input" style="flex: 1; min-width: 80px;" value={ds.username} placeholder="user" onInput={(e) => updateDataSource(i(), { username: e.currentTarget.value })} />
+                      <input class="settings-input" style="flex: 1; min-width: 80px;" type="password" value={ds.password} placeholder="password" onInput={(e) => updateDataSource(i(), { password: e.currentTarget.value })} />
+                    </Show>
+                    <Show when={ds.dbType === "sqlite"}>
+                      <input class="settings-input" style="flex: 1; min-width: 200px;" value={ds.databaseName} placeholder="数据库文件路径（如 C:/data/my.db）" onInput={(e) => updateDataSource(i(), { databaseName: e.currentTarget.value })} />
+                    </Show>
+                    <button class="settings-add-btn" style="padding: 4px 10px;" title="删除" onClick={() => removeDataSource(i())}>✕</button>
+                  </div>
+                )}
+              </For>
+              <button class="settings-add-btn" style="margin-top: 8px;" onClick={addDataSource}>+ 添加数据源</button>
 
             </div>
           </Show>
