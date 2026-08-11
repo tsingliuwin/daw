@@ -52,13 +52,12 @@ impl Tool for ListTablesTool {
 
         let tables_res = tokio::task::spawn_blocking(move || -> Result<Vec<(String, String, String)>, String> {
             let guard = conn.blocking_lock();
-            // 列出所有非 internal 的表和视图（不限 schema，否则 postgres/mysql 不可见）。
-            // 过滤掉 DuckDB 内部 catalog（memory/system/temp），只保留 db_ 前缀的外部数据源。
+            // 用 information_schema.tables 查询（走标准 SQL，不触发 postgres_scanner
+            // 的内部元数据扫描，兼容性更好）。只保留 db_ 前缀的外部数据源。
             let sql = "
-                SELECT database_name, schema_name, table_name FROM duckdb_tables() WHERE NOT internal
-                UNION
-                SELECT database_name, schema_name, view_name AS table_name FROM duckdb_views() WHERE NOT internal
-                ORDER BY database_name, schema_name, table_name
+                SELECT table_catalog, table_schema, table_name FROM information_schema.tables
+                WHERE table_type IN ('BASE TABLE', 'VIEW')
+                ORDER BY table_catalog, table_schema, table_name
             ";
             let mut stmt = guard.prepare(sql).map_err(|e| e.to_string())?;
             let rows = stmt
@@ -67,7 +66,6 @@ impl Tool for ListTablesTool {
             let mut list = Vec::new();
             for r in rows {
                 let (catalog, schema, name) = r.map_err(|e| e.to_string())?;
-                // 只保留 ATTACH 的外部数据源（db_ 前缀）。
                 if catalog.starts_with("db_") {
                     list.push((catalog, schema, name));
                 }

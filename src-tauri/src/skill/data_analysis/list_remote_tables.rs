@@ -60,12 +60,13 @@ impl Tool for ListRemoteTablesTool {
         let catalog_clone = catalog.clone();
         let tables_res = tokio::task::spawn_blocking(move || -> Result<Vec<(String, String)>, String> {
             let guard = conn.blocking_lock();
+            // 用 information_schema.tables 查询（走标准 SQL，不触发 postgres_scanner
+            // 的内部元数据扫描，兼容性更好）。
             let sql = format!(
-                "SELECT schema_name, table_name FROM duckdb_tables() WHERE database_name = '{}' AND NOT internal
-                 UNION
-                 SELECT schema_name, view_name AS table_name FROM duckdb_views() WHERE database_name = '{}' AND NOT internal
-                 ORDER BY schema_name, table_name",
-                catalog_clone, catalog_clone
+                "SELECT table_schema, table_name FROM information_schema.tables
+                 WHERE table_catalog = '{}' AND table_type IN ('BASE TABLE', 'VIEW')
+                 ORDER BY table_schema, table_name",
+                catalog_clone
             );
             let mut stmt = guard.prepare(&sql).map_err(|e| e.to_string())?;
             let rows = stmt
