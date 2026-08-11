@@ -83,13 +83,16 @@ impl Tool for ListRemoteTablesTool {
             let guard = duckdb_conn.blocking_lock();
 
             if db_type == "postgres" {
-                // postgres 类型：用 postgres_query 下推查 information_schema，
-                // 传 catalog 别名（db_xxx）而非连接串——postgres_query 用已 ATTACH 的
-                // catalog 别名解析连接，不重新初始化 catalog（避免元数据扫描）。
-                // 内层 SQL 的单引号转义成 '' 避免和外层引号冲突。
-                let inner_sql = "SELECT table_schema, table_name FROM information_schema.tables \
-                    WHERE table_schema NOT IN (''pg_catalog'', ''information_schema'') \
-                    ORDER BY table_schema, table_name";
+                // postgres 类型：用 postgres_query 下推查 pg_catalog，
+                // 传 catalog 别名（db_xxx）而非连接串。
+                // 查 pg_class + pg_namespace 能列出所有表（含外表 relkind='f'），
+                // information_schema 在 Hologres 上可能不包含外表。
+                let inner_sql = "SELECT n.nspname AS table_schema, c.relname AS table_name \
+                    FROM pg_catalog.pg_class c \
+                    JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace \
+                    WHERE c.relkind IN (''r'', ''v'', ''m'', ''f'', ''p'') \
+                    AND n.nspname NOT IN (''pg_catalog'', ''information_schema'', ''pg_toast'') \
+                    ORDER BY n.nspname, c.relname";
                 let sql = format!(
                     "SELECT * FROM postgres_query('{}', '{}')",
                     catalog, inner_sql
