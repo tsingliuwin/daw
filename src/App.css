@@ -7858,19 +7858,19 @@ input[type="number"] {
   flex: 0 0 160px; padding: 6px 12px;
   font-family: var(--font-mono, monospace); font-size: 12px;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-  color: rgba(255, 255, 255, 0.75);
+  color: var(--text-primary, #e0e0e0);
   border-right: 1px solid rgba(125, 125, 125, 0.06);
   align-self: center;
   user-select: text;
 }
 .head-cell {
-  color: rgba(255, 255, 255, 0.85);
+  color: var(--text-primary, #e0e0e0);
   font-weight: 600;
   padding: 8px 12px;
 }
 .row-idx {
   flex: 0 0 54px; width: 54px;
-  color: rgba(255, 255, 255, 0.3); font-size: 11px;
+  color: var(--text-dim, rgba(255, 255, 255, 0.3)); font-size: 11px;
   text-align: center;
 }
 .resizer {
