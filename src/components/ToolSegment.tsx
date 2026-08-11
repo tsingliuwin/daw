@@ -66,11 +66,13 @@ export default function ToolSegment(props: {
   const hasBody = () => {
     const s = t();
     if (!s) return false;
+    // args 只有在非空对象时才算有内容（空 {} 不算）。
+    const hasArgs = s.args && typeof s.args === "object" && Object.keys(s.args as object).length > 0;
     return !!(
       s.status === "awaiting" || // awaiting: 始终展开，展示 detail + 确认按钮
       s.detail ||
       s.payload != null ||
-      s.args ||
+      hasArgs ||
       s.result
     );
   };
