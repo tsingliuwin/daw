@@ -50,47 +50,25 @@ impl Tool for ListTablesTool {
             }
         };
 
-        let tables_res = tokio::task::spawn_blocking(move || -> Result<Vec<(String, String, String)>, String> {
+        let tables_res = tokio::task::spawn_blocking(move || -> Result<Vec<String>, String> {
             let guard = conn.blocking_lock();
-            // 先查出所有 ATTACH 的外部数据源 catalog（db_ 前缀），
-            // 再逐个 USE + SHOW TABLES 列出表（走 DuckDB 原生命令，
-            // 不触发 postgres 扩展的元数据扫描，兼容 Hologres 等）。
-            let catalogs: Vec<String> = guard
-                .prepare("SELECT DISTINCT database_name FROM duckdb_databases() WHERE database_name LIKE 'db_%'")
-                .map_err(|e| e.to_string())?
+            // 只列出本地 catalog（已注册的视图 + 本地表）。
+            // 不枚举远程 db_ catalog（避免触发 postgres 扩展的元数据扫描）。
+            // 远程表通过 list_remote_tables 发现 + register_table 注册后才会出现在这里。
+            let sql = "
+                SELECT name FROM (SELECT table_name AS name FROM duckdb_tables() WHERE database_name = 'memory' AND schema_name = 'main' AND NOT internal
+                UNION
+                SELECT view_name AS name FROM duckdb_views() WHERE database_name = 'memory' AND schema_name = 'main' AND NOT internal)
+                ORDER BY name
+            ";
+            let mut stmt = guard.prepare(sql).map_err(|e| e.to_string())?;
+            let rows = stmt
                 .query_map([], |r| r.get::<_, String>(0))
-                .map_err(|e| e.to_string())?
-                .filter_map(|r| r.ok())
-                .collect();
-
+                .map_err(|e| e.to_string())?;
             let mut list = Vec::new();
-            for catalog in &catalogs {
-                if let Err(e) = guard.execute_batch(&format!("USE {}", catalog)) {
-                    tracing::warn!(category = "query", "USE {} 失败: {}", catalog, e);
-                    continue;
-                }
-                match guard.prepare("SHOW TABLES") {
-                    Ok(mut stmt) => {
-                        if let Ok(rows) = stmt.query_map([], |r| {
-                            let name: String = r.get(0)?;
-                            let parts: Vec<&str> = name.splitn(2, '.').collect();
-                            let schema = if parts.len() == 2 { parts[0].to_string() } else { "main".to_string() };
-                            let table = if parts.len() == 2 { parts[1].to_string() } else { parts[0].to_string() };
-                            Ok((schema, table))
-                        }) {
-                            for r in rows.flatten() {
-                                list.push((catalog.clone(), r.0, r.1));
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        tracing::warn!(category = "query", "SHOW TABLES in {} 失败: {}", catalog, e);
-                    }
-                }
+            for r in rows {
+                list.push(r.map_err(|e| e.to_string())?);
             }
-            // 切回默认 catalog。
-            let _ = guard.execute_batch("USE memory");
-            list.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)).then(a.2.cmp(&b.2)));
             Ok(list)
         })
         .await
@@ -100,20 +78,16 @@ impl Tool for ListTablesTool {
         let elapsed = start.elapsed().as_millis() as u64;
         match tables_res {
             Ok(tables) => {
-                // 列出每个表的三段式全限定名（catalog.schema.table）。
-                let full_names: Vec<String> = tables.iter()
-                    .map(|(catalog, schema, name)| format!("{catalog}.{schema}.{name}"))
-                    .collect();
-                let summary = if full_names.is_empty() {
-                    "当前没有找到任何表。请在设置中配置并启用数据源。".to_string()
+                let summary = if tables.is_empty() {
+                    "当前没有已注册的表。请先调用 list_connections 和 list_remote_tables 发现并注册表。".to_string()
                 } else {
-                    format!("探测到 {} 张表: {}", full_names.len(), full_names.join(", "))
+                    format!("已注册 {} 个表/视图: {}", tables.len(), tables.join(", "))
                 };
                 emit_tool_result(
                     &self.window, &self.task_id, &call_id, "ok",
                     summary, None, None, Some(elapsed), None,
                 );
-                Ok(format!("当前可用的数据库表列表为: {}", full_names.join("; ")))
+                Ok(format!("当前已注册的表/视图: {}", tables.join("; ")))
             }
             Err(err) => {
                 emit_tool_result(

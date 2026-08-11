@@ -560,6 +560,12 @@ pub fn list_workspace_db_connections(ws_path: &str) -> Result<Vec<DataSourceConf
     Ok(out)
 }
 
+/// 按名称查工作区已 link 的单个数据源。
+pub fn get_workspace_db_connection_by_name(ws_path: &str, name: &str) -> Result<Option<DataSourceConfig>, String> {
+    let conns = list_workspace_db_connections(ws_path)?;
+    Ok(conns.into_iter().find(|c| c.name == name))
+}
+
 pub fn link_workspace_db_connection(ws_path: &str, conn_id: &str) -> Result<(), String> {
     let conn = get_db_conn()?;
     conn.execute(

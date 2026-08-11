@@ -4,7 +4,7 @@ use rig_core::{completion::ToolDefinition, tool::Tool};
 
 use super::super::super::agent::error::ToolError;
 use super::super::super::agent::events::{emit_tool_call, emit_tool_result, next_tool_id};
-use super::super::super::duckdb::attach::workspace_attach_alias;
+use super::super::super::duckdb::attach::{build_pg_conn_str, workspace_attach_alias};
 use super::super::super::state::AppState;
 
 #[derive(Deserialize, Serialize)]
@@ -46,15 +46,12 @@ impl Tool for RegisterTableTool {
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
         let conn_name = args.connection_name.trim();
         let table_name = args.table_name.trim();
-        // 本地视图名：优先用户指定，否则 v_{table 最后一段}。
         let local = args.local_name.as_deref().map(|s| s.trim()).filter(|s| !s.is_empty());
         let local_name = local.map(|s| s.to_string()).unwrap_or_else(|| {
-            // table_name 可能是 schema.table，取最后一段。
             let short = table_name.rsplit('.').next().unwrap_or(table_name);
             format!("v_{short}")
         });
 
-        // 校验名称合法性。
         for part in [&local_name, conn_name, table_name] {
             if part.is_empty() || part.contains('"') || part.contains('\0') {
                 return Err(ToolError(format!("非法名称: {part:?}")));
@@ -69,10 +66,29 @@ impl Tool for RegisterTableTool {
         }));
 
         let start = std::time::Instant::now();
-        let catalog = workspace_attach_alias(conn_name);
-        let remote_full = format!("{catalog}.{table_name}");
 
-        let conn = match &self.app_state.duckdb {
+        // 从 SQLite 查连接信息。
+        let ws_path = self.app_state.workspace_path.lock().await.clone();
+        let conn_record = {
+            let ws_path = ws_path.clone();
+            let name = conn_name.to_string();
+            tokio::task::spawn_blocking(move || {
+                crate::db::get_workspace_db_connection_by_name(&ws_path, &name)
+            }).await
+            .map_err(|e| ToolError(format!("线程生成失败: {e}")))?
+            .map_err(|e| ToolError(e))?
+        };
+
+        let conn_record = match conn_record {
+            Some(c) => c,
+            None => {
+                let msg = format!("数据源 {} 不存在或未启用。", conn_name);
+                emit_tool_result(&self.window, &self.task_id, &call_id, "error", msg.clone(), None, None, Some(0), None);
+                return Err(ToolError(msg));
+            }
+        };
+
+        let duckdb_conn = match &self.app_state.duckdb {
             Some(c) => c.clone(),
             None => {
                 let msg = "DuckDB 引擎未初始化。".to_string();
@@ -81,16 +97,57 @@ impl Tool for RegisterTableTool {
             }
         };
 
+        let catalog = workspace_attach_alias(conn_name);
+        let db_type = conn_record.db_type.clone();
         let local_name_clone = local_name.clone();
-        let remote_full_clone = remote_full.clone();
-        let result = tokio::task::spawn_blocking(move || -> Result<(), String> {
-            let guard = conn.blocking_lock();
-            // CREATE OR REPLACE 视图（覆盖同名旧视图）。
+        let table_name_clone = table_name.to_string();
+        let catalog_clone = catalog.clone();
+
+        let result = tokio::task::spawn_blocking(move || -> Result<String, String> {
+            let guard = duckdb_conn.blocking_lock();
+
+            // 构造视图的远程引用路径。
+            let remote_ref = if db_type == "postgres" {
+                // postgres 类型：先检测是不是 foreign table（Hologres MaxCompute 外表）。
+                // foreign table 不能通过 catalog.schema.table 访问（postgres_scanner
+                // 无法 catalog 外表），需要用 postgres_query 下推。
+                let conn_str = build_pg_conn_str(&conn_record);
+
+                // 用 postgres_query 下推查 pg_catalog.pg_class 判断 relkind。
+                let parts: Vec<&str> = table_name_clone.splitn(2, '.').collect();
+                let (schema, tbl) = if parts.len() == 2 { (parts[0], parts[1]) } else { ("public", parts[0]) };
+                let check_sql = format!(
+                    "SELECT count(*) FROM pg_catalog.pg_class c \
+                     JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace \
+                     WHERE c.relkind = 'f' AND n.nspname = '{}' AND c.relname = '{}'",
+                    schema.replace('\'', "''"), tbl.replace('\'', "''")
+                );
+                let check_escaped = check_sql.replace('\'', "''");
+                let sql = format!("SELECT * FROM postgres_query('{}', '{}')", conn_str.replace('\'', "''"), check_escaped);
+
+                let is_foreign: i64 = guard.query_row(&sql, [], |r| r.get(0)).unwrap_or(0);
+
+                if is_foreign > 0 {
+                    // foreign table：用 postgres_query 下推创建视图。
+                    let inner = format!("SELECT * FROM \"{}\".\"{}\"", schema, tbl);
+                    let inner_escaped = inner.replace('\'', "''");
+                    format!("postgres_query('{}', '{}')", conn_str.replace('\'', "''"), inner_escaped)
+                } else {
+                    // 普通表：走 catalog 引用。
+                    format!("{}.{}", catalog_clone, table_name_clone)
+                }
+            } else {
+                // mysql/sqlite：走 catalog 引用。
+                format!("{}.{}", catalog_clone, table_name_clone)
+            };
+
+            // CREATE OR REPLACE 视图。
             let sql = format!(
                 "CREATE OR REPLACE VIEW \"{}\" AS SELECT * FROM {};",
-                local_name_clone, remote_full_clone
+                local_name_clone, remote_ref
             );
-            guard.execute_batch(&sql).map_err(|e| e.to_string())
+            guard.execute_batch(&sql).map_err(|e| e.to_string())?;
+            Ok(remote_ref)
         })
         .await
         .map_err(|e| ToolError(format!("线程生成失败: {e}")))?
@@ -98,8 +155,8 @@ impl Tool for RegisterTableTool {
 
         let elapsed = start.elapsed().as_millis() as u64;
         match result {
-            Ok(()) => {
-                let summary = format!("已注册视图 {} → {}", local_name, remote_full);
+            Ok(remote_ref) => {
+                let summary = format!("已注册视图 {} -> {}", local_name, remote_ref);
                 emit_tool_result(&self.window, &self.task_id, &call_id, "ok", summary.clone(), None, None, Some(elapsed), None);
                 Ok(format!("{summary}。后续可用 {} 作为表名查询。", local_name))
             }
