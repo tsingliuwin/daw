@@ -52,13 +52,13 @@ impl Tool for ListTablesTool {
 
         let tables_res = tokio::task::spawn_blocking(move || -> Result<Vec<String>, String> {
             let guard = conn.blocking_lock();
-            // 查当前 catalog 的表和视图（已注册的视图 + 本地表）。
-            // 用 information_schema.tables 限制 table_catalog 排除 db_ 前缀的远程 catalog，
-            // 避免触发 postgres 扩展的元数据扫描。
+            // 用 duckdb_tables() WHERE database_name='analytics' 谓词下推，
+            // 只查本地 catalog 的元数据，不枚举 ATTACH 的远程 catalog（Hologres）。
+            // analytics 是 Connection::open("analytics.duckdb") 的默认 catalog 名。
             let sql = "
-                SELECT table_name FROM information_schema.tables
-                WHERE table_schema = 'main'
-                AND table_catalog NOT LIKE 'db_%'
+                SELECT table_name FROM duckdb_tables() WHERE database_name = 'analytics' AND schema_name = 'main' AND NOT internal
+                UNION
+                SELECT view_name AS table_name FROM duckdb_views() WHERE database_name = 'analytics' AND schema_name = 'main' AND NOT internal
                 ORDER BY table_name
             ";
             let mut stmt = guard.prepare(sql).map_err(|e| e.to_string())?;
