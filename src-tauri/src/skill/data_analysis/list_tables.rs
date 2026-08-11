@@ -52,24 +52,40 @@ impl Tool for ListTablesTool {
 
         let tables_res = tokio::task::spawn_blocking(move || -> Result<Vec<(String, String, String)>, String> {
             let guard = conn.blocking_lock();
-            // 用 information_schema.tables 查询（走标准 SQL，不触发 postgres_scanner
-            // 的内部元数据扫描，兼容性更好）。只保留 db_ 前缀的外部数据源。
-            let sql = "
-                SELECT table_catalog, table_schema, table_name FROM information_schema.tables
-                WHERE table_type IN ('BASE TABLE', 'VIEW')
-                ORDER BY table_catalog, table_schema, table_name
-            ";
-            let mut stmt = guard.prepare(sql).map_err(|e| e.to_string())?;
-            let rows = stmt
-                .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?)))
-                .map_err(|e| e.to_string())?;
+            // 先查出所有 ATTACH 的外部数据源 catalog（db_ 前缀），
+            // 再逐个 SHOW ALL TABLES 列出表（不走 information_schema，
+            // 不触发 postgres 扩展的元数据扫描，兼容 Hologres 等）。
+            let catalogs: Vec<String> = guard
+                .prepare("SELECT DISTINCT database_name FROM duckdb_databases() WHERE database_name LIKE 'db_%'")
+                .map_err(|e| e.to_string())?
+                .query_map([], |r| r.get::<_, String>(0))
+                .map_err(|e| e.to_string())?
+                .filter_map(|r| r.ok())
+                .collect();
+
             let mut list = Vec::new();
-            for r in rows {
-                let (catalog, schema, name) = r.map_err(|e| e.to_string())?;
-                if catalog.starts_with("db_") {
-                    list.push((catalog, schema, name));
+            for catalog in &catalogs {
+                let sql = format!("SHOW ALL TABLES IN {}", catalog);
+                match guard.prepare(&sql) {
+                    Ok(mut stmt) => {
+                        if let Ok(rows) = stmt.query_map([], |r| {
+                            let name: String = r.get(0)?;
+                            let parts: Vec<&str> = name.splitn(2, '.').collect();
+                            let schema = if parts.len() == 2 { parts[0].to_string() } else { "main".to_string() };
+                            let table = if parts.len() == 2 { parts[1].to_string() } else { parts[0].to_string() };
+                            Ok((schema, table))
+                        }) {
+                            for r in rows.flatten() {
+                                list.push((catalog.clone(), r.0, r.1));
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!(category = "query", "SHOW ALL TABLES IN {} 失败: {}", catalog, e);
+                    }
                 }
             }
+            list.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)).then(a.2.cmp(&b.2)));
             Ok(list)
         })
         .await

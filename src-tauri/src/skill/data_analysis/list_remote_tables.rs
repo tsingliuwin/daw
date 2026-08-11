@@ -60,17 +60,20 @@ impl Tool for ListRemoteTablesTool {
         let catalog_clone = catalog.clone();
         let tables_res = tokio::task::spawn_blocking(move || -> Result<Vec<(String, String)>, String> {
             let guard = conn.blocking_lock();
-            // 用 information_schema.tables 查询（走标准 SQL，不触发 postgres_scanner
-            // 的内部元数据扫描，兼容性更好）。
-            let sql = format!(
-                "SELECT table_schema, table_name FROM information_schema.tables
-                 WHERE table_catalog = '{}' AND table_type IN ('BASE TABLE', 'VIEW')
-                 ORDER BY table_schema, table_name",
-                catalog_clone
-            );
+            // 用 SHOW TABLES 命令列出 catalog 下的表（不走 information_schema，
+            // 不触发 postgres 扩展的内部元数据扫描，兼容 Hologres 等非标准 PG）。
+            // SHOW TABLES 返回 schema.table 两列。
+            let sql = format!("SHOW ALL TABLES IN {}", catalog_clone);
             let mut stmt = guard.prepare(&sql).map_err(|e| e.to_string())?;
             let rows = stmt
-                .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+                .query_map([], |r| {
+                    let name: String = r.get(0)?;
+                    // SHOW ALL TABLES 返回 "schema.table" 格式
+                    let parts: Vec<&str> = name.splitn(2, '.').collect();
+                    let schema = if parts.len() == 2 { parts[0].to_string() } else { "main".to_string() };
+                    let table = if parts.len() == 2 { parts[1].to_string() } else { parts[0].to_string() };
+                    Ok((schema, table))
+                })
                 .map_err(|e| e.to_string())?;
             let mut list = Vec::new();
             for r in rows {
