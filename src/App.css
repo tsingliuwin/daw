@@ -8040,78 +8040,74 @@ input[type="number"] {
 /* ─── ResultTable（SQL 查询结果表格）────────────────────────────────────── */
 
 .result-wrap {
-  border: 1px solid rgba(125, 125, 125, 0.15);
+  margin: 6px 0 0;
+  border: 1px solid rgba(125, 125, 125, 0.12);
   border-radius: 6px;
   overflow: hidden;
-  margin-top: 8px;
   background: rgba(255, 255, 255, 0.01);
 }
-
-.result-wrap--compact { max-height: 240px; }
-
-.result-empty {
-  padding: 16px; text-align: center;
-  color: rgba(255, 255, 255, 0.4); font-size: 13px;
+.result-wrap--compact {
+  margin: 6px 0 0;
+  max-height: 320px;
 }
-
+.result-empty {
+  margin: auto; color: rgba(255,255,255,0.4); font-style: italic; font-size: 12px;
+}
 .result-truncated {
   padding: 6px 10px; font-size: 11px; color: var(--accent-orange, #f59e0b);
-  text-align: center; border-top: 1px solid rgba(125, 125, 125, 0.1);
+  text-align: center; border-top: 1px solid rgba(125,125,125,0.1);
 }
 
 .result-scroll {
   overflow: auto; position: relative;
-  scrollbar-width: thin; scrollbar-color: rgba(125, 125, 125, 0.35) transparent;
+  background-color: rgba(255,255,255,0.01);
+  scrollbar-width: thin; scrollbar-color: rgba(125,125,125,0.35) transparent;
 }
 .result-scroll::-webkit-scrollbar { width: 8px; height: 8px; }
 .result-scroll::-webkit-scrollbar-track { background: transparent; }
-.result-scroll::-webkit-scrollbar-thumb { background: rgba(125, 125, 125, 0.3); border-radius: 4px; }
-.result-scroll::-webkit-scrollbar-thumb:hover { background: rgba(125, 125, 125, 0.5); }
+.result-scroll::-webkit-scrollbar-thumb { background: rgba(125,125,125,0.3); border-radius: 4px; }
+.result-scroll::-webkit-scrollbar-thumb:hover { background: rgba(125,125,125,0.5); }
+.result-scroll--compact { max-height: 288px; }
 
-/* 原生 table */
-.result-table {
-  width: 100%; border-collapse: collapse; font-size: 12.5px; table-layout: auto;
-}
-.result-table thead {
-  position: sticky; top: 0; z-index: 1;
+.result-head {
+  display: flex; position: sticky; top: 0; z-index: 2;
   background: rgba(125, 125, 125, 0.15);
-}
-.result-table th {
-  padding: 6px 10px; text-align: left; font-weight: 600;
-  color: rgba(255, 255, 255, 0.85); white-space: nowrap;
-  overflow: hidden; text-overflow: ellipsis; max-width: 200px;
   border-bottom: 1px solid rgba(125, 125, 125, 0.2);
+  min-width: max-content;
 }
-.result-table td {
-  padding: 4px 10px; color: rgba(255, 255, 255, 0.7);
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 200px;
+.result-row {
+  display: flex;
   border-bottom: 1px solid rgba(125, 125, 125, 0.06);
+  transition: background-color 0.1s ease;
+}
+.result-row:hover { background: rgba(255, 255, 255, 0.04); }
+.result-cell {
+  flex: 0 0 160px; padding: 6px 12px;
+  font-family: var(--font-mono, monospace); font-size: 12px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  color: rgba(255, 255, 255, 0.75);
+  border-right: 1px solid rgba(125, 125, 125, 0.06);
+  align-self: center;
   user-select: text;
 }
-.result-table .result-virtual-row:hover td { background: rgba(255, 255, 255, 0.04); }
-.result-idx-col {
-  width: 40px; text-align: center;
+.head-cell {
+  color: rgba(255, 255, 255, 0.85);
+  font-weight: 600;
+  padding: 8px 12px;
+}
+.row-idx {
+  flex: 0 0 54px; width: 54px;
   color: rgba(255, 255, 255, 0.3); font-size: 11px;
+  text-align: center;
 }
-.result-th-type {
-  font-size: 10px; color: rgba(255, 255, 255, 0.3);
-  font-family: monospace; margin-left: 4px; font-weight: 400;
+.resizer {
+  position: absolute; right: -4px; top: 0; bottom: 0;
+  width: 8px; cursor: col-resize; user-select: none; touch-action: none; z-index: 10;
 }
+.resizer.isResizing { background: rgba(99, 102, 241, 0.3); }
+body.is-resizing-column, body.is-resizing-column * { cursor: col-resize !important; }
+.result-scroll.is-resizing { cursor: col-resize; }
 
-/* ─── Chart segment（ECharts 图表）────────────────────────────────────── */
-
-.chart-ref-missing {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 1px 8px;
-  border-radius: 6px;
-  font-size: 12px;
-  color: var(--text-dim, #9aa0a6);
-  background: rgba(125, 125, 125, 0.12);
-  border: 1px solid rgba(125, 125, 125, 0.18);
-  vertical-align: middle;
-}
 .chart-ref-badge { font-size: 0.85em; opacity: 0.7; }
 
 .chart-seg {

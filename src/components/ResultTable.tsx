@@ -1,15 +1,14 @@
-import { Show, For, createSignal } from "solid-js";
+import { Show, For, createSignal, createMemo, createEffect, onCleanup } from "solid-js";
 import { createVirtualizer } from "@tanstack/solid-virtual";
 import { createSolidTable, flexRender, getCoreRowModel } from "@tanstack/solid-table";
 import type { ColumnDef } from "@tanstack/table-core";
 import type { SqlResult, JsonValue } from "../lib/types";
 
-const ROW_H = 32;
+const ROW_IDX_W = 54;
+const CELL_W = 160;
 
-/**
- * SQL 查询结果表格。用 @tanstack/solid-table table model + @tanstack/solid-virtual
- * 虚拟滚动 + 原生 <table> 元素。compact 模式用于内嵌聊天工具段。
- */
+type Row = JsonValue[];
+
 export default function ResultTable(props: {
   result: SqlResult | null;
   compact?: boolean;
@@ -25,101 +24,162 @@ export default function ResultTable(props: {
         when={validResult()}
         fallback={<div class="result-empty">无数据</div>}
       >
-        {(result) => <VirtualTable result={result()} compact={props.compact} />}
+        {(result) => <VirtualGrid result={result()} compact={props.compact} />}
       </Show>
     </div>
   );
 }
 
-function VirtualTable(props: { result: SqlResult; compact?: boolean }) {
-  let scrollRef: HTMLDivElement | undefined;
-  const [viewportH] = createSignal(props.compact ? 220 : 400);
-
-  const columns: ColumnDef<JsonValue[], unknown>[] = props.result.columns.map((col, i) => ({
-    id: col,
-    accessorFn: (row: JsonValue[]) => row[i],
-    header: col,
-    cell: (info: any) => fmtCell(info.getValue()),
-  }));
-
-  const rows = props.result.rows;
-
-  const table = createSolidTable({
-    get data() { return rows; },
-    columns,
-    getCoreRowModel: getCoreRowModel(),
-  });
-
-  const virtualizer = createVirtualizer({
-    get count() { return rows.length; },
-    getScrollElement: () => scrollRef ?? null,
-    estimateSize: () => ROW_H,
-    overscan: 8,
-  });
-
-  const items = () => virtualizer.getVirtualItems();
-  const totalH = () => virtualizer.getTotalSize();
-
-  return (
-    <div
-      class="result-scroll"
-      ref={scrollRef}
-      style={{ height: `${Math.min(viewportH(), totalH() + 40)}px` }}
-    >
-      <table class="result-table">
-        <thead>
-          <For each={table.getHeaderGroups()}>
-            {(hg) => (
-              <tr>
-                <th class="result-idx-col">#</th>
-                <For each={hg.headers}>
-                  {(header) => (
-                    <Show when={!header.isPlaceholder}>
-                      <th>
-                        {flexRender(header.column.columnDef.header, header.getContext())}
-                        <Show when={props.result.columnTypes[header.column.getIndex()]}>
-                          <span class="result-th-type">{props.result.columnTypes[header.column.getIndex()]}</span>
-                        </Show>
-                      </th>
-                    </Show>
-                  )}
-                </For>
-              </tr>
-            )}
-          </For>
-        </thead>
-        <tbody style={{ display: "block", height: `${totalH()}px`, position: "relative" }}>
-          <For each={items()}>
-            {(vi) => {
-              const row = table.getRowModel().rows[vi.index];
-              if (!row) return null;
-              return (
-                <tr
-                  class="result-virtual-row"
-                  style={{ transform: `translateY(${vi.start}px)`, height: `${vi.size}px`, position: "absolute", top: 0, left: 0, width: "100%" }}
-                >
-                  <td class="result-idx-col">{vi.index + 1}</td>
-                  <For each={row.getVisibleCells()}>
-                    {(cell) => (
-                      <td>{flexRender(cell.column.columnDef.cell, cell.getContext())}</td>
-                    )}
-                  </For>
-                </tr>
-              );
-            }}
-          </For>
-        </tbody>
-      </table>
-      <Show when={props.result.truncated}>
-        <div class="result-truncated">结果已截断，仅显示前 {props.result.rowCount} 行</div>
-      </Show>
-    </div>
-  );
-}
-
-function fmtCell(v: unknown): string {
+function renderCell(v: unknown): string {
   if (v == null) return "";
   if (typeof v === "string") return v;
   if (typeof v === "number" || typeof v === "boolean") return String(v);
   try { return JSON.stringify(v); } catch { return String(v); }
+}
+
+function VirtualGrid(props: { result: SqlResult; compact?: boolean }) {
+  let scrollRef: HTMLDivElement | undefined;
+  const [columnSizing, setColumnSizing] = createSignal<Record<string, number>>({});
+
+  const columns = createMemo<ColumnDef<Row, unknown>[]>(() => {
+    return props.result.columns.map(
+      (name, i) =>
+        ({
+          id: name,
+          accessorFn: (row: Row) => row[i],
+          header: () => name,
+          cell: (info: any) => renderCell(info.getValue()),
+          size: CELL_W,
+          minSize: 60,
+          maxSize: 600,
+        }) as ColumnDef<Row, unknown>,
+    );
+  });
+
+  const data = createMemo<Row[]>(() => props.result.rows ?? []);
+
+  const table = createSolidTable({
+    get data() { return data(); },
+    get columns() { return columns(); },
+    state: {
+      get columnSizing() { return columnSizing(); },
+    },
+    onColumnSizingChange: setColumnSizing,
+    columnResizeMode: "onChange",
+    getCoreRowModel: getCoreRowModel(),
+  });
+
+  const tableWidth = createMemo(() => ROW_IDX_W + table.getCenterTotalSize());
+
+  const rowVirtualizer = createVirtualizer({
+    get count() { return table.getRowModel().rows.length; },
+    getScrollElement: () => scrollRef ?? null,
+    estimateSize: () => (props.compact ? 24 : 28),
+    overscan: props.compact ? 8 : 12,
+  });
+
+  createEffect(() => {
+    props.result;
+    scrollRef?.scrollTo({ top: 0, left: 0 });
+  });
+
+  const isResizing = createMemo(() => !!table.getState().columnSizingInfo.isResizingColumn);
+
+  createEffect(() => {
+    if (isResizing()) {
+      document.body.classList.add("is-resizing-column");
+    } else {
+      document.body.classList.remove("is-resizing-column");
+    }
+  });
+
+  onCleanup(() => {
+    document.body.classList.remove("is-resizing-column");
+  });
+
+  return (
+    <div
+      class="result-scroll"
+      classList={{
+        "result-scroll--compact": !!props.compact,
+        "is-resizing": isResizing(),
+      }}
+      ref={scrollRef}
+    >
+      {/* Sticky header */}
+      <For each={table.getHeaderGroups()}>
+        {(headerGroup) => (
+          <div class="result-head" role="row" style={{ width: `${tableWidth()}px` }}>
+            <div class="result-cell row-idx">#</div>
+            <For each={headerGroup.headers}>
+              {(header) => (
+                <div
+                  class="result-cell head-cell"
+                  style={{
+                    flex: `0 0 ${header.column.getSize()}px`,
+                    width: `${header.column.getSize()}px`,
+                    position: "relative",
+                  }}
+                >
+                  {flexRender(header.column.columnDef.header, header.getContext())}
+                  <Show when={header.column.getCanResize()}>
+                    <div
+                      onMouseDown={header.getResizeHandler()}
+                      onTouchStart={header.getResizeHandler()}
+                      class="resizer"
+                      classList={{ isResizing: header.column.getIsResizing() }}
+                    />
+                  </Show>
+                </div>
+              )}
+            </For>
+          </div>
+        )}
+      </For>
+      {/* Virtualized body */}
+      <div
+        style={{
+          height: `${rowVirtualizer.getTotalSize()}px`,
+          position: "relative",
+          width: `${tableWidth()}px`,
+        }}
+      >
+        <For each={rowVirtualizer.getVirtualItems()}>
+          {(vRow) => {
+            const row = table.getRowModel().rows[vRow.index];
+            if (!row) return null;
+            return (
+              <div
+                class="result-row"
+                role="row"
+                style={{
+                  position: "absolute",
+                  top: "0",
+                  left: "0",
+                  width: `${tableWidth()}px`,
+                  height: `${vRow.size}px`,
+                  transform: `translateY(${vRow.start}px)`,
+                }}
+              >
+                <div class="result-cell row-idx">{vRow.index + 1}</div>
+                <For each={row.getVisibleCells()}>
+                  {(cell) => (
+                    <div
+                      class="result-cell"
+                      style={{
+                        flex: `0 0 ${cell.column.getSize()}px`,
+                        width: `${cell.column.getSize()}px`,
+                      }}
+                    >
+                      {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                    </div>
+                  )}
+                </For>
+              </div>
+            );
+          }}
+        </For>
+      </div>
+    </div>
+  );
 }
