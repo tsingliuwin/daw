@@ -4,13 +4,11 @@ import { createSolidTable, flexRender, getCoreRowModel } from "@tanstack/solid-t
 import type { ColumnDef } from "@tanstack/table-core";
 import type { SqlResult, JsonValue } from "../lib/types";
 
-const ROW_IDX_W = 48;
-const CELL_W = 160;
-const ROW_H = 28;
+const ROW_H = 32;
 
 /**
- * SQL 查询结果表格。用 @tanstack/solid-table 的 table model + @tanstack/solid-virtual
- * 做虚拟滚动。compact 模式用于内嵌聊天工具段（限高内滚）。
+ * SQL 查询结果表格。用 @tanstack/solid-table table model + @tanstack/solid-virtual
+ * 虚拟滚动 + 原生 <table> 元素。compact 模式用于内嵌聊天工具段。
  */
 export default function ResultTable(props: {
   result: SqlResult | null;
@@ -27,46 +25,31 @@ export default function ResultTable(props: {
         when={validResult()}
         fallback={<div class="result-empty">无数据</div>}
       >
-        {(result) => <VirtualGrid result={result()} compact={props.compact} />}
+        {(result) => <VirtualTable result={result()} compact={props.compact} />}
       </Show>
     </div>
   );
 }
 
-function VirtualGrid(props: { result: SqlResult; compact?: boolean }) {
+function VirtualTable(props: { result: SqlResult; compact?: boolean }) {
   let scrollRef: HTMLDivElement | undefined;
   const [viewportH] = createSignal(props.compact ? 220 : 400);
 
-  // 从 SqlResult 构造 ColumnDef 数组。用 accessorFn 按列索引取值。
   const columns: ColumnDef<JsonValue[], unknown>[] = props.result.columns.map((col, i) => ({
     id: col,
     accessorFn: (row: JsonValue[]) => row[i],
-    header: () => (
-      <div class="result-th" style={{ width: `${CELL_W}px` }}>
-        <span class="result-th-name" title={col}>{col}</span>
-        <Show when={props.result.columnTypes[i]}>
-          <span class="result-th-type">{props.result.columnTypes[i]}</span>
-        </Show>
-      </div>
-    ),
-    cell: (info: any) => (
-      <div class="result-cell" style={{ width: `${CELL_W}px` }}>
-        {fmtCell(info.getValue())}
-      </div>
-    ),
+    header: col,
+    cell: (info: any) => fmtCell(info.getValue()),
   }));
 
-  // 构造行数据。
   const rows = props.result.rows;
 
-  // table model。
   const table = createSolidTable({
     get data() { return rows; },
     columns,
     getCoreRowModel: getCoreRowModel(),
   });
 
-  // 虚拟滚动。
   const virtualizer = createVirtualizer({
     get count() { return rows.length; },
     getScrollElement: () => scrollRef ?? null,
@@ -81,48 +64,52 @@ function VirtualGrid(props: { result: SqlResult; compact?: boolean }) {
     <div
       class="result-scroll"
       ref={scrollRef}
-      style={{ height: `${Math.min(viewportH(), totalH() + 36)}px` }}
+      style={{ height: `${Math.min(viewportH(), totalH() + 40)}px` }}
     >
-      {/* 固定表头 */}
-      <div class="result-thead" style={{ "padding-left": `${ROW_IDX_W}px` }}>
-        <For each={table.getHeaderGroups()}>
-          {(hg) => (
-            <For each={hg.headers}>
-              {(header) => (
-                <Show when={!header.isPlaceholder}>
-                  {flexRender(header.column.columnDef.header, header.getContext())}
-                </Show>
-              )}
-            </For>
-          )}
-        </For>
-      </div>
-      {/* 虚拟行 */}
-      <div style={{ height: `${totalH()}px`, position: "relative" }}>
-        <For each={items()}>
-          {(vi) => {
-            const row = table.getRowModel().rows[vi.index];
-            if (!row) return null;
-            return (
-              <div
-                class="result-row"
-                style={{
-                  transform: `translateY(${vi.start}px)`,
-                  height: `${vi.size}px`,
-                  "padding-left": `${ROW_IDX_W}px`,
-                }}
-              >
-                <div class="result-row-idx" style={{ width: `${ROW_IDX_W}px`, left: `0` }}>
-                  {vi.index + 1}
-                </div>
-                <For each={row.getVisibleCells()}>
-                  {(cell) => flexRender(cell.column.columnDef.cell, cell.getContext())}
+      <table class="result-table">
+        <thead>
+          <For each={table.getHeaderGroups()}>
+            {(hg) => (
+              <tr>
+                <th class="result-idx-col">#</th>
+                <For each={hg.headers}>
+                  {(header) => (
+                    <Show when={!header.isPlaceholder}>
+                      <th>
+                        {flexRender(header.column.columnDef.header, header.getContext())}
+                        <Show when={props.result.columnTypes[header.column.getIndex()]}>
+                          <span class="result-th-type">{props.result.columnTypes[header.column.getIndex()]}</span>
+                        </Show>
+                      </th>
+                    </Show>
+                  )}
                 </For>
-              </div>
-            );
-          }}
-        </For>
-      </div>
+              </tr>
+            )}
+          </For>
+        </thead>
+        <tbody style={{ display: "block", height: `${totalH()}px`, position: "relative" }}>
+          <For each={items()}>
+            {(vi) => {
+              const row = table.getRowModel().rows[vi.index];
+              if (!row) return null;
+              return (
+                <tr
+                  class="result-virtual-row"
+                  style={{ transform: `translateY(${vi.start}px)`, height: `${vi.size}px`, position: "absolute", top: 0, left: 0, width: "100%" }}
+                >
+                  <td class="result-idx-col">{vi.index + 1}</td>
+                  <For each={row.getVisibleCells()}>
+                    {(cell) => (
+                      <td>{flexRender(cell.column.columnDef.cell, cell.getContext())}</td>
+                    )}
+                  </For>
+                </tr>
+              );
+            }}
+          </For>
+        </tbody>
+      </table>
       <Show when={props.result.truncated}>
         <div class="result-truncated">结果已截断，仅显示前 {props.result.rowCount} 行</div>
       </Show>

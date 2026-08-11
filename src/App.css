@@ -8040,119 +8040,62 @@ input[type="number"] {
 /* ─── ResultTable（SQL 查询结果表格）────────────────────────────────────── */
 
 .result-wrap {
-  border: 1px solid var(--border-color, rgba(255, 255, 255, 0.08));
+  border: 1px solid rgba(125, 125, 125, 0.15);
   border-radius: 6px;
   overflow: hidden;
   margin-top: 8px;
-  background: var(--bg-elevated, rgba(255, 255, 255, 0.02));
+  background: rgba(255, 255, 255, 0.01);
 }
 
-.result-wrap--compact {
-  max-height: 240px;
-}
+.result-wrap--compact { max-height: 240px; }
 
 .result-empty {
-  padding: 16px;
-  text-align: center;
-  color: var(--text-muted, rgba(255, 255, 255, 0.4));
-  font-size: 13px;
-}
-
-.result-scroll {
-  overflow: auto;
-  position: relative;
-  scrollbar-width: thin;
-  scrollbar-color: rgba(125, 125, 125, 0.35) transparent;
-}
-/* WebKit 滚动条 */
-.result-scroll::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
-}
-.result-scroll::-webkit-scrollbar-track {
-  background: transparent;
-}
-.result-scroll::-webkit-scrollbar-thumb {
-  background: rgba(125, 125, 125, 0.3);
-  border-radius: 4px;
-}
-.result-scroll::-webkit-scrollbar-thumb:hover {
-  background: rgba(125, 125, 125, 0.5);
-}
-
-.result-thead {
-  display: flex;
-  position: sticky;
-  top: 0;
-  z-index: 1;
-  background: rgba(125, 125, 125, 0.12);
-  border-bottom: 1px solid rgba(125, 125, 125, 0.2);
-}
-
-.result-th {
-  padding: 6px 10px;
-  display: flex;
-  flex-direction: column;
-  border-right: 1px solid var(--border-color, rgba(255, 255, 255, 0.05));
-  overflow: hidden;
-}
-
-.result-th-name {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text-primary, #e0e0e0);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.result-th-type {
-  font-size: 10px;
-  color: var(--text-muted, rgba(255, 255, 255, 0.35));
-  font-family: monospace;
-}
-
-.result-row {
-  display: flex;
-  align-items: center;
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;
-  border-bottom: 1px solid var(--border-color, rgba(255, 255, 255, 0.04));
-}
-
-.result-row:hover {
-  background: var(--bg-hover, rgba(255, 255, 255, 0.03));
-}
-
-.result-row-idx {
-  position: absolute;
-  text-align: center;
-  font-size: 11px;
-  color: var(--text-muted, rgba(255, 255, 255, 0.3));
-  line-height: 28px;
-  background: var(--bg-elevated-2, rgba(255, 255, 255, 0.03));
-  border-right: 1px solid var(--border-color, rgba(255, 255, 255, 0.05));
-}
-
-.result-cell {
-  padding: 0 10px;
-  font-size: 12px;
-  line-height: 28px;
-  color: var(--text-secondary, rgba(255, 255, 255, 0.75));
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  border-right: 1px solid var(--border-color, rgba(255, 255, 255, 0.04));
+  padding: 16px; text-align: center;
+  color: rgba(255, 255, 255, 0.4); font-size: 13px;
 }
 
 .result-truncated {
-  padding: 6px 10px;
-  font-size: 11px;
-  color: var(--accent-orange, #f59e0b);
-  text-align: center;
-  border-top: 1px solid var(--border-color, rgba(255, 255, 255, 0.08));
+  padding: 6px 10px; font-size: 11px; color: var(--accent-orange, #f59e0b);
+  text-align: center; border-top: 1px solid rgba(125, 125, 125, 0.1);
+}
+
+.result-scroll {
+  overflow: auto; position: relative;
+  scrollbar-width: thin; scrollbar-color: rgba(125, 125, 125, 0.35) transparent;
+}
+.result-scroll::-webkit-scrollbar { width: 8px; height: 8px; }
+.result-scroll::-webkit-scrollbar-track { background: transparent; }
+.result-scroll::-webkit-scrollbar-thumb { background: rgba(125, 125, 125, 0.3); border-radius: 4px; }
+.result-scroll::-webkit-scrollbar-thumb:hover { background: rgba(125, 125, 125, 0.5); }
+
+/* 原生 table */
+.result-table {
+  width: 100%; border-collapse: collapse; font-size: 12.5px; table-layout: auto;
+}
+.result-table thead {
+  position: sticky; top: 0; z-index: 1;
+  background: rgba(125, 125, 125, 0.15);
+}
+.result-table th {
+  padding: 6px 10px; text-align: left; font-weight: 600;
+  color: rgba(255, 255, 255, 0.85); white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis; max-width: 200px;
+  border-bottom: 1px solid rgba(125, 125, 125, 0.2);
+}
+.result-table td {
+  padding: 4px 10px; color: rgba(255, 255, 255, 0.7);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 200px;
+  border-bottom: 1px solid rgba(125, 125, 125, 0.06);
+  user-select: text;
+}
+.result-table .result-virtual-row:hover td { background: rgba(255, 255, 255, 0.04); }
+.result-idx-col {
+  width: 40px; text-align: center;
+  color: rgba(255, 255, 255, 0.3); font-size: 11px;
+}
+.result-th-type {
+  font-size: 10px; color: rgba(255, 255, 255, 0.3);
+  font-family: monospace; margin-left: 4px; font-weight: 400;
 }
 
 /* ─── Chart segment（ECharts 图表）────────────────────────────────────── */
