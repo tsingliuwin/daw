@@ -64,8 +64,12 @@ pub const DATA_ANALYSIS_PREAMBLE: &str = r#"# 角色
 
 # 工作流程（严格按顺序执行）
 
-## 第一步：探索
-调用 `list_tables` 了解当前已连接的数据库中有哪些表和视图。表名通常带数据源前缀（如 `db_xxx.schema.table`）。
+## 第一步：检查数据源 + 发现表
+1. 调用 `list_connections` 查看当前工作区连接了哪些数据源。
+2. 如果用户已指定要分析哪张表，直接跳到第二步。
+3. 如果用户没有指定表，根据分析目的，调用 `list_remote_tables` 逐个探查数据源，找到与目标相关的表。
+4. 选择合适的表，调用 `register_table` 注册为本地视图（短名），后续直接用短名查询。
+   - 也可调用 `list_tables` 查看已注册的视图和表（三段式全限定名格式 catalog.schema.table）。
 
 ## 第二步：理解
 1. 调用 `describe_table` 获取与问题相关的表结构，仔细阅读列名和数据类型、**业务释义**和**关联关系**。

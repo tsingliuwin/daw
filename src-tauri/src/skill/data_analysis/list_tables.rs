@@ -50,21 +50,27 @@ impl Tool for ListTablesTool {
             }
         };
 
-        let tables_res = tokio::task::spawn_blocking(move || -> Result<Vec<(String, String)>, String> {
+        let tables_res = tokio::task::spawn_blocking(move || -> Result<Vec<(String, String, String)>, String> {
             let guard = conn.blocking_lock();
+            // 列出所有非 internal 的表和视图（不限 schema，否则 postgres/mysql 不可见）。
+            // 过滤掉 DuckDB 内部 catalog（memory/system/temp），只保留 db_ 前缀的外部数据源。
             let sql = "
-                SELECT table_catalog, table_name FROM duckdb_tables() WHERE schema_name = 'main' AND NOT internal
+                SELECT table_catalog, schema_name, table_name FROM duckdb_tables() WHERE NOT internal
                 UNION
-                SELECT table_catalog, view_name AS table_name FROM duckdb_views() WHERE schema_name = 'main' AND NOT internal
-                ORDER BY table_catalog, table_name
+                SELECT table_catalog, schema_name, view_name AS table_name FROM duckdb_views() WHERE NOT internal
+                ORDER BY table_catalog, schema_name, table_name
             ";
             let mut stmt = guard.prepare(sql).map_err(|e| e.to_string())?;
             let rows = stmt
-                .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+                .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?)))
                 .map_err(|e| e.to_string())?;
             let mut list = Vec::new();
             for r in rows {
-                list.push(r.map_err(|e| e.to_string())?);
+                let (catalog, schema, name) = r.map_err(|e| e.to_string())?;
+                // 只保留 ATTACH 的外部数据源（db_ 前缀）。
+                if catalog.starts_with("db_") {
+                    list.push((catalog, schema, name));
+                }
             }
             Ok(list)
         })
@@ -75,12 +81,12 @@ impl Tool for ListTablesTool {
         let elapsed = start.elapsed().as_millis() as u64;
         match tables_res {
             Ok(tables) => {
-                // 列出每个表的全限定名（catalog.table）。
+                // 列出每个表的三段式全限定名（catalog.schema.table）。
                 let full_names: Vec<String> = tables.iter()
-                    .map(|(catalog, name)| format!("{}.{}", catalog, name))
+                    .map(|(catalog, schema, name)| format!("{catalog}.{schema}.{name}"))
                     .collect();
                 let summary = if full_names.is_empty() {
-                    "当前没有找到任何表。请在设置中配置数据源。".to_string()
+                    "当前没有找到任何表。请在设置中配置并启用数据源。".to_string()
                 } else {
                     format!("探测到 {} 张表: {}", full_names.len(), full_names.join(", "))
                 };

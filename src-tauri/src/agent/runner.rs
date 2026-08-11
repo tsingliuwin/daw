@@ -20,7 +20,7 @@ use super::events::{
 };
 use super::wire::{ChatMessageDto, Segment};
 use crate::skill::builtin::GetCurrentTimeTool;
-use crate::skill::data_analysis::{create_view::CreateViewTool, describe_table::DescribeTableTool, drop_object::DropObjectTool, execute_query::ExecuteQueryTool, list_tables::ListTablesTool, load_okf_block::LoadOkfBlockTool, render_chart::RenderChartTool, sample_data::SampleDataTool, search_okf_recipes::SearchOkfRecipesTool, write_okf_block::WriteOkfBlockTool};
+use crate::skill::data_analysis::{create_view::CreateViewTool, describe_table::DescribeTableTool, drop_object::DropObjectTool, execute_query::ExecuteQueryTool, list_connections::ListConnectionsTool, list_remote_tables::ListRemoteTablesTool, list_tables::ListTablesTool, load_okf_block::LoadOkfBlockTool, register_table::RegisterTableTool, render_chart::RenderChartTool, sample_data::SampleDataTool, search_okf_recipes::SearchOkfRecipesTool, write_okf_block::WriteOkfBlockTool};
 use crate::skill::search::SearchTool;
 use crate::skill::Scenario;
 use crate::state::AppState;
@@ -350,7 +350,7 @@ pub(crate) async fn run_agent_task_stream(
             },
         )
     };
-    let build_data_tools = || -> (GetCurrentTimeTool, ExecuteQueryTool, ListTablesTool, DescribeTableTool, SampleDataTool, RenderChartTool, LoadOkfBlockTool, WriteOkfBlockTool, SearchOkfRecipesTool, CreateViewTool, DropObjectTool) {
+    let build_data_tools = || -> (GetCurrentTimeTool, ExecuteQueryTool, ListTablesTool, DescribeTableTool, SampleDataTool, RenderChartTool, LoadOkfBlockTool, WriteOkfBlockTool, SearchOkfRecipesTool, CreateViewTool, DropObjectTool, ListConnectionsTool, ListRemoteTablesTool, RegisterTableTool) {
         (
             GetCurrentTimeTool { app_state: app_state.clone(), task_id: task_id.clone(), window: window.clone() },
             ExecuteQueryTool { app_state: app_state.clone(), task_id: task_id.clone(), window: window.clone() },
@@ -363,6 +363,9 @@ pub(crate) async fn run_agent_task_stream(
             SearchOkfRecipesTool { app_state: app_state.clone(), task_id: task_id.clone(), window: window.clone() },
             CreateViewTool { app_state: app_state.clone(), task_id: task_id.clone(), window: window.clone() },
             DropObjectTool { app_state: app_state.clone(), task_id: task_id.clone(), window: window.clone() },
+            ListConnectionsTool { app_state: app_state.clone(), task_id: task_id.clone(), window: window.clone() },
+            ListRemoteTablesTool { app_state: app_state.clone(), task_id: task_id.clone(), window: window.clone() },
+            RegisterTableTool { app_state: app_state.clone(), task_id: task_id.clone(), window: window.clone() },
         )
     };
 
@@ -374,7 +377,7 @@ pub(crate) async fn run_agent_task_stream(
             vec![t.definition(String::new()).await, s.definition(String::new()).await]
         }
         Scenario::DataAnalysis => {
-            let (t, e, l, d, sd, rc, ol, ow, os, cv, doi) = build_data_tools();
+            let (t, e, l, d, sd, rc, ol, ow, os, cv, doi, lc, lrt, rt) = build_data_tools();
             vec![
                 t.definition(String::new()).await,
                 e.definition(String::new()).await,
@@ -387,6 +390,9 @@ pub(crate) async fn run_agent_task_stream(
                 os.definition(String::new()).await,
                 cv.definition(String::new()).await,
                 doi.definition(String::new()).await,
+                lc.definition(String::new()).await,
+                lrt.definition(String::new()).await,
+                rt.definition(String::new()).await,
             ]
         }
     };
@@ -498,7 +504,7 @@ pub(crate) async fn run_agent_task_stream(
                 }
             }
             Scenario::DataAnalysis => {
-                let (time_tool, exec_tool, list_tool, desc_tool, sample_tool, chart_tool, okf_load_tool, okf_write_tool, okf_search_tool, cv_tool, drop_tool) = build_data_tools();
+                let (time_tool, exec_tool, list_tool, desc_tool, sample_tool, chart_tool, okf_load_tool, okf_write_tool, okf_search_tool, cv_tool, drop_tool, lc_tool, lrt_tool, rt_tool) = build_data_tools();
                 if format == "openai" {
                     let base_url = sanitize_endpoint(&provider.endpoint);
                     let client: rig_core::providers::openai::Client = rig_core::providers::openai::Client::builder()
@@ -521,7 +527,10 @@ pub(crate) async fn run_agent_task_stream(
                         .tool(okf_write_tool)
                         .tool(okf_search_tool)
                         .tool(cv_tool)
-                        .tool(drop_tool);
+                        .tool(drop_tool)
+                        .tool(lc_tool)
+                        .tool(lrt_tool)
+                        .tool(rt_tool);
                     if model_id.starts_with("o1") || model_id.starts_with("o3") {
                         agent_builder = agent_builder.additional_params(json!({"reasoning_effort": effort}));
                     }
@@ -552,7 +561,10 @@ pub(crate) async fn run_agent_task_stream(
                         .tool(okf_write_tool)
                         .tool(okf_search_tool)
                         .tool(cv_tool)
-                        .tool(drop_tool);
+                        .tool(drop_tool)
+                        .tool(lc_tool)
+                        .tool(lrt_tool)
+                        .tool(rt_tool);
                     if model_id.starts_with("o1") || model_id.starts_with("o3") {
                         agent_builder = agent_builder.additional_params(json!({"reasoning_effort": effort}));
                     }
@@ -585,6 +597,9 @@ pub(crate) async fn run_agent_task_stream(
                         .tool(okf_search_tool)
                         .tool(cv_tool)
                         .tool(drop_tool)
+                        .tool(lc_tool)
+                        .tool(lrt_tool)
+                        .tool(rt_tool)
                         .build();
                     let stream = agent
                         .stream_chat(prompt.clone(), rig_history.clone())
