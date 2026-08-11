@@ -7834,6 +7834,7 @@ input[type="number"] {
   overflow: auto; position: relative;
   background-color: rgba(255,255,255,0.01);
   scrollbar-width: thin; scrollbar-color: rgba(125,125,125,0.35) transparent;
+  max-height: 400px;
 }
 .result-scroll::-webkit-scrollbar { width: 8px; height: 8px; }
 .result-scroll::-webkit-scrollbar-track { background: transparent; }
