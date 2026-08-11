@@ -56,9 +56,9 @@ impl Tool for ListTablesTool {
             // 只查本地 catalog 的元数据，不枚举 ATTACH 的远程 catalog（Hologres）。
             // analytics 是 Connection::open("analytics.duckdb") 的默认 catalog 名。
             let sql = "
-                SELECT table_name FROM duckdb_tables() WHERE database_name = 'analytics' AND schema_name = 'main' AND NOT internal
+                SELECT table_name FROM duckdb_tables() WHERE database_name = 'lake' AND schema_name = 'main' AND NOT internal
                 UNION
-                SELECT view_name AS table_name FROM duckdb_views() WHERE database_name = 'analytics' AND schema_name = 'main' AND NOT internal
+                SELECT view_name AS table_name FROM duckdb_views() WHERE database_name = 'lake' AND schema_name = 'main' AND NOT internal
                 ORDER BY table_name
             ";
             let mut stmt = guard.prepare(sql).map_err(|e| e.to_string())?;

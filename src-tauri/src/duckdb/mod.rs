@@ -6,6 +6,7 @@
 
 pub mod attach;
 pub mod execute;
+pub mod lake;
 
 use crate::model::DataSourceConfig;
 

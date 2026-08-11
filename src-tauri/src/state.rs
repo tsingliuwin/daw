@@ -76,14 +76,9 @@ fn open_duckdb() -> (
     Option<Arc<Mutex<duckdb::Connection>>>,
     Option<Arc<std::sync::Mutex<Arc<duckdb::InterruptHandle>>>>,
 ) {
-    // 用 DuckDB 文件持久化（视图定义存在文件里，重启自动恢复）。
-    // 文件不存在时 Connection::open 自动创建。
-    let db_path = match crate::db::get_aioa_dir() {
+    let ws_dir = match crate::db::get_aioa_dir() {
         Ok(mut p) => {
             p.push("DefaultProject");
-            p.push("analytics.duckdb");
-            // 确保目录存在
-            let _ = std::fs::create_dir_all(p.parent().unwrap_or(std::path::Path::new(".")));
             p
         }
         Err(e) => {
@@ -91,15 +86,27 @@ fn open_duckdb() -> (
             return (None, None);
         }
     };
-    let conn = match duckdb::Connection::open(&db_path) {
+
+    // in-memory 会话 + DuckLake 作为持久层（视图/表定义存 lake.sqlite，重启恢复）。
+    let conn = match duckdb::Connection::open_in_memory() {
         Ok(c) => c,
         Err(e) => {
             tracing::error!(category = "system", "DuckDB 打开失败: {e}");
             return (None, None);
         }
     };
-    // 限制内存使用。
-    let _ = conn.execute_batch("PRAGMA memory_limit='4GB';");
+    // threads=1: DuckLake 的 SQLite catalog 是单写者，threads>1 会 "database is locked"。
+    let _ = conn.execute_batch("PRAGMA memory_limit='4GB';\nPRAGMA threads=1;");
+
+    // 加载 ducklake + sqlite 扩展，ATTACH lake 为默认 catalog。
+    if let Err(e) = crate::duckdb::lake::ensure_ducklake_loaded(&conn) {
+        tracing::error!(category = "system", "ducklake 加载失败: {e}");
+        return (None, None);
+    }
+    if let Err(e) = crate::duckdb::lake::attach_workspace_lake(&conn, &ws_dir) {
+        tracing::error!(category = "system", "DuckLake ATTACH 失败: {e}");
+        return (None, None);
+    }
 
     // 从 SQLite 查 DefaultProject 工作区已 link 的数据源并 ATTACH。
     // 如果 db_connections 表为空但 settings.json 有 dataSources（P1 遗留），
