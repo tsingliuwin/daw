@@ -1,4 +1,4 @@
-import { Show, createMemo, createSignal } from "solid-js";
+import { For, Show, createMemo, createSignal } from "solid-js";
 import type { ModelOption, Workspace } from "../lib/types";
 import { logoSrc } from "../lib/theme";
 import Select from "./Select";
@@ -6,6 +6,12 @@ import ComposerActions from "./ComposerActions";
 
 /** 工作区下拉末尾「选择新文件夹...」项的占位 value（不会是合法路径）。 */
 const NEW_FOLDER_VALUE = "__new_folder__";
+
+/** 场景配置（可扩展：未来加"设计创意"等）。 */
+const SCENARIOS = [
+  { id: "task", label: "日常办公", subtitle: "用对话完成任务——院校分析、信息整理、文案撰写，随时待命。", placeholder: "试试：「帮我分析一下今年的招生趋势」或「告诉我最近五年的考研报考人数」" },
+  { id: "data_analysis", label: "数据分析", subtitle: "查询数据库、生成图表、沉淀业务知识--用对话驱动数据分析。", placeholder: "试试：「查看有哪些数据表」或「统计各院系今年的人数并画个柱状图」" },
+] as const;
 
 /**
  * 首页/欢迎页：居中的大输入框。
@@ -38,6 +44,10 @@ export default function HomeView(props: {
   onSelectPriority: (priority: string) => void;
   selectedConfirm: string;
   onSelectConfirm: (mode: string) => void;
+  /** 当前选中的场景（决定 agent 工具集和 preamble）。 */
+  selectedScenario: "task" | "data_analysis";
+  /** 切换场景。 */
+  onSelectScenario: (s: "task" | "data_analysis") => void;
   /** 用户在首页输入并发送第一条消息。App 负责新建 task + 触发 agent。 */
   onSubmit: (prompt: string) => void;
   /** 打开设置页（模型未配置时的引导按钮）。 */
@@ -83,10 +93,23 @@ export default function HomeView(props: {
       <div class="home-view__inner">
         {/* 品牌 */}
         <div class="home-view__brand">
-          <img src={logoSrc()} alt="AIOA 工作台" class="home-view__logo" />
-          <h1 class="home-view__title">AIOA 工作台</h1>
+          <img src={logoSrc()} alt="研途工作台" class="home-view__logo" />
+          <h1 class="home-view__title">研途工作台</h1>
+          <div class="home-view__scenario-group">
+            <For each={SCENARIOS}>
+              {(s) => (
+                <button
+                  class="home-view__scenario-btn"
+                  classList={{ active: props.selectedScenario === s.id }}
+                  onClick={() => props.onSelectScenario(s.id)}
+                >
+                  {s.label}
+                </button>
+              )}
+            </For>
+          </div>
           <p class="home-view__subtitle">
-            用任务完成请假、报销、审批——不必再翻系统、填表单。
+            {SCENARIOS.find((s) => s.id === props.selectedScenario)?.subtitle ?? SCENARIOS[0].subtitle}
           </p>
         </div>
 
@@ -96,7 +119,7 @@ export default function HomeView(props: {
             class="home-composer__input"
             placeholder={
               hasModels()
-                ? "试试：「帮我查一下年假余额」或「我下周三请两天假，家里有事」"
+                ? (SCENARIOS.find((s) => s.id === props.selectedScenario)?.placeholder ?? SCENARIOS[0].placeholder)
                 : "请先在设置中配置大模型服务商…"
             }
             value={input()}

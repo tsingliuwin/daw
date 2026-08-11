@@ -13,8 +13,8 @@
     "windows": [
       {
         "label": "main",
-        "title": "AIOA 工作台",
-        "width": 1024,
+        "title": "研途工作台",
+        "width": 1200,
         "height": 768,
         "decorations": true,
         "dragDropEnabled": true,

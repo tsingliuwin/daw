@@ -371,11 +371,10 @@ export default function App() {
     setActiveTaskId(id);
   }
 
-  // 「新建任务」按钮：只跳回首页（HomeView），不创建空任务。真正建任务发生在
-  // submitTaskFromHome 中（用户敲下第一条消息后）。LeftNav 顶部按钮与工作区 header
-  // 「+」都走这里。scenario 参数用于区分"新建数据分析任务"。
-  function goToHome(scenario: "task" | "data_analysis" = "task") {
-    setPendingScenario(scenario);
+  // 「新建任务」按钮：跳回首页（HomeView），不创建空任务。场景选择在首页
+  // 通过圆角按钮完成。进入首页时重置场景为"日常办公"，避免上次选择残留。
+  function goToHome() {
+    setPendingScenario("task");
     setActiveTaskId(null);
   }
 
@@ -588,8 +587,7 @@ export default function App() {
           onToggleWorkspace={toggleWorkspace}
           onSelectTask={selectTask}
           onDeleteTask={deleteTask}
-          onNewTask={() => goToHome("task")}
-          onNewAnalysisTask={() => goToHome("data_analysis")}
+          onNewTask={() => goToHome()}
           busy={busy()}
           leftOpen={leftOpen()}
           onToggleLeft={() => setLeftOpen(!leftOpen())}
@@ -628,6 +626,8 @@ export default function App() {
                 onSelectPriority={setSelectedPriority}
                 selectedConfirm={selectedConfirm()}
                 onSelectConfirm={setSelectedConfirm}
+                selectedScenario={pendingScenario()}
+                onSelectScenario={setPendingScenario}
                 onSubmit={submitTaskFromHome}
                 onOpenSettings={() => setSettingsOpen(true)}
               />

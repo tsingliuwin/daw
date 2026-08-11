@@ -7779,6 +7779,41 @@ input[type="number"] {
   line-height: 1.5;
 }
 
+/* 场景切换按钮组 */
+.home-view__scenario-group {
+  display: flex;
+  margin-top: 4px;
+  border-radius: var(--radius-pill, 9999px);
+  background: rgba(125, 125, 125, 0.1);
+  overflow: hidden;
+}
+.home-view__scenario-btn {
+  padding: 8px 28px;
+  border: none;
+  border-radius: var(--radius-pill, 9999px);
+  background: transparent;
+  color: var(--text-secondary, rgba(255,255,255,0.6));
+  font-size: 14.5px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.home-view__scenario-btn:hover:not(.active) {
+  background: rgba(125, 125, 125, 0.18);
+}
+.home-view__scenario-btn.active {
+  background: #6366F1;
+  color: #ffffff;
+}
+.home-view__scenario-btn.active:hover {
+  background: #6366F1;
+  color: #ffffff;
+}
+:root.light .home-view__scenario-btn.active,
+:root.light .home-view__scenario-btn.active:hover {
+  background: #494FF4;
+}
+
 /* 居中输入框 */
 .home-composer {
   width: 100%;
