@@ -425,3 +425,39 @@ fn current_timestamp() -> String {
     }
     format!("{year:04}-01-01T00:00:00Z")
 }
+
+/// Delete an OKF file for a given object name (checks tables/views/sources).
+pub fn delete_okf_file(ws_path: &str, name: &str) {
+    let okf_dir = get_okf_dir(ws_path);
+    for dir in &["tables", "views", "sources"] {
+        let path = okf_dir.join(dir).join(format!("{name}.md"));
+        if path.exists() {
+            let _ = fs::remove_file(&path);
+            run_git_commit(&okf_dir, &path, &format!("Delete OKF: {dir}/{name}"));
+        }
+    }
+}
+
+/// Write a view definition OKF skeleton (SQL + dependency hint).
+pub fn write_view_okf(ws_path: &str, view_name: &str, select_sql: &str) -> Result<(), String> {
+    let okf_dir = ensure_okf_dirs(ws_path)?;
+    let file_path = okf_dir.join("views").join(format!("{view_name}.md"));
+    if file_path.exists() {
+        return Ok(()); // 已存在不覆盖
+    }
+    let body = format!(
+        "---\n\
+        type: DuckDB View\n\
+        title: {view_name} 逻辑视图\n\
+        timestamp: {ts}\n\
+        ---\n\n\
+        # 视图 SQL 定义\n\
+        ```sql\n\
+        {select_sql}\n\
+        ```\n",
+        ts = current_timestamp(),
+        select_sql = select_sql,
+    );
+    fs::write(&file_path, body).map_err(|e| format!("写入 view OKF 失败: {e}"))?;
+    Ok(())
+}

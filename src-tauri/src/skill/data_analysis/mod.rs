@@ -4,7 +4,9 @@
 //! sample_data）。DDL 加工工具（create_table / create_view / drop_object）
 //! 和 OKF 知识库工具留待后续阶段。
 
+pub mod create_view;
 pub mod describe_table;
+pub mod drop_object;
 pub mod execute_query;
 pub mod list_tables;
 pub mod load_okf_block;

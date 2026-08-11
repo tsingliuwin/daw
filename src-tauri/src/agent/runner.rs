@@ -20,7 +20,7 @@ use super::events::{
 };
 use super::wire::{ChatMessageDto, Segment};
 use crate::skill::builtin::GetCurrentTimeTool;
-use crate::skill::data_analysis::{describe_table::DescribeTableTool, execute_query::ExecuteQueryTool, list_tables::ListTablesTool, load_okf_block::LoadOkfBlockTool, render_chart::RenderChartTool, sample_data::SampleDataTool, search_okf_recipes::SearchOkfRecipesTool, write_okf_block::WriteOkfBlockTool};
+use crate::skill::data_analysis::{create_view::CreateViewTool, describe_table::DescribeTableTool, drop_object::DropObjectTool, execute_query::ExecuteQueryTool, list_tables::ListTablesTool, load_okf_block::LoadOkfBlockTool, render_chart::RenderChartTool, sample_data::SampleDataTool, search_okf_recipes::SearchOkfRecipesTool, write_okf_block::WriteOkfBlockTool};
 use crate::skill::search::SearchTool;
 use crate::skill::Scenario;
 use crate::state::AppState;
@@ -350,53 +350,19 @@ pub(crate) async fn run_agent_task_stream(
             },
         )
     };
-    let build_data_tools = || -> (GetCurrentTimeTool, ExecuteQueryTool, ListTablesTool, DescribeTableTool, SampleDataTool, RenderChartTool, LoadOkfBlockTool, WriteOkfBlockTool, SearchOkfRecipesTool) {
+    let build_data_tools = || -> (GetCurrentTimeTool, ExecuteQueryTool, ListTablesTool, DescribeTableTool, SampleDataTool, RenderChartTool, LoadOkfBlockTool, WriteOkfBlockTool, SearchOkfRecipesTool, CreateViewTool, DropObjectTool) {
         (
-            GetCurrentTimeTool {
-                app_state: app_state.clone(),
-                task_id: task_id.clone(),
-                window: window.clone(),
-            },
-            ExecuteQueryTool {
-                app_state: app_state.clone(),
-                task_id: task_id.clone(),
-                window: window.clone(),
-            },
-            ListTablesTool {
-                app_state: app_state.clone(),
-                task_id: task_id.clone(),
-                window: window.clone(),
-            },
-            DescribeTableTool {
-                app_state: app_state.clone(),
-                task_id: task_id.clone(),
-                window: window.clone(),
-            },
-            SampleDataTool {
-                app_state: app_state.clone(),
-                task_id: task_id.clone(),
-                window: window.clone(),
-            },
-            RenderChartTool {
-                app_state: app_state.clone(),
-                task_id: task_id.clone(),
-                window: window.clone(),
-            },
-            LoadOkfBlockTool {
-                app_state: app_state.clone(),
-                task_id: task_id.clone(),
-                window: window.clone(),
-            },
-            WriteOkfBlockTool {
-                app_state: app_state.clone(),
-                task_id: task_id.clone(),
-                window: window.clone(),
-            },
-            SearchOkfRecipesTool {
-                app_state: app_state.clone(),
-                task_id: task_id.clone(),
-                window: window.clone(),
-            },
+            GetCurrentTimeTool { app_state: app_state.clone(), task_id: task_id.clone(), window: window.clone() },
+            ExecuteQueryTool { app_state: app_state.clone(), task_id: task_id.clone(), window: window.clone() },
+            ListTablesTool { app_state: app_state.clone(), task_id: task_id.clone(), window: window.clone() },
+            DescribeTableTool { app_state: app_state.clone(), task_id: task_id.clone(), window: window.clone() },
+            SampleDataTool { app_state: app_state.clone(), task_id: task_id.clone(), window: window.clone() },
+            RenderChartTool { app_state: app_state.clone(), task_id: task_id.clone(), window: window.clone() },
+            LoadOkfBlockTool { app_state: app_state.clone(), task_id: task_id.clone(), window: window.clone() },
+            WriteOkfBlockTool { app_state: app_state.clone(), task_id: task_id.clone(), window: window.clone() },
+            SearchOkfRecipesTool { app_state: app_state.clone(), task_id: task_id.clone(), window: window.clone() },
+            CreateViewTool { app_state: app_state.clone(), task_id: task_id.clone(), window: window.clone() },
+            DropObjectTool { app_state: app_state.clone(), task_id: task_id.clone(), window: window.clone() },
         )
     };
 
@@ -408,7 +374,7 @@ pub(crate) async fn run_agent_task_stream(
             vec![t.definition(String::new()).await, s.definition(String::new()).await]
         }
         Scenario::DataAnalysis => {
-            let (t, e, l, d, sd, rc, ol, ow, os) = build_data_tools();
+            let (t, e, l, d, sd, rc, ol, ow, os, cv, doi) = build_data_tools();
             vec![
                 t.definition(String::new()).await,
                 e.definition(String::new()).await,
@@ -419,6 +385,8 @@ pub(crate) async fn run_agent_task_stream(
                 ol.definition(String::new()).await,
                 ow.definition(String::new()).await,
                 os.definition(String::new()).await,
+                cv.definition(String::new()).await,
+                doi.definition(String::new()).await,
             ]
         }
     };
@@ -530,7 +498,7 @@ pub(crate) async fn run_agent_task_stream(
                 }
             }
             Scenario::DataAnalysis => {
-                let (time_tool, exec_tool, list_tool, desc_tool, sample_tool, chart_tool, okf_load_tool, okf_write_tool, okf_search_tool) = build_data_tools();
+                let (time_tool, exec_tool, list_tool, desc_tool, sample_tool, chart_tool, okf_load_tool, okf_write_tool, okf_search_tool, cv_tool, drop_tool) = build_data_tools();
                 if format == "openai" {
                     let base_url = sanitize_endpoint(&provider.endpoint);
                     let client: rig_core::providers::openai::Client = rig_core::providers::openai::Client::builder()
@@ -551,7 +519,9 @@ pub(crate) async fn run_agent_task_stream(
                         .tool(chart_tool)
                         .tool(okf_load_tool)
                         .tool(okf_write_tool)
-                        .tool(okf_search_tool);
+                        .tool(okf_search_tool)
+                        .tool(cv_tool)
+                        .tool(drop_tool);
                     if model_id.starts_with("o1") || model_id.starts_with("o3") {
                         agent_builder = agent_builder.additional_params(json!({"reasoning_effort": effort}));
                     }
@@ -580,7 +550,9 @@ pub(crate) async fn run_agent_task_stream(
                         .tool(chart_tool)
                         .tool(okf_load_tool)
                         .tool(okf_write_tool)
-                        .tool(okf_search_tool);
+                        .tool(okf_search_tool)
+                        .tool(cv_tool)
+                        .tool(drop_tool);
                     if model_id.starts_with("o1") || model_id.starts_with("o3") {
                         agent_builder = agent_builder.additional_params(json!({"reasoning_effort": effort}));
                     }
@@ -611,6 +583,8 @@ pub(crate) async fn run_agent_task_stream(
                         .tool(okf_load_tool)
                         .tool(okf_write_tool)
                         .tool(okf_search_tool)
+                        .tool(cv_tool)
+                        .tool(drop_tool)
                         .build();
                     let stream = agent
                         .stream_chat(prompt.clone(), rig_history.clone())

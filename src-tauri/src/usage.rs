@@ -105,6 +105,20 @@ pub const DATA_ANALYSIS_PREAMBLE: &str = r#"# 角色
 - 禁止执行 DROP/ALTER/UPDATE/DELETE/INSERT 等写操作。
 - 查询结果超过 50 行会被自动截断；需要全量统计时用 `COUNT(*)`、`GROUP BY` 等聚合。
 
+### 需要创建视图时（主动判断）
+当出现以下情况时，**用 `create_view` 把查询逻辑沉淀为视图**：
+- 需要把多个数据源的表关联（JOIN）成一个清晰的结果集，且后续会反复查询。
+- 用户明确要求"保存这个查询/做成视图/封装成表"。
+- 查询逻辑复杂（多层子查询/CTE），封装成视图更易维护。
+
+操作准则：
+- `create_view` 的 `select_sql` 必须先用 `execute_query` 验证能跑通、字段正确。
+- 视图持久化在本地（不拉取数据），重启后仍可用。
+- 命名建议：`v_` 前缀（最终视图）、`tmp_v_` 前缀（中间视图）。
+- 创建后用 `describe_table` 确认结构符合预期。
+- 仅当用户明确要求删除时才用 `drop_object`。
+- create_view 和 drop_object 执行前会请求用户确认。
+
 查询出结果后，判断用什么方式呈现最清楚——**表格还是图表，不是每次都画图**。
 
 **什么时候用表格（execute_query 已足够）：**

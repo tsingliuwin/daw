@@ -76,14 +76,29 @@ fn open_duckdb() -> (
     Option<Arc<Mutex<duckdb::Connection>>>,
     Option<Arc<std::sync::Mutex<Arc<duckdb::InterruptHandle>>>>,
 ) {
-    let conn = match duckdb::Connection::open_in_memory() {
+    // 用 DuckDB 文件持久化（视图定义存在文件里，重启自动恢复）。
+    // 文件不存在时 Connection::open 自动创建。
+    let db_path = match crate::db::get_aioa_dir() {
+        Ok(mut p) => {
+            p.push("DefaultProject");
+            p.push("analytics.duckdb");
+            // 确保目录存在
+            let _ = std::fs::create_dir_all(p.parent().unwrap_or(std::path::Path::new(".")));
+            p
+        }
+        Err(e) => {
+            tracing::error!(category = "system", "无法定位 aioa 目录: {e}");
+            return (None, None);
+        }
+    };
+    let conn = match duckdb::Connection::open(&db_path) {
         Ok(c) => c,
         Err(e) => {
             tracing::error!(category = "system", "DuckDB 打开失败: {e}");
             return (None, None);
         }
     };
-    // 限制内存使用（不加 threads=1——那是 DuckLake 单写者才需要的）。
+    // 限制内存使用。
     let _ = conn.execute_batch("PRAGMA memory_limit='4GB';");
 
     // 从 SQLite 查 DefaultProject 工作区已 link 的数据源并 ATTACH。
