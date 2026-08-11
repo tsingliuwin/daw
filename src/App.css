@@ -7171,6 +7171,12 @@ button.lm-select-trigger:hover:not(:disabled) {
   background: var(--bg-pill-inner);
   border-radius: var(--radius-sm);
   border-left: 2px solid var(--accent-amber);
+  font-size: 11.5px;
+  color: var(--text-primary);
+  white-space: pre-wrap;
+  line-height: 1.6;
+  font-family: var(--font-mono, monospace);
+  user-select: text;
 }
 .tool-seg__detail-text {
   font-size: 11.5px;

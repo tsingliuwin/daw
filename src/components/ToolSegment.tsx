@@ -175,7 +175,7 @@ export default function ToolSegment(props: {
 
           {/* 人类可读动作摘要（detail，非 awaiting 时也可展示，如已完成写操作的回执）。 */}
           <Show when={t()?.detail && t()?.status !== "awaiting"}>
-            <div class="tool-seg__detail-line">{t()!.detail}</div>
+            <pre class="tool-seg__detail-line">{t()!.detail}</pre>
           </Show>
 
           {/* 结构化 payload：
