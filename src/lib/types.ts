@@ -61,14 +61,14 @@ export type Segment =
   | {
       type: "tool";
       id: string;
-      tool: string; // "get_current_time" | "get_leave_balance" | "submit_leave" | ...
+      tool: string;
       args?: unknown;
       status: "running" | "ok" | "error" | "awaiting";
       /** 人类可读摘要（折叠时显示）。 */
       summary?: string;
       /** 写操作的人类可读动作摘要。awaiting 状态下展示给用户确认。 */
       detail?: string;
-      /** 结构化 OA 结果（请假余额/请假单对象等任意 JSON）。 */
+      /** 结构化结果 payload（SqlResult / OA 结果等任意 JSON）。 */
       payload?: unknown;
       elapsedMs?: number;
       /** Tool call timestamp (ms) - used to show a live timer while running. */
@@ -77,6 +77,17 @@ export type Segment =
       result?: string;
     }
   | { type: "text"; id: string; text: string }
+  | {
+      type: "chart";
+      id: string;
+      chartType: string;
+      title?: string;
+      xField?: string;
+      yFields?: string[];
+      rightYFields?: string[];
+      yFieldLabels?: Record<string, string>;
+      table: SqlResult;
+    }
   | { type: "error"; id: string; text: string };
 
 /** 一条对话消息。assistant 消息由有序 Segment 构成。 */

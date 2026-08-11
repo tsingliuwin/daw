@@ -459,6 +459,37 @@ pub async fn test_llm_connection(
 }
 
 // ===========================================================================
+// Chart image export
+// ===========================================================================
+
+/// Save a base64-encoded PNG (from ECharts `getDataURL`) to a user-chosen file.
+/// Called from ChartSegment's "保存图片" button.
+#[tauri::command]
+pub async fn save_image_from_base64(
+    base64_data: String,
+    default_name: String,
+) -> Result<(), String> {
+    let base64_str = if let Some(pos) = base64_data.find("base64,") {
+        &base64_data[pos + 7..]
+    } else {
+        &base64_data
+    };
+    use base64::Engine;
+    let decoded_bytes = base64::engine::general_purpose::STANDARD
+        .decode(base64_str)
+        .map_err(|e| format!("Failed to decode base64 data: {e}"))?;
+    let file_path = rfd::FileDialog::new()
+        .set_file_name(&default_name)
+        .add_filter("PNG Image", &["png"])
+        .save_file();
+    if let Some(path) = file_path {
+        std::fs::write(&path, decoded_bytes)
+            .map_err(|e| format!("Failed to write file: {e}"))?;
+    }
+    Ok(())
+}
+
+// ===========================================================================
 // Internals — helpers
 // ===========================================================================
 

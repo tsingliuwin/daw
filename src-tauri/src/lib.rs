@@ -84,6 +84,7 @@ pub fn run() {
             commands::resolve_tool_confirmation,
             commands::abort_task,
             commands::test_llm_connection,
+            commands::save_image_from_base64,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -20,7 +20,7 @@ use super::events::{
 };
 use super::wire::{ChatMessageDto, Segment};
 use crate::skill::builtin::GetCurrentTimeTool;
-use crate::skill::data_analysis::{describe_table::DescribeTableTool, execute_query::ExecuteQueryTool, list_tables::ListTablesTool, sample_data::SampleDataTool};
+use crate::skill::data_analysis::{describe_table::DescribeTableTool, execute_query::ExecuteQueryTool, list_tables::ListTablesTool, render_chart::RenderChartTool, sample_data::SampleDataTool};
 use crate::skill::search::SearchTool;
 use crate::skill::Scenario;
 use crate::state::AppState;
@@ -350,7 +350,7 @@ pub(crate) async fn run_agent_task_stream(
             },
         )
     };
-    let build_data_tools = || -> (GetCurrentTimeTool, ExecuteQueryTool, ListTablesTool, DescribeTableTool, SampleDataTool) {
+    let build_data_tools = || -> (GetCurrentTimeTool, ExecuteQueryTool, ListTablesTool, DescribeTableTool, SampleDataTool, RenderChartTool) {
         (
             GetCurrentTimeTool {
                 app_state: app_state.clone(),
@@ -377,6 +377,11 @@ pub(crate) async fn run_agent_task_stream(
                 task_id: task_id.clone(),
                 window: window.clone(),
             },
+            RenderChartTool {
+                app_state: app_state.clone(),
+                task_id: task_id.clone(),
+                window: window.clone(),
+            },
         )
     };
 
@@ -388,13 +393,14 @@ pub(crate) async fn run_agent_task_stream(
             vec![t.definition(String::new()).await, s.definition(String::new()).await]
         }
         Scenario::DataAnalysis => {
-            let (t, e, l, d, sd) = build_data_tools();
+            let (t, e, l, d, sd, rc) = build_data_tools();
             vec![
                 t.definition(String::new()).await,
                 e.definition(String::new()).await,
                 l.definition(String::new()).await,
                 d.definition(String::new()).await,
                 sd.definition(String::new()).await,
+                rc.definition(String::new()).await,
             ]
         }
     };
@@ -506,7 +512,7 @@ pub(crate) async fn run_agent_task_stream(
                 }
             }
             Scenario::DataAnalysis => {
-                let (time_tool, exec_tool, list_tool, desc_tool, sample_tool) = build_data_tools();
+                let (time_tool, exec_tool, list_tool, desc_tool, sample_tool, chart_tool) = build_data_tools();
                 if format == "openai" {
                     let base_url = sanitize_endpoint(&provider.endpoint);
                     let client: rig_core::providers::openai::Client = rig_core::providers::openai::Client::builder()
@@ -523,7 +529,8 @@ pub(crate) async fn run_agent_task_stream(
                         .tool(exec_tool)
                         .tool(list_tool)
                         .tool(desc_tool)
-                        .tool(sample_tool);
+                        .tool(sample_tool)
+                        .tool(chart_tool);
                     if model_id.starts_with("o1") || model_id.starts_with("o3") {
                         agent_builder = agent_builder.additional_params(json!({"reasoning_effort": effort}));
                     }
@@ -548,7 +555,8 @@ pub(crate) async fn run_agent_task_stream(
                         .tool(exec_tool)
                         .tool(list_tool)
                         .tool(desc_tool)
-                        .tool(sample_tool);
+                        .tool(sample_tool)
+                        .tool(chart_tool);
                     if model_id.starts_with("o1") || model_id.starts_with("o3") {
                         agent_builder = agent_builder.additional_params(json!({"reasoning_effort": effort}));
                     }
@@ -575,6 +583,7 @@ pub(crate) async fn run_agent_task_stream(
                         .tool(list_tool)
                         .tool(desc_tool)
                         .tool(sample_tool)
+                        .tool(chart_tool)
                         .build();
                     let stream = agent
                         .stream_chat(prompt.clone(), rig_history.clone())

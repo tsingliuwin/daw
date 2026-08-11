@@ -2,6 +2,7 @@ import { Index, Show, Switch, Match, createSignal, createEffect, createMemo, onM
 import type { ChatMessage, Segment, TokenUsage, ModelOption } from "../lib/types";
 import { derivePanelMetrics, fmtCap, fmtPct } from "../lib/metrics";
 import ToolSegment from "./ToolSegment";
+import ChartSegment from "./ChartSegment";
 import MessageText from "./MessageText";
 import ComposerActions from "./ComposerActions";
 
@@ -517,10 +518,17 @@ export default function ChatView(props: {
                                 )}
                               </Show>
                             </Match>
+                            <Match when={seg().type === "chart"}>
+                              <Show when={seg()}>
+                                {(s) => (
+                                  <ChartSegment seg={s() as Extract<Segment, { type: "chart" }>} />
+                                )}
+                              </Show>
+                            </Match>
                             <Match when={seg().type === "text" && ts()}>
                               <div class="chat-msg__text">
                                 <Show when={msg().role === "assistant"} fallback={ts()!.text}>
-                                  <MessageText text={ts()!.text} />
+                                  <MessageText text={ts()!.text} segments={msg().segments} />
                                 </Show>
                               </div>
                             </Match>

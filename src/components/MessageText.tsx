@@ -1,10 +1,69 @@
+import { For, Match, Show, Switch, createMemo } from "solid-js";
+import type { Segment } from "../lib/types";
+import { splitTextByChartRefs, findChartSegment } from "../lib/chartRef";
 import MarkdownRenderer from "./MarkdownRenderer";
+import ChartSegment from "./ChartSegment";
+
+type ChartSeg = Extract<Segment, { type: "chart" }>;
+
+/** A text chunk after splitting, with any chart reference resolved to its
+ *  segment (or `undefined` if unresolvable). */
+type ResolvedChunk =
+  | { kind: "text"; content: string }
+  | { kind: "chartRef"; ref: string; chart: ChartSeg | undefined };
 
 /**
- * 渲染一段纯文本（markdown）。aioa 没有 inline chart 引用，所以这里退化为
- * 直接用 MarkdownRenderer 渲染整段文本。保留组件名与 lakemind 一致，方便
- * ChatView 等上层引用。
+ * Renders a markdown text segment that may contain inline chart-reference
+ * markers (`{{chart:<id>}}` — returned to the model by the `render_chart`
+ * tool). Text between markers is rendered with MarkdownRenderer; each marker
+ * is replaced in-place by the corresponding interactive ChartSegment.
+ *
+ * Streaming stability: reuses chart-ref chunk objects across re-renders so
+ * SolidJS <For> (reference-keyed) doesn't dispose+recreate echarts instances
+ * on every token. See lakemind's original for the full rationale.
  */
-export default function MessageText(props: { text: string }) {
-  return <MarkdownRenderer content={props.text} />;
+export default function MessageText(props: { text: string; segments?: Segment[] }) {
+  let chartChunkCache = new Map<string, ResolvedChunk>();
+
+  const chunks = createMemo<ResolvedChunk[]>(() => {
+    const segs = props.segments ?? [];
+    const nextCache = new Map<string, ResolvedChunk>();
+    const out: ResolvedChunk[] = splitTextByChartRefs(props.text).map((p) => {
+      if (p.kind === "chartRef") {
+        const chart = findChartSegment(segs, p.ref);
+        const cached = chartChunkCache.get(p.ref);
+        if (cached && cached.kind === "chartRef" && cached.chart === chart) {
+          nextCache.set(p.ref, cached);
+          return cached;
+        }
+        const fresh: ResolvedChunk = { kind: "chartRef", ref: p.ref, chart };
+        nextCache.set(p.ref, fresh);
+        return fresh;
+      }
+      return { kind: "text", content: p.content };
+    });
+    chartChunkCache = nextCache;
+    return out;
+  });
+  const hasRefs = createMemo(() => chunks().some((c) => c.kind === "chartRef"));
+
+  return (
+    <Show when={hasRefs()} fallback={<MarkdownRenderer content={props.text} />}>
+      <For each={chunks()}>
+        {(c) => (
+          <Switch>
+            <Match when={c.kind === "text"}>
+              <MarkdownRenderer content={c.kind === "text" ? c.content : ""} />
+            </Match>
+            <Match when={c.kind === "chartRef" && c.chart}>
+              {(chart) => <ChartSegment seg={chart()} />}
+            </Match>
+            <Match when={c.kind === "chartRef"}>
+              <span class="chart-ref-missing">📊 图表引用未找到</span>
+            </Match>
+          </Switch>
+        )}
+      </For>
+    </Show>
+  );
 }

@@ -7,4 +7,5 @@
 pub mod describe_table;
 pub mod execute_query;
 pub mod list_tables;
+pub mod render_chart;
 pub mod sample_data;

@@ -17,6 +17,9 @@
 //! when the matching tool_result event arrives (updated in place by id).
 
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+
+use crate::model::SqlResult;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
@@ -40,9 +43,8 @@ pub enum Segment {
         /// UI shows the user before they approve/cancel.
         #[serde(skip_serializing_if = "Option::is_none")]
         detail: Option<String>,
-        /// Structured OA result payload (a leave balance, a submitted request,
-        /// ...). Free-form JSON so each tool shapes its own payload; the
-        /// frontend renders it tool-specifically.
+        /// Structured result payload. Free-form JSON so each tool shapes its
+        /// own payload; the frontend renders it tool-specifically.
         #[serde(skip_serializing_if = "Option::is_none")]
         payload: Option<serde_json::Value>,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -52,6 +54,25 @@ pub enum Segment {
     },
     /// Visible answer text (Markdown). Accumulated from text deltas.
     Text { id: String, text: String },
+    /// Inline chart (data-analysis scenario). Emitted by render_chart tool.
+    /// The frontend renders it as an interactive ECharts card; the model can
+    /// embed `{{chart:<id>}}` markers in its text to reference it inline.
+    #[serde(rename_all = "camelCase")]
+    Chart {
+        id: String,
+        chart_type: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        title: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        x_field: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        y_fields: Option<Vec<String>>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        right_y_fields: Option<Vec<String>>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        y_field_labels: Option<HashMap<String, String>>,
+        table: SqlResult,
+    },
     /// Terminal/agent execution error.
     Error { id: String, text: String },
 }

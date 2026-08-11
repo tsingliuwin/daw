@@ -10,6 +10,7 @@ const TOOL_LABELS: Record<string, string> = {
   list_tables: "列出数据表",
   describe_table: "表结构",
   sample_data: "采样数据",
+  render_chart: "生成图表",
 };
 
 /** 工具常用的参数键名映射（仅用于详情展示，未知键回退原样）。 */

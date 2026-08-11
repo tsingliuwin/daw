@@ -10,8 +10,10 @@
 //! are unchanged.)
 
 use tauri::Emitter;
+use std::collections::HashMap;
 
 use super::wire::{AgentStreamEvent, Segment};
+use crate::model::SqlResult;
 use crate::usage::{self};
 
 pub(crate) fn now_ms() -> i64 {
@@ -139,6 +141,38 @@ pub(crate) fn emit_tool_awaiting(
             payload: None,
             elapsed_ms: None,
             result: None,
+        }),
+    );
+}
+
+/// Emit an inline chart segment (data-analysis scenario). The frontend renders
+/// it as an interactive ECharts card; the model references it via `{{chart:<id>}}`.
+pub(crate) fn emit_chart(
+    window: &tauri::Window,
+    task_id: &str,
+    id: &str,
+    chart_type: &str,
+    title: Option<&str>,
+    x_field: Option<&str>,
+    y_fields: Option<&[String]>,
+    right_y_fields: Option<&[String]>,
+    y_field_labels: Option<&HashMap<String, String>>,
+    table: SqlResult,
+) {
+    emit_event(
+        window,
+        task_id,
+        "chart",
+        None,
+        Some(Segment::Chart {
+            id: id.to_string(),
+            chart_type: chart_type.to_string(),
+            title: title.map(|s| s.to_string()),
+            x_field: x_field.map(|s| s.to_string()),
+            y_fields: y_fields.map(|v| v.to_vec()),
+            right_y_fields: right_y_fields.map(|v| v.to_vec()),
+            y_field_labels: y_field_labels.cloned(),
+            table,
         }),
     );
 }

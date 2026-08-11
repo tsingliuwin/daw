@@ -17,6 +17,7 @@
     "@tanstack/solid-virtual": "^3.13.36",
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-opener": "^2",
+    "echarts": "^6.1.0",
     "marked": "^18.0.5",
     "shiki": "^4.3.0",
     "solid-js": "^1.9.3"
