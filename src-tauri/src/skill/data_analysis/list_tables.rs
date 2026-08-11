@@ -52,16 +52,13 @@ impl Tool for ListTablesTool {
 
         let tables_res = tokio::task::spawn_blocking(move || -> Result<Vec<String>, String> {
             let guard = conn.blocking_lock();
-            // 用 SHOW TABLES 列出本地 catalog 的表和视图（已注册的视图 + 本地表）。
+            // 用 SHOW TABLES 列出当前 catalog 的表和视图（已注册的视图 + 本地表）。
             // 不用 duckdb_tables()/duckdb_views()——这些函数会枚举所有 catalog 的
             // 元数据（包括 ATTACH 的 Hologres），触发 postgres 扩展的元数据扫描。
-            // SHOW TABLES 只列当前 catalog（memory），不碰远程 catalog。
-            guard.execute_batch("USE memory").map_err(|e| e.to_string())?;
             let mut stmt = guard.prepare("SHOW TABLES").map_err(|e| e.to_string())?;
             let rows = stmt
                 .query_map([], |r| {
                     let name: String = r.get(0)?;
-                    // SHOW TABLES 可能返回 "schema.table"，取最后一段作为表名。
                     Ok(name.rsplit('.').next().unwrap_or(&name).to_string())
                 })
                 .map_err(|e| e.to_string())?;
