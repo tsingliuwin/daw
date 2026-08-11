@@ -55,10 +55,10 @@ impl Tool for ListTablesTool {
             // 列出所有非 internal 的表和视图（不限 schema，否则 postgres/mysql 不可见）。
             // 过滤掉 DuckDB 内部 catalog（memory/system/temp），只保留 db_ 前缀的外部数据源。
             let sql = "
-                SELECT table_catalog, schema_name, table_name FROM duckdb_tables() WHERE NOT internal
+                SELECT database_name, schema_name, table_name FROM duckdb_tables() WHERE NOT internal
                 UNION
-                SELECT table_catalog, schema_name, view_name AS table_name FROM duckdb_views() WHERE NOT internal
-                ORDER BY table_catalog, schema_name, table_name
+                SELECT database_name, schema_name, view_name AS table_name FROM duckdb_views() WHERE NOT internal
+                ORDER BY database_name, schema_name, table_name
             ";
             let mut stmt = guard.prepare(sql).map_err(|e| e.to_string())?;
             let rows = stmt

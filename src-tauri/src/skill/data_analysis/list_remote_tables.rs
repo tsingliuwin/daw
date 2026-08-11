@@ -61,9 +61,9 @@ impl Tool for ListRemoteTablesTool {
         let tables_res = tokio::task::spawn_blocking(move || -> Result<Vec<(String, String)>, String> {
             let guard = conn.blocking_lock();
             let sql = format!(
-                "SELECT schema_name, table_name FROM duckdb_tables() WHERE table_catalog = '{}' AND NOT internal
+                "SELECT schema_name, table_name FROM duckdb_tables() WHERE database_name = '{}' AND NOT internal
                  UNION
-                 SELECT schema_name, view_name AS table_name FROM duckdb_views() WHERE table_catalog = '{}' AND NOT internal
+                 SELECT schema_name, view_name AS table_name FROM duckdb_views() WHERE database_name = '{}' AND NOT internal
                  ORDER BY schema_name, table_name",
                 catalog_clone, catalog_clone
             );
