@@ -7725,7 +7725,7 @@ input[type="number"] {
 .result-head {
   display: flex; position: sticky; top: 0; z-index: 2;
   background: #e8eaf0;
-  border-bottom: 2px solid #6366f1;
+  border-bottom: 1px solid #d1d5db;
   min-width: max-content;
 }
 .result-row {
