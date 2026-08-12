@@ -107,6 +107,14 @@ impl Tool for SampleDataTool {
                 Ok(format!("表 {} 的前 {} 行样例数据已展示在结果表格中。", table_name, n))
             }
             Err(err) => {
+                // 采样失败时更新 OKF 表探索状态。
+                let ws_dir = self.app_state.workspace_dir.lock().await.to_string_lossy().to_string();
+                let err_msg = err.0.clone();
+                let table_name_clone = table_name.to_string();
+                let _ = tokio::task::spawn_blocking(move || {
+                    let (status, reason) = classify_sample_error(&err_msg);
+                    crate::okf::update_table_status(&ws_dir, &table_name_clone, &status, Some(&reason));
+                }).await;
                 emit_tool_result(
                     &self.window, &self.task_id, &call_id, "error",
                     err.0.clone(), None, None, Some(elapsed), None,
@@ -114,5 +122,21 @@ impl Tool for SampleDataTool {
                 Err(err)
             }
         }
+    }
+}
+
+/// 根据采样错误判定可用性等级。
+fn classify_sample_error(err: &str) -> (String, String) {
+    let lower = err.to_lowercase();
+    if lower.contains("storage tier") || lower.contains("lower meta") {
+        ("unavailable_permanent".to_string(), "MaxCompute 非标准存储，Hologres 不支持访问".to_string())
+    } else if lower.contains("unsupported type") {
+        ("unavailable_permanent".to_string(), "列类型不兼容".to_string())
+    } else if lower.contains("permission") || lower.contains("privilege") || lower.contains("authorize") || lower.contains("deny") {
+        ("unavailable_temporary".to_string(), "权限不足".to_string())
+    } else if lower.contains("timeout") || lower.contains("connection") {
+        ("unavailable_temporary".to_string(), "连接超时".to_string())
+    } else {
+        ("available".to_string(), String::new())
     }
 }
