@@ -305,8 +305,6 @@ export default function App() {
           } else if (kind === "tool_call" && payload.segment) {
             const s = payload.segment;
             segments = pushToolCall(segments, { id: s.id, tool: s.tool, args: s.args });
-            // 追加 tool_call segment 到 .jsonl（实时落盘）。
-            void appendChatLine(targetId, s);
           } else if (kind === "tool_result" && payload.segment) {
             const s = payload.segment;
             segments = mergeToolResult(segments, {
@@ -318,14 +316,10 @@ export default function App() {
               elapsedMs: s.elapsedMs,
               result: s.result,
             });
-            // 追加 tool_result 到 .jsonl。
-            void appendChatLine(targetId, s);
           } else if (kind === "chart" && payload.segment) {
             // chart segment：push 进消息 segments 列表，ChatView 渲染 ChartSegment。
             const s = payload.segment;
             segments = [...segments, s];
-            // 追加 chart segment 到 .jsonl。
-            void appendChatLine(targetId, s);
           } else if (kind === "usage" && payload.text) {
             // 通过 mergeUsage 把 usage 事件折叠进 task 的持久化 TokenUsage。
             try {
@@ -337,8 +331,6 @@ export default function App() {
               ...segments,
               { type: "error", id: newSegmentId("t"), text: payload.text ?? "未知错误" },
             ];
-            // 追加 error segment 到 .jsonl。
-            void appendChatLine(targetId, { type: "error", id: newSegmentId("t"), text: payload.text ?? "未知错误" });
           }
 
           messages[messages.length - 1] = { ...lastMsg, segments };
@@ -536,9 +528,7 @@ export default function App() {
       ...prev,
       [wsPath]: (prev[wsPath] ?? []).map((t) => (t.id === id ? updatedTask : t)),
     }));
-    // 追加用户消息到 .jsonl（实时落盘）+ 更新 SQLite 元数据。
-    void appendChatLine(id, userMsg);
-    await invoke("save_task", { workspacePath: wsPath, taskId: id, name: newName, messages: [], modelId: task.modelId || null, tokenUsage: task.tokenUsage ?? null, spaceId: "personal", userId: "default", kind: task.kind ?? "task" }).catch(() => {});
+    await saveTaskBackend(updatedTask, wsPath);
 
     try {
       setStreamingTaskId(id);
