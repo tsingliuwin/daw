@@ -5296,152 +5296,6 @@ button.lm-select-trigger:hover:not(:disabled) {
   align-items: center;
   gap: 6px;
 }
-.chart-seg__action-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 24px;
-  height: 24px;
-  border: none;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--text-secondary);
-  cursor: pointer;
-  outline: none;
-  transition: all 0.15s ease;
-  padding: 0;
-}
-.chart-seg__action-btn:hover {
-  color: var(--text-primary);
-  background: var(--bg-hover);
-}
-
-/* Fullscreen Overlay Styles */
-.chart-fullscreen-overlay {
-  position: fixed;
-  top: 0;
-  left: 0;
-  width: 100vw;
-  height: 100vh;
-  background: rgba(10, 10, 11, 0.82);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
-  z-index: 9999;
-  display: flex;
-  flex-direction: column;
-  box-sizing: border-box;
-}
-:root.light .chart-fullscreen-overlay {
-  background: rgba(248, 250, 252, 0.85);
-}
-.chart-fullscreen-header {
-  height: 52px;
-  padding: 0 24px;
-  background: rgba(0, 0, 0, 0.25);
-  border-bottom: 1px solid var(--border-strong);
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  box-sizing: border-box;
-  flex-shrink: 0;
-}
-:root.light .chart-fullscreen-header {
-  background: rgba(255, 255, 255, 0.4);
-}
-.chart-fullscreen-header.mac-padding {
-  padding-left: 80px;
-}
-.chart-fullscreen-title {
-  font-size: 15px;
-  font-weight: 600;
-  color: var(--text-primary);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  max-width: 35%;
-  flex-shrink: 1;
-}
-.chart-fullscreen-tabs {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  flex: 1;
-  justify-content: center;
-}
-.chart-fullscreen-actions {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-shrink: 0;
-}
-.chart-fullscreen-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 30px;
-  height: 30px;
-  padding: 0;
-  background: transparent;
-  border: none;
-  border-radius: var(--radius-sm);
-  color: var(--text-secondary);
-  cursor: pointer;
-  transition: background 0.15s ease, color 0.15s ease;
-}
-.chart-fullscreen-btn:hover {
-  background: var(--bg-hover);
-  color: var(--text-primary);
-}
-.chart-fullscreen-body {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  align-items: stretch;
-  box-sizing: border-box;
-  padding: 24px;
-}
-.chart-fullscreen-canvas {
-  width: 100%;
-  height: 100%;
-  background: transparent;
-  border: none;
-  box-sizing: border-box;
-}
-.chart-seg__label {
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--text-secondary);
-  margin-right: 4px;
-}
-.chart-seg__type-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 4px 10px;
-  border: none;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--text-secondary);
-  font-size: 11px;
-  font-weight: 500;
-  cursor: pointer;
-  outline: none;
-  transition: color 0.15s ease, background 0.15s ease;
-}
-.chart-seg__type-btn:hover {
-  color: var(--text-primary);
-  background: var(--bg-hover);
-}
-.chart-seg__type-btn.active {
-  color: var(--text-primary);
-  background: var(--bg-active);
-}
-.chart-seg__canvas {
-  width: 100%;
-  height: 320px;
-  padding: 12px;
-  box-sizing: border-box;
-}
 
 .tool-seg {
   margin: 8px 0;
@@ -7916,19 +7770,19 @@ body.is-resizing-column, body.is-resizing-column * { cursor: col-resize !importa
 .chart-seg__action-btn {
   display: inline-flex; align-items: center; justify-content: center;
   width: 24px; height: 24px; border: none; border-radius: 4px;
-  background: transparent; color: rgba(255,255,255,0.6); cursor: pointer;
+  background: transparent; color: var(--text-secondary, rgba(255,255,255,0.6)); cursor: pointer;
   transition: all 0.15s ease; padding: 0;
 }
-.chart-seg__action-btn:hover { color: #fff; background: rgba(255, 255, 255, 0.08); }
+.chart-seg__action-btn:hover { color: var(--text-primary, #fff); background: rgba(125,125,125,0.12); }
 .chart-seg__type-btn {
   display: inline-flex; align-items: center; gap: 4px;
   padding: 4px 10px; border: none; border-radius: 4px;
-  background: transparent; color: rgba(255,255,255,0.6);
+  background: transparent; color: var(--text-secondary, rgba(255,255,255,0.6));
   font-size: 11px; font-weight: 500; cursor: pointer;
   transition: color 0.15s ease, background 0.15s ease;
 }
-.chart-seg__type-btn:hover { color: #fff; background: rgba(255, 255, 255, 0.08); }
-.chart-seg__type-btn.active { color: #fff; background: rgba(255, 255, 255, 0.12); }
+.chart-seg__type-btn:hover { color: var(--text-primary, #fff); background: rgba(125,125,125,0.12); }
+.chart-seg__type-btn.active { color: var(--text-primary, #fff); background: rgba(125,125,125,0.18); }
 .chart-seg__canvas { width: 100%; height: 320px; padding: 12px; box-sizing: border-box; }
 
 /* Fullscreen overlay */
