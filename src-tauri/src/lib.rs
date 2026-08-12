@@ -86,6 +86,7 @@ pub fn run() {
             commands::abort_task,
             commands::test_llm_connection,
             commands::save_image_from_base64,
+            commands::append_chat_line,
             commands::get_db_connections,
             commands::upsert_db_connection,
             commands::delete_db_connection,

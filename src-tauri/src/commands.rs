@@ -252,10 +252,38 @@ pub async fn load_workspace_tasks(
         for r in rows {
             if let Ok((id, name, created_at, saved, model_id, token_usage_json, kind)) = r {
                 let mut messages = None;
-                let filepath = chats_dir.join(format!("{id}.json"));
-                if filepath.exists() {
-                    let json_str = std::fs::read_to_string(filepath).unwrap_or_default();
-                    messages = serde_json::from_str(&json_str).ok();
+                let jsonl_path = chats_dir.join(format!("{id}.jsonl"));
+                let json_path = chats_dir.join(format!("{id}.json"));
+                if jsonl_path.exists() {
+                    // 读 JSONL：逐行解析。
+                    let content = std::fs::read_to_string(&jsonl_path).unwrap_or_default();
+                    let mut arr = Vec::new();
+                    for line in content.lines() {
+                        if line.trim().is_empty() { continue; }
+                        if let Ok(v) = serde_json::from_str::<serde_json::Value>(line) {
+                            arr.push(v);
+                        }
+                    }
+                    messages = Some(serde_json::Value::Array(arr));
+                } else if json_path.exists() {
+                    // 兼容旧 JSON：读数组格式，转写为 JSONL。
+                    let json_str = std::fs::read_to_string(&json_path).unwrap_or_default();
+                    if let Ok(val) = serde_json::from_str::<serde_json::Value>(&json_str) {
+                        // 转写 .jsonl。
+                        if let Some(arr) = val.as_array() {
+                            if let Ok(mut file) = std::fs::File::create(&jsonl_path) {
+                                use std::io::Write;
+                                for msg in arr {
+                                    if let Ok(line) = serde_json::to_string(msg) {
+                                        let _ = writeln!(file, "{line}");
+                                    }
+                                }
+                            }
+                        }
+                        messages = Some(val);
+                    }
+                    // 删旧 .json。
+                    let _ = std::fs::remove_file(&json_path);
                 }
                 let token_usage = token_usage_json
                     .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok());
@@ -300,10 +328,35 @@ pub async fn save_task(
     )
     .map_err(|e| e.to_string())?;
 
+    // 写 JSONL：每行一个 ChatMessage。
     let chats_dir = db::get_chats_dir(&space_id, &user_id)?;
-    let filepath = chats_dir.join(format!("{task_id}.json"));
-    let json_str = serde_json::to_string(&messages).map_err(|e| e.to_string())?;
-    std::fs::write(filepath, json_str).map_err(|e| format!("Failed to write chat JSON file: {e}"))?;
+    let filepath = chats_dir.join(format!("{task_id}.jsonl"));
+    let arr = messages.as_array().ok_or("messages 不是数组")?;
+    let mut file = std::fs::File::create(&filepath).map_err(|e| format!("创建文件失败: {e}"))?;
+    use std::io::Write;
+    for msg in arr {
+        let line = serde_json::to_string(msg).map_err(|e| e.to_string())?;
+        writeln!(file, "{line}").map_err(|e| format!("写入失败: {e}"))?;
+    }
+    Ok(())
+}
+
+/// 追加一行 JSON 到 .jsonl 文件（流式输出时实时落盘）。
+#[tauri::command]
+pub async fn append_chat_line(
+    task_id: String,
+    line: serde_json::Value,
+    space_id: String,
+    user_id: String,
+) -> Result<(), String> {
+    let chats_dir = db::get_chats_dir(&space_id, &user_id)?;
+    let filepath = chats_dir.join(format!("{task_id}.jsonl"));
+    let line_str = serde_json::to_string(&line).map_err(|e| e.to_string())?;
+    let mut file = std::fs::OpenOptions::new()
+        .create(true).append(true).open(&filepath)
+        .map_err(|e| format!("打开文件失败: {e}"))?;
+    use std::io::Write;
+    writeln!(file, "{line_str}").map_err(|e| format!("写入失败: {e}"))?;
     Ok(())
 }
 
@@ -748,10 +801,8 @@ pub async fn list_workspace_connections(
 // ===========================================================================
 
 fn delete_task_content_files(space_id: &str, user_id: &str, task_id: &str) {
-    // All tasks are chat tasks in M1; the <space>/<user>/chats/ file is the
-    // only content file. The chats dir may legitimately not exist yet for a
-    // fresh space/user, so resolve-and-remove best-effort.
     if let Ok(dir) = db::get_chats_dir(space_id, user_id) {
+        let _ = std::fs::remove_file(dir.join(format!("{task_id}.jsonl")));
         let _ = std::fs::remove_file(dir.join(format!("{task_id}.json")));
     }
 }
