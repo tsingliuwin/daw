@@ -298,6 +298,24 @@ pub(crate) async fn run_agent_task_stream(
     scenario: Scenario,
     app_state: AppState,
 ) -> Result<(), String> {
+    // 0. 根据当前 task 所属工作区更新 workspace_dir / workspace_path，
+    // 确保 OKF 工具读到正确工作区的知识库。
+    {
+        let conn = crate::db::get_db_conn().map_err(|e| format!("打开 DB 失败: {e}"))?;
+        let ws_path: Option<String> = conn
+            .prepare("SELECT workspace_path FROM tasks WHERE id = ?")
+            .ok()
+            .and_then(|mut s| s.query_row([&task_id], |r| r.get::<_, String>(0)).ok());
+        if let Some(ws) = ws_path {
+            let mut wp = app_state.workspace_path.lock().await;
+            *wp = ws.clone();
+            drop(wp);
+            let mut wd = app_state.workspace_dir.lock().await;
+            let aioa_dir = crate::db::get_aioa_dir().unwrap_or_default();
+            *wd = aioa_dir.join(&ws);
+        }
+    }
+
     // 1. Get model provider config
     let provider = get_provider_for_model(&model_id, provider_id.as_deref())?;
 
