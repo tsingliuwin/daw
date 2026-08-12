@@ -47,6 +47,32 @@ pub struct DataSourceConfig {
     /// Creation timestamp (Unix ms). Set by upsert_db_connection.
     #[serde(default)]
     pub created_at: i64,
+    /// Database product: "postgresql" | "hologres" | "oceanbase" | "unknown".
+    #[serde(default)]
+    pub db_product: String,
+    /// Library mode: "standard" | "external" | "unknown" (Hologres external db vs standard).
+    #[serde(default)]
+    pub db_mode: String,
+}
+
+/// Table registry record. Stores technical metadata for each registered remote table.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TableRegistryEntry {
+    pub id: String,
+    pub workspace_path: String,
+    pub connection_name: String,
+    pub local_name: String,
+    pub remote_schema: String,
+    pub remote_table: String,
+    pub db_type: String,
+    pub db_product: String,
+    pub db_mode: String,
+    pub table_type: String,     // "native" | "foreign"
+    pub access_mode: String,    // "catalog" | "pushdown"
+    pub status: String,         // "available" | "unavailable_permanent" | "unavailable_temporary"
+    pub unavailable_reason: Option<String>,
+    pub last_explored: Option<i64>,
 }
 
 // ---------------------------------------------------------------------------

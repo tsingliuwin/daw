@@ -17,7 +17,7 @@ use std::fs;
 use std::path::PathBuf;
 use rusqlite::Connection;
 
-use crate::model::DataSourceConfig;
+use crate::model::{DataSourceConfig, TableRegistryEntry};
 
 /// Get the system home directory
 pub fn get_home_dir() -> Option<PathBuf> {
@@ -258,6 +258,33 @@ pub fn init_global_db() -> Result<(), String> {
         [],
     )
     .map_err(|e| format!("Failed to create workspace_db_connections table: {e}"))?;
+
+    // table_registry: 已注册远程表的元数据（access_mode/table_type/status 等）。
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS table_registry (
+            id TEXT PRIMARY KEY,
+            workspace_path TEXT NOT NULL,
+            connection_name TEXT NOT NULL,
+            local_name TEXT NOT NULL,
+            remote_schema TEXT NOT NULL,
+            remote_table TEXT NOT NULL,
+            db_type TEXT NOT NULL,
+            db_product TEXT NOT NULL,
+            db_mode TEXT NOT NULL,
+            table_type TEXT NOT NULL,
+            access_mode TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'available',
+            unavailable_reason TEXT,
+            last_explored INTEGER,
+            FOREIGN KEY(workspace_path) REFERENCES workspaces(path) ON DELETE CASCADE
+        )",
+        [],
+    )
+    .map_err(|e| format!("Failed to create table_registry table: {e}"))?;
+
+    // db_connections 加 db_product / db_mode 列（幂等迁移）。
+    let _ = conn.execute("ALTER TABLE db_connections ADD COLUMN db_product TEXT NOT NULL DEFAULT 'unknown'", []);
+    let _ = conn.execute("ALTER TABLE db_connections ADD COLUMN db_mode TEXT NOT NULL DEFAULT 'unknown'", []);
 
     // Seed the default workspace on first run.
     let count: i64 = conn
@@ -508,10 +535,12 @@ fn row_to_conn(r: &rusqlite::Row) -> rusqlite::Result<DataSourceConfig> {
         password: r.get(7)?,
         ssl_mode: r.get(8)?,
         created_at: r.get(9)?,
+        db_product: r.get::<_, Option<String>>(10)?.unwrap_or_else(|| "unknown".to_string()),
+        db_mode: r.get::<_, Option<String>>(11)?.unwrap_or_else(|| "unknown".to_string()),
     })
 }
 
-const CONN_COLS: &str = "id, name, db_type, host, port, database_name, username, password, ssl_mode, created_at";
+const CONN_COLS: &str = "id, name, db_type, host, port, database_name, username, password, ssl_mode, created_at, db_product, db_mode";
 
 pub fn list_db_connections() -> Result<Vec<DataSourceConfig>, String> {
     let conn = get_db_conn()?;
@@ -543,8 +572,8 @@ pub fn get_db_connection(id: &str) -> Result<Option<DataSourceConfig>, String> {
 pub fn create_db_connection(r: &DataSourceConfig) -> Result<(), String> {
     let conn = get_db_conn()?;
     conn.execute(
-        "INSERT INTO db_connections (id, name, db_type, host, port, database_name, username, password, ssl_mode, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        rusqlite::params![r.id, r.name, r.db_type, r.host, r.port, r.database_name, r.username, r.password, r.ssl_mode, r.created_at],
+        "INSERT INTO db_connections (id, name, db_type, host, port, database_name, username, password, ssl_mode, created_at, db_product, db_mode) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        rusqlite::params![r.id, r.name, r.db_type, r.host, r.port, r.database_name, r.username, r.password, r.ssl_mode, r.created_at, r.db_product, r.db_mode],
     )
     .map_err(|e| e.to_string())?;
     Ok(())
@@ -553,8 +582,8 @@ pub fn create_db_connection(r: &DataSourceConfig) -> Result<(), String> {
 pub fn update_db_connection(r: &DataSourceConfig) -> Result<(), String> {
     let conn = get_db_conn()?;
     conn.execute(
-        "UPDATE db_connections SET name=?, db_type=?, host=?, port=?, database_name=?, username=?, password=?, ssl_mode=? WHERE id=?",
-        rusqlite::params![r.name, r.db_type, r.host, r.port, r.database_name, r.username, r.password, r.ssl_mode, r.id],
+        "UPDATE db_connections SET name=?, db_type=?, host=?, port=?, database_name=?, username=?, password=?, ssl_mode=?, db_product=?, db_mode=? WHERE id=?",
+        rusqlite::params![r.name, r.db_type, r.host, r.port, r.database_name, r.username, r.password, r.ssl_mode, r.db_product, r.db_mode, r.id],
     )
     .map_err(|e| e.to_string())?;
     Ok(())
@@ -611,5 +640,89 @@ pub fn unlink_workspace_db_connection(ws_path: &str, conn_id: &str) -> Result<()
         rusqlite::params![ws_path, conn_id],
     )
     .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// table_registry: 已注册远程表元数据 CRUD
+// ---------------------------------------------------------------------------
+
+/// row → TableRegistryEntry
+fn row_to_registry(r: &rusqlite::Row) -> rusqlite::Result<TableRegistryEntry> {
+    Ok(TableRegistryEntry {
+        id: r.get(0)?,
+        workspace_path: r.get(1)?,
+        connection_name: r.get(2)?,
+        local_name: r.get(3)?,
+        remote_schema: r.get(4)?,
+        remote_table: r.get(5)?,
+        db_type: r.get(6)?,
+        db_product: r.get(7)?,
+        db_mode: r.get(8)?,
+        table_type: r.get(9)?,
+        access_mode: r.get(10)?,
+        status: r.get(11)?,
+        unavailable_reason: r.get::<_, Option<String>>(12)?,
+        last_explored: r.get::<_, Option<i64>>(13)?,
+    })
+}
+
+const REGISTRY_COLS: &str = "id, workspace_path, connection_name, local_name, remote_schema, remote_table, db_type, db_product, db_mode, table_type, access_mode, status, unavailable_reason, last_explored";
+
+/// 列出工作区所有已注册的表。
+pub fn list_table_registry(ws_path: &str) -> Result<Vec<TableRegistryEntry>, String> {
+    let conn = get_db_conn()?;
+    let mut stmt = conn
+        .prepare(&format!("SELECT {REGISTRY_COLS} FROM table_registry WHERE workspace_path = ? ORDER BY local_name"))
+        .map_err(|e| e.to_string())?;
+    let rows = stmt.query_map([ws_path], row_to_registry).map_err(|e| e.to_string())?;
+    let mut out = Vec::new();
+    for r in rows { out.push(r.map_err(|e| e.to_string())?); }
+    Ok(out)
+}
+
+/// 按 local_name 查单条。
+pub fn get_table_registry_by_local_name(ws_path: &str, local_name: &str) -> Result<Option<TableRegistryEntry>, String> {
+    let conn = get_db_conn()?;
+    let mut stmt = conn
+        .prepare(&format!("SELECT {REGISTRY_COLS} FROM table_registry WHERE workspace_path = ? AND local_name = ?"))
+        .map_err(|e| e.to_string())?;
+    let mut rows = stmt.query_map(rusqlite::params![ws_path, local_name], row_to_registry).map_err(|e| e.to_string())?;
+    if let Some(r) = rows.next() { return Ok(Some(r.map_err(|e| e.to_string())?)); }
+    Ok(None)
+}
+
+/// 插入或更新 table_registry。
+pub fn upsert_table_registry(entry: &TableRegistryEntry) -> Result<(), String> {
+    let conn = get_db_conn()?;
+    conn.execute(
+        "INSERT OR REPLACE INTO table_registry (id, workspace_path, connection_name, local_name, remote_schema, remote_table, db_type, db_product, db_mode, table_type, access_mode, status, unavailable_reason, last_explored)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        rusqlite::params![
+            entry.id, entry.workspace_path, entry.connection_name, entry.local_name,
+            entry.remote_schema, entry.remote_table, entry.db_type, entry.db_product, entry.db_mode,
+            entry.table_type, entry.access_mode, entry.status, entry.unavailable_reason, entry.last_explored
+        ],
+    ).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// 更新表状态。
+pub fn update_table_registry_status(ws_path: &str, local_name: &str, status: &str, reason: Option<&str>) -> Result<(), String> {
+    let conn = get_db_conn()?;
+    conn.execute(
+        "UPDATE table_registry SET status = ?, unavailable_reason = ?, last_explored = ? WHERE workspace_path = ? AND local_name = ?",
+        rusqlite::params![status, reason, now_ms(), ws_path, local_name],
+    ).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// 删除 table_registry 记录。
+pub fn delete_table_registry(ws_path: &str, local_name: &str) -> Result<(), String> {
+    let conn = get_db_conn()?;
+    conn.execute(
+        "DELETE FROM table_registry WHERE workspace_path = ? AND local_name = ?",
+        rusqlite::params![ws_path, local_name],
+    ).map_err(|e| e.to_string())?;
     Ok(())
 }
