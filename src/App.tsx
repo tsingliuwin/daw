@@ -385,7 +385,10 @@ export default function App() {
 
   // 「新建任务」按钮：跳回首页（HomeView），不创建空任务。场景选择在首页
   // 通过圆角按钮完成。进入首页时重置场景为"日常办公"，避免上次选择残留。
+  // 同时同步当前任务的工作区到首页下拉，保持一致。
   function goToHome() {
+    const curWs = activeTaskId() ? findTaskWorkspace(activeTaskId()!) : null;
+    if (curWs) setHomeWorkspacePath(curWs);
     setPendingScenario("task");
     setActiveTaskId(null);
   }
