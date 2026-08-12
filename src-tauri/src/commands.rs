@@ -253,7 +253,6 @@ pub async fn load_workspace_tasks(
             if let Ok((id, name, created_at, saved, model_id, token_usage_json, kind)) = r {
                 let mut messages = None;
                 let jsonl_path = chats_dir.join(format!("{id}.jsonl"));
-                let json_path = chats_dir.join(format!("{id}.json"));
                 if jsonl_path.exists() {
                     // 读 JSONL：逐行解析。
                     let content = std::fs::read_to_string(&jsonl_path).unwrap_or_default();
@@ -265,25 +264,6 @@ pub async fn load_workspace_tasks(
                         }
                     }
                     messages = Some(serde_json::Value::Array(arr));
-                } else if json_path.exists() {
-                    // 兼容旧 JSON：读数组格式，转写为 JSONL。
-                    let json_str = std::fs::read_to_string(&json_path).unwrap_or_default();
-                    if let Ok(val) = serde_json::from_str::<serde_json::Value>(&json_str) {
-                        // 转写 .jsonl。
-                        if let Some(arr) = val.as_array() {
-                            if let Ok(mut file) = std::fs::File::create(&jsonl_path) {
-                                use std::io::Write;
-                                for msg in arr {
-                                    if let Ok(line) = serde_json::to_string(msg) {
-                                        let _ = writeln!(file, "{line}");
-                                    }
-                                }
-                            }
-                        }
-                        messages = Some(val);
-                    }
-                    // 删旧 .json。
-                    let _ = std::fs::remove_file(&json_path);
                 }
                 let token_usage = token_usage_json
                     .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok());
@@ -803,7 +783,6 @@ pub async fn list_workspace_connections(
 fn delete_task_content_files(space_id: &str, user_id: &str, task_id: &str) {
     if let Ok(dir) = db::get_chats_dir(space_id, user_id) {
         let _ = std::fs::remove_file(dir.join(format!("{task_id}.jsonl")));
-        let _ = std::fs::remove_file(dir.join(format!("{task_id}.json")));
     }
 }
 
