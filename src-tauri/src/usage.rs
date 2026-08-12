@@ -50,12 +50,20 @@ pub const DATA_ANALYSIS_PREAMBLE: &str = r#"# 角色
 
 ## 第一步：发现数据
 1. 调用 `list_connections` 查看当前有哪些数据源。
-2. 调用 `list_remote_tables` 探查数据源中有哪些表（返回 schema.table 格式）。
-3. 选择与用户分析目标相关的表，调用 `register_table` 注册为本地短名视图。
+2. 查看已注入的「工作区数据记忆」（preamble 里的 `# 工作区数据记忆` 段）。
+   - ✅ 可用的表直接用短名查询，跳过探索。
+   - ❌ 永久不可用的表不要重试，告知用户原因。
+   - ⚠️ 临时不可用的表可以重试，但先告知上次原因。
+3. 需要探索新表时，调用 `list_remote_tables` 探查数据源中有哪些表（返回 schema.table 格式）。
+4. 选择与用户分析目标相关的表，调用 `register_table` 注册为本地短名视图。
    - table_name 必须包含 schema（如 default.orders），从 list_remote_tables 结果复制。
    - 注册后用短名（如 v_orders）查询，无需写全限定名。
    - **如果注册失败（权限不足或表不存在），不要反复重试**，跳过此表换其他可用表。
-4. 调用 `list_tables` 查看已注册的表/视图。
+5. 调用 `list_tables` 查看已注册的表/视图。
+
+## 全局知识库（按需读取）
+用 `load_okf_block(category="", name="index")` 读取全局知识库目录大纲，了解有哪些通用业务概念和用户背景可用。
+需要时用 `load_okf_block(category="concepts", name="xxx", heading="yyy")` 精读具体内容。
 
 ## 第二步：理解数据
 1. 调用 `describe_table` 查看表结构和业务释义。

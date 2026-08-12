@@ -428,7 +428,21 @@ pub(crate) async fn run_agent_task_stream(
         Scenario::General => PREAMBLE,
         Scenario::DataAnalysis => DATA_ANALYSIS_PREAMBLE,
     };
-    let combined_preamble = format!("{}\n\n{}", base_preamble, now_line);
+
+    // 数据分析场景注入工作区 OKF memory summary。
+    let memory_summary = match scenario {
+        Scenario::DataAnalysis => {
+            let ws_dir_str = app_state.workspace_dir.lock().await.to_string_lossy().to_string();
+            crate::okf::get_okf_memory_summary(&ws_dir_str)
+        }
+        Scenario::General => String::new(),
+    };
+
+    let combined_preamble = if memory_summary.is_empty() {
+        format!("{}\n\n{}", base_preamble, now_line)
+    } else {
+        format!("{}\n\n{}\n\n# 工作区数据记忆\n以下是你之前探索过的表和知识，直接继承使用，无需重复探索：\n\n{}", base_preamble, now_line, memory_summary)
+    };
     let preamble_raw = usage::estimate_tokens(&combined_preamble);
     let tools_raw = usage::estimate_tokens(&tools_json);
     let prompt_t = usage::estimate_tokens(&prompt);

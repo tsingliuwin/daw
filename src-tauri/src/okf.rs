@@ -1,25 +1,41 @@
-//! OKF（Open Knowledge Format）— per-workspace 业务知识库。
+//! OKF（Open Knowledge Format）— 三层知识库。
 //!
-//! 把表/字段的业务释义、关联关系、排障经验结构化存成 Markdown，
-//! 让 agent 按需读取（渐进式披露）而非全量塞进 prompt。
+//! 全局（~/.aioa/okf/）：跨工作区共享的通用业务概念 + 用户背景
+//! 工作区（~/.aioa/<workspace>/okf/）：表探索状态 + 字段释义 + 关联关系
 //!
-//! 目录结构（`<workspace>/okf/`）：
-//!   tables/       — 物理表 schema + 业务释义 + 关联关系
-//!   views/        — 逻辑视图定义
-//!   concepts/     — 全局业务概念（公司背景/名词/指标字典）
-//!   pipelines/specific/ — 导入/清洗配方 + 排障记录
+//! 全局走 index.md 渐进式披露（agent 按需 load_okf_block）。
+//! 工作区走 memory summary 每轮注入 preamble（agent 自动继承）。
 //!
 //! 文件格式：YAML frontmatter + Markdown body。
-//! describe_table 调 parse_column_semantics 注入列释义。
-//! agent 调 write_okf_block 写入业务知识（自动 git commit）。
+//! 表探索状态记录在 frontmatter 的 status 字段：
+//!   available / unavailable_permanent / unavailable_temporary
 
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-/// Get the root OKF directory: `<ws_path>/okf`
+/// Get the root OKF directory for a workspace: `<ws_path>/okf`
 pub fn get_okf_dir(ws_path: &str) -> PathBuf {
     Path::new(ws_path).join("okf")
+}
+
+/// Get the global OKF directory: `~/.aioa/okf/`
+pub fn get_global_okf_dir() -> Result<PathBuf, String> {
+    let mut path = crate::db::get_aioa_dir()?;
+    path.push("okf");
+    Ok(path)
+}
+
+/// Ensure global OKF dirs exist (concepts/ + users/<user_id>/).
+pub fn ensure_global_okf_dirs(user_id: &str) -> Result<PathBuf, String> {
+    let okf_dir = get_global_okf_dir()?;
+    for sub in &["concepts", &format!("users/{user_id}")] {
+        let path = okf_dir.join(sub);
+        if !path.exists() {
+            fs::create_dir_all(&path).map_err(|e| format!("无法创建目录 {:?}: {e}", path))?;
+        }
+    }
+    Ok(okf_dir)
 }
 
 /// Ensure that all standard OKF subdirectories exist.
@@ -113,31 +129,54 @@ pub fn parse_okf_block_from_content(content: &str, heading: &str) -> Option<Stri
 }
 
 /// Read a specific heading block from an OKF file.
-/// category fallback: tables/ → views/ → sources/
+/// concepts/users 类别：先查工作区，找不到再查全局。
+/// tables/views/sources/pipelines 类别：只查工作区。
+/// 特殊：category="" + name="index" → 读全局 index.md。
 pub fn read_okf_block(
     ws_path: &str,
     category: &str,
     name: &str,
     heading: &str,
 ) -> Result<String, String> {
+    // 特殊：读全局 index.md。
+    if category.is_empty() && name == "index" {
+        let global_dir = get_global_okf_dir().map_err(|e| format!("全局 OKF 目录不可用: {e}"))?;
+        let index_path = global_dir.join("index.md");
+        if !index_path.exists() {
+            return Err("全局知识库目录尚不存在。".to_string());
+        }
+        let content = fs::read_to_string(&index_path).map_err(|e| format!("读取 index.md 失败: {e}"))?;
+        return Ok(content);
+    }
+
     let okf_dir = get_okf_dir(ws_path);
     let requested_path = okf_dir.join(category).join(format!("{name}.md"));
     let mut file_path = requested_path.clone();
     if !file_path.exists() {
-        let candidates = [
-            okf_dir.join("tables").join(format!("{name}.md")),
-            okf_dir.join("views").join(format!("{name}.md")),
-            okf_dir.join("sources").join(format!("{name}.md")),
-        ];
-        let mut found = false;
-        for c in &candidates {
-            if c.exists() {
-                file_path = c.clone();
-                found = true;
-                break;
+        // concepts/users 类别：fallback 到全局。
+        if category == "concepts" || category.starts_with("users") {
+            if let Ok(global_dir) = get_global_okf_dir() {
+                let global_path = global_dir.join(category).join(format!("{name}.md"));
+                if global_path.exists() {
+                    file_path = global_path;
+                }
             }
         }
-        if !found {
+        // tables/views/sources 类别：工作区内 fallback。
+        if !file_path.exists() && (category == "tables" || category == "views" || category == "sources") {
+            let candidates = [
+                okf_dir.join("tables").join(format!("{name}.md")),
+                okf_dir.join("views").join(format!("{name}.md")),
+                okf_dir.join("sources").join(format!("{name}.md")),
+            ];
+            for c in &candidates {
+                if c.exists() {
+                    file_path = c.clone();
+                    break;
+                }
+            }
+        }
+        if !file_path.exists() {
             return Err(format!("文件不存在: {:?}", requested_path));
         }
     }
@@ -159,20 +198,26 @@ pub fn write_okf_block(
     heading: &str,
     new_content: &str,
 ) -> Result<(), String> {
-    let okf_dir = ensure_okf_dirs(ws_path)?;
-    // 写操作不跨类别 fallback——避免 concept 内容写进 table 文件造成数据污染。
+    // concepts/users 写全局，其他写工作区。
+    let (okf_dir, doc_type) = if category == "concepts" || category.starts_with("users") {
+        let global_dir = ensure_global_okf_dirs("default")?;
+        let dt = if category.starts_with("users") { "User Profile" } else { "Business Concept" };
+        (global_dir, dt)
+    } else {
+        let ws_dir = ensure_okf_dirs(ws_path)?;
+        let dt = match category {
+            "tables" => "DuckDB Table",
+            "views" => "DuckDB View",
+            "sources" => "Data Source",
+            _ => "Concept",
+        };
+        (ws_dir, dt)
+    };
     let file_path = okf_dir.join(category).join(format!("{name}.md"));
 
     let content = if file_path.exists() {
         fs::read_to_string(&file_path).map_err(|e| format!("读取文件失败: {e}"))?
     } else {
-        let doc_type = match category {
-            "tables" => "DuckDB Table",
-            "views" => "DuckDB View",
-            "sources" => "Data Source",
-            "concepts" => "Business Concept",
-            _ => "Concept",
-        };
         format!(
             "---\ntype: {doc_type}\ntitle: {name}\ndescription: 自动初始化的 OKF 文档\n---\n"
         )
@@ -465,4 +510,159 @@ pub fn write_view_okf(ws_path: &str, view_name: &str, select_sql: &str) -> Resul
     );
     fs::write(&file_path, body).map_err(|e| format!("写入 view OKF 失败: {e}"))?;
     Ok(())
+}
+
+/// 生成工作区 OKF 的 memory summary（注入 preamble）。
+/// 遍历 tables/views/pipelines 目录，摘要每张表的探索状态+字段释义+关联关系。
+pub fn get_okf_memory_summary(ws_path: &str) -> String {
+    let okf_dir = get_okf_dir(ws_path);
+    if !okf_dir.exists() {
+        return String::new();
+    }
+    let mut summary = String::new();
+
+    // tables
+    let tables_dir = okf_dir.join("tables");
+    if tables_dir.exists() {
+        let mut entries: Vec<_> = Vec::new();
+        if let Ok(dir) = fs::read_dir(&tables_dir) {
+            for e in dir.flatten() {
+                if e.path().extension().and_then(|x| x.to_str()) == Some("md") {
+                    entries.push(e);
+                }
+            }
+        }
+        entries.sort_by_key(|e| e.file_name());
+        let mut blocks = Vec::new();
+        for e in &entries {
+            let name = e.path().file_stem().and_then(|s| s.to_str()).unwrap_or("").to_string();
+            if let Ok(content) = fs::read_to_string(e.path()) {
+                let title = parse_yaml_field(&content, "title").unwrap_or_else(|| name.clone());
+                let status = parse_yaml_field(&content, "status").unwrap_or_else(|| "unknown".to_string());
+                let reason = parse_yaml_field(&content, "unavailable_reason").unwrap_or_default();
+                let (col_comments, relations) = {
+                    let mut cm = HashMap::new();
+                    let mut rl = Vec::new();
+                    // 简化：直接从 parse_column_semantics 拿
+                    let (_, c, r) = parse_column_semantics(ws_path, &name);
+                    cm = c;
+                    rl = r;
+                    (cm, rl)
+                };
+                let status_icon = match status.as_str() {
+                    "available" => "✅",
+                    "unavailable_permanent" => "❌",
+                    "unavailable_temporary" => "⚠️",
+                    _ => "❓",
+                };
+                let mut block = format!("- {status_icon} `{name}` ({title})");
+                if status != "available" && !reason.is_empty() {
+                    block.push_str(&format!(" — 不可用: {reason}"));
+                }
+                if !col_comments.is_empty() {
+                    let cols: Vec<String> = col_comments.iter().map(|(k, v)| format!("`{k}`: {v}")).collect();
+                    block.push_str(&format!("\n  字段释义: {}", cols.join("; ")));
+                }
+                if !relations.is_empty() {
+                    block.push_str(&format!("\n  关联: {}", relations.iter().map(|r| format!("- {r}")).collect::<Vec<_>>().join(" ")));
+                }
+                blocks.push(block);
+            }
+        }
+        if !blocks.is_empty() {
+            summary.push_str("# 工作区数据记忆\n以下是你之前探索过的表和知识，直接继承使用，无需重复探索：\n\n");
+            summary.push_str(&blocks.join("\n"));
+            summary.push_str("\n\n");
+        }
+    }
+
+    // pipelines
+    let pipes_dir = okf_dir.join("pipelines").join("specific");
+    if pipes_dir.exists() {
+        let mut entries: Vec<_> = Vec::new();
+        if let Ok(dir) = fs::read_dir(&pipes_dir) {
+            for e in dir.flatten() {
+                if e.path().extension().and_then(|x| x.to_str()) == Some("md") {
+                    entries.push(e);
+                }
+            }
+        }
+        if !entries.is_empty() {
+            summary.push_str("# 排障记录\n");
+            for e in &entries {
+                let name = e.path().file_stem().and_then(|s| s.to_str()).unwrap_or("").to_string();
+                summary.push_str(&format!("- {name}\n"));
+            }
+            summary.push_str("\n");
+        }
+    }
+
+    summary.trim().to_string()
+}
+
+/// 更新表 OKF 文件的 frontmatter 状态字段。
+/// 由 register_table / execute_query / sample_data 调用。
+pub fn update_table_status(
+    ws_path: &str,
+    table_name: &str,
+    status: &str,
+    reason: Option<&str>,
+) {
+    let okf_dir = get_okf_dir(ws_path);
+    let file_path = okf_dir.join("tables").join(format!("{table_name}.md"));
+    if !file_path.exists() {
+        // 文件不存在，创建一个带状态的骨架。
+        if let Ok(content) = std::fs::read_to_string(&file_path) {
+            // 不应到这，但如果到就更新。
+            let _ = content;
+        }
+        let body = format!(
+            "---\ntype: DuckDB Table\ntitle: {table_name}\nstatus: {status}\nunavailable_reason: {}\nlast_explored: {}\n---\n\n# 字段 Schema\n（待探索）\n",
+            reason.unwrap_or(""),
+            current_timestamp()
+        );
+        let _ = std::fs::create_dir_all(file_path.parent().unwrap_or(std::path::Path::new(".")));
+        let _ = std::fs::write(&file_path, body);
+        run_git_commit(&okf_dir, &file_path, &format!("Update status: tables/{table_name}"));
+        return;
+    }
+
+    // 文件存在：更新 frontmatter 里的 status / unavailable_reason / last_explored。
+    let content = match std::fs::read_to_string(&file_path) {
+        Ok(c) => c,
+        Err(_) => return,
+    };
+    let mut lines: Vec<String> = Vec::new();
+    let mut in_yaml = false;
+    let mut yaml_end = false;
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed == "---" {
+            if !yaml_end {
+                if in_yaml {
+                    yaml_end = true;
+                    // 在 YAML 关闭前插入/更新状态字段。
+                    lines.push(format!("status: {status}"));
+                    lines.push(format!("unavailable_reason: {}", reason.unwrap_or("")));
+                    lines.push(format!("last_explored: {}", current_timestamp()));
+                    in_yaml = false;
+                } else {
+                    in_yaml = true;
+                }
+            }
+            lines.push(line.to_string());
+            continue;
+        }
+        if in_yaml {
+            // 跳过已有的 status / unavailable_reason / last_explored（用新值替代）。
+            let lower = trimmed.to_lowercase();
+            if lower.starts_with("status:") || lower.starts_with("unavailable_reason:") || lower.starts_with("last_explored:") {
+                continue;
+            }
+        }
+        lines.push(line.to_string());
+    }
+    let new_content = lines.join("\n");
+    let _ = std::fs::write(&file_path, new_content);
+    run_git_commit(&okf_dir, &file_path, &format!("Update status: tables/{table_name}"));
 }

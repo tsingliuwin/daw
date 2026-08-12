@@ -203,12 +203,26 @@ impl Tool for RegisterTableTool {
         let elapsed = start.elapsed().as_millis() as u64;
         match result {
             Ok(remote_ref) => {
+                // 更新 OKF 状态为 available。
+                let ws_dir = self.app_state.workspace_dir.lock().await.to_string_lossy().to_string();
+                let local_name_clone = local_name.clone();
+                let _ = tokio::task::spawn_blocking(move || {
+                    crate::okf::update_table_status(&ws_dir, &local_name_clone, "available", None);
+                }).await;
                 let summary = format!("已注册视图 {} -> {}", local_name, remote_ref);
                 let detail = format!("CREATE OR REPLACE VIEW \"{}\" AS SELECT * FROM {};", local_name, remote_ref);
                 emit_tool_result(&self.window, &self.task_id, &call_id, "ok", summary.clone(), Some(detail), None, Some(elapsed), None);
                 Ok(format!("{summary}。后续可用 {} 作为表名查询。", local_name))
             }
             Err(err) => {
+                // 更新 OKF 状态为不可用。
+                let ws_dir = self.app_state.workspace_dir.lock().await.to_string_lossy().to_string();
+                let local_name_clone = local_name.clone();
+                let err_msg = err.0.clone();
+                let (status, reason) = classify_error(&err_msg);
+                let _ = tokio::task::spawn_blocking(move || {
+                    crate::okf::update_table_status(&ws_dir, &local_name_clone, &status, Some(&reason));
+                }).await;
                 emit_tool_result(&self.window, &self.task_id, &call_id, "error", err.0.clone(), None, None, Some(elapsed), None);
                 Err(err)
             }
@@ -257,4 +271,22 @@ fn build_cast_sql(catalog: &str, schema: &str, tbl: &str, cast_cols: &[String]) 
         "SELECT * REPLACE ({}) FROM postgres_query('{}', '{}')",
         cast_list, catalog, inner_escaped
     )
+}
+
+/// 根据错误信息判定可用性等级。
+fn classify_error(err: &str) -> (String, String) {
+    let lower = err.to_lowercase();
+    if lower.contains("storage tier") || lower.contains("lower meta") || lower.contains("odps") {
+        ("unavailable_permanent".to_string(), "MaxCompute 非标准存储，Hologres 不支持访问".to_string())
+    } else if lower.contains("unsupported type") {
+        ("unavailable_permanent".to_string(), "列类型不兼容".to_string())
+    } else if lower.contains("permission denied") || lower.contains("access denied") {
+        ("unavailable_temporary".to_string(), "权限不足".to_string())
+    } else if lower.contains("does not exist") || lower.contains("not found") {
+        ("unavailable_temporary".to_string(), "表不存在".to_string())
+    } else if lower.contains("timeout") || lower.contains("connection") {
+        ("unavailable_temporary".to_string(), "连接超时或网络问题".to_string())
+    } else {
+        ("unavailable_temporary".to_string(), err.to_string())
+    }
 }
