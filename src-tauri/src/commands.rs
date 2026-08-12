@@ -218,6 +218,8 @@ pub struct Task {
     pub model_id: Option<String>,
     #[serde(rename = "tokenUsage", skip_serializing_if = "Option::is_none")]
     pub token_usage: Option<serde_json::Value>,
+    #[serde(rename = "kind", skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
 }
 
 #[tauri::command]
@@ -229,7 +231,7 @@ pub async fn load_workspace_tasks(
     tauri::async_runtime::spawn_blocking(move || -> Result<Vec<Task>, String> {
         let conn = db::get_db_conn()?;
         let mut stmt = conn
-            .prepare("SELECT id, name, created_at, saved, model_id, token_usage FROM tasks WHERE workspace_path = ? AND space_id = ? AND user_id = ? ORDER BY created_at ASC")
+            .prepare("SELECT id, name, created_at, saved, model_id, token_usage, kind FROM tasks WHERE workspace_path = ? AND space_id = ? AND user_id = ? ORDER BY created_at ASC")
             .map_err(|e| e.to_string())?;
         let rows = stmt
             .query_map(rusqlite::params![&workspace_path, &space_id, &user_id], |row| {
@@ -240,6 +242,7 @@ pub async fn load_workspace_tasks(
                     row.get::<_, i32>(3)? != 0,
                     row.get::<_, Option<String>>(4)?,
                     row.get::<_, Option<String>>(5)?,
+                    row.get::<_, Option<String>>(6)?,
                 ))
             })
             .map_err(|e| e.to_string())?;
@@ -247,7 +250,7 @@ pub async fn load_workspace_tasks(
         let chats_dir = db::get_chats_dir(&space_id, &user_id)?;
         let mut tasks = Vec::new();
         for r in rows {
-            if let Ok((id, name, created_at, saved, model_id, token_usage_json)) = r {
+            if let Ok((id, name, created_at, saved, model_id, token_usage_json, kind)) = r {
                 let mut messages = None;
                 let filepath = chats_dir.join(format!("{id}.json"));
                 if filepath.exists() {
@@ -264,6 +267,7 @@ pub async fn load_workspace_tasks(
                     saved,
                     model_id,
                     token_usage,
+                    kind,
                 });
             }
         }
