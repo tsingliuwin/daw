@@ -6814,6 +6814,18 @@ button.lm-select-trigger:hover:not(:disabled) {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.ln-task-tag {
+  flex-shrink: 0;
+  font-size: 9px;
+  font-weight: 600;
+  padding: 1px 5px;
+  border-radius: 3px;
+  line-height: 1.4;
+}
+.ln-task-tag--data {
+  background: rgba(99, 102, 241, 0.15);
+  color: #818cf8;
+}
 .ln-task-delete {
   background: transparent;
   border: none;

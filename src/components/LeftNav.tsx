@@ -109,6 +109,9 @@ export default function LeftNav(props: {
                           classList={{ active: task.id === props.activeTaskId }}
                           onClick={() => props.onSelectTask(task.id)}
                         >
+                          <Show when={task.kind === "data_analysis"}>
+                            <span class="ln-task-tag ln-task-tag--data">分析</span>
+                          </Show>
                           <span class="ln-task-name">{task.name}</span>
                           <button
                             class="ln-task-delete"
