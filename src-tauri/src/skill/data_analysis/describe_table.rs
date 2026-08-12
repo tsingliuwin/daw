@@ -76,29 +76,22 @@ impl Tool for DescribeTableTool {
         let ws_dir = self.app_state.workspace_dir.lock().await.to_string_lossy().to_string();
         let blocking_fut = tokio::task::spawn_blocking(move || -> Result<(SqlResult, Option<String>, std::collections::HashMap<String, String>, Vec<String>), String> {
             let guard = conn.blocking_lock();
-            // 对 schema.table 格式的表名，每段加双引号转义保留字（如 default）。
-            let quoted = table_name_string.split('.')
-                .map(|p| format!("\"{}\"", p.replace('"', "\"\"")))
-                .collect::<Vec<_>>()
-                .join(".");
-            let sql = format!("DESCRIBE {}", quoted);
+            // 用 SELECT * LIMIT 0 代替 DESCRIBE——DESCRIBE 内部查 catalog 元数据
+            // 会枚举所有 ATTACH 的 catalog（包括 Hologres），触发元数据扫描。
+            // SELECT * LIMIT 0 只解析视图定义 + 调 postgres_query，不枚举 catalog。
+            let sql = format!("SELECT * FROM \"{}\" LIMIT 0", table_name_string.replace('"', "\"\""));
             let query_res = execute::run_query(&guard, &sql, None).map_err(|e| e.to_string())?;
 
             // OKF：解析表的业务释义和关联关系。
-            // 如果 OKF 文件不存在，用 DESCRIBE 结果自动生成骨架（空业务释义）。
-            // OKF 文件名取最后一段短名（v_orders 而非 db_xxx.v_orders），
-            // 和 agent 调 write_okf_block 时用的短名一致。
-            let okf_short_name = table_name_string.rsplit('.').next().unwrap_or(&table_name_string).to_string();
+            let okf_short_name = table_name_string.clone();
             let okf_file = crate::okf::get_okf_dir(&ws_dir)
                 .join("tables")
                 .join(format!("{okf_short_name}.md"));
             if !okf_file.exists() {
-                // 自动生成骨架：从 DESCRIBE 结果提取列信息。
-                let columns: Vec<crate::okf::ColumnInfo> = query_res.rows.iter().map(|r| {
-                    let name = r.get(0).map(|v: &serde_json::Value| v.to_string().trim_matches('"').to_string()).unwrap_or_default();
-                    let ty = r.get(1).map(|v: &serde_json::Value| v.to_string()).unwrap_or_default();
-                    let nullable = r.get(2).map(|v: &serde_json::Value| v.to_string().to_uppercase().contains("YES")).unwrap_or(true);
-                    (name, ty, nullable)
+                // 用 columns/column_types 生成骨架（替代 DESCRIBE 的 rows）。
+                let columns: Vec<crate::okf::ColumnInfo> = query_res.columns.iter().enumerate().map(|(i, name)| {
+                    let ty = query_res.column_types.get(i).cloned().unwrap_or_default();
+                    (name.clone(), ty, true)
                 }).collect();
                 let _ = crate::okf::write_table_okf(&ws_dir, &okf_short_name, &columns, None);
             }
@@ -126,14 +119,11 @@ impl Tool for DescribeTableTool {
         let elapsed = start.elapsed().as_millis() as u64;
         match desc_res {
             Ok((res, okf_title, col_comments, relations)) => {
-                let n = res.rows.len();
-                let col_lines: Vec<String> = res.rows.iter().map(|r| {
-                    let name = r.get(0).map(|v: &serde_json::Value| v.to_string()).unwrap_or_default();
-                    let ty = r.get(1).map(|v: &serde_json::Value| v.to_string()).unwrap_or_default();
-                    let null = r.get(2).map(|v: &serde_json::Value| v.to_string()).unwrap_or_default();
-                    let clean_name = name.trim_matches('"').to_string();
-                    let comment = col_comments.get(&clean_name).map(|c| format!(", 释义: {c}")).unwrap_or_default();
-                    format!("{clean_name} (类型: {ty}, 允许空: {null}){comment}")
+                let n = res.columns.len();
+                let col_lines: Vec<String> = res.columns.iter().enumerate().map(|(i, name)| {
+                    let ty = res.column_types.get(i).cloned().unwrap_or_default();
+                    let comment = col_comments.get(name).map(|c| format!(", 释义: {c}")).unwrap_or_default();
+                    format!("{name} (类型: {ty}){comment}")
                 }).collect();
 
                 let mut title_part = String::new();
