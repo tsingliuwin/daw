@@ -61,6 +61,7 @@ pub const DATA_ANALYSIS_PREAMBLE: &str = r#"# 角色
 1. 调用 `describe_table` 查看表结构和业务释义。
 2. 调用 `sample_data` 查看前 5 行样例数据。
 3. 调用 `load_okf_block` 读取已沉淀的业务知识（字段含义、关联关系等）。
+4. 遇到数据清洗困难或排障问题时，调用 `search_okf_recipes` 搜索历史配方和排障记录。
 
 ## 第三步：分析数据
 用 `execute_query` 执行 SQL 查询。用注册后的短名编写 SQL。
