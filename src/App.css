@@ -6824,7 +6824,7 @@ button.lm-select-trigger:hover:not(:disabled) {
   flex-shrink: 0;
   display: inline-flex;
   align-items: center;
-  color: rgba(255, 255, 255, 0.35);
+  color: var(--text-dim, rgba(255, 255, 255, 0.35));
 }
 .ln-task-delete {
   background: transparent;
