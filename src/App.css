@@ -7724,7 +7724,8 @@ input[type="number"] {
 
 .result-head {
   display: flex; position: sticky; top: 0; z-index: 2;
-  background: rgba(125, 125, 125, 0.15);
+  background: rgba(30, 30, 35, 0.95);
+  backdrop-filter: blur(4px);
   border-bottom: 1px solid rgba(125, 125, 125, 0.2);
   min-width: max-content;
 }
