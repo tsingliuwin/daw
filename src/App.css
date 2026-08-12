@@ -6820,6 +6820,12 @@ button.lm-select-trigger:hover:not(:disabled) {
   align-items: center;
   color: #818cf8;
 }
+.ln-task-icon-default {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  color: rgba(255, 255, 255, 0.35);
+}
 .ln-task-delete {
   background: transparent;
   border: none;
