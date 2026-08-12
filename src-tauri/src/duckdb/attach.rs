@@ -29,7 +29,7 @@ pub fn build_attach_sql(r: &DataSourceConfig, alias: &str) -> String {
             conn_str.push_str(&format!(" sslmode={}", r.ssl_mode));
         }
         // READ_ONLY: 联邦查询模式不写远程。
-        format!("ATTACH '{}' AS {alias} (TYPE postgres, READ_ONLY);", conn_str)
+        format!("ATTACH '{}' AS {alias} (TYPE postgres);", conn_str)
     } else {
         // mysql
         format!(
