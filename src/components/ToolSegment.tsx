@@ -14,6 +14,11 @@ const TOOL_LABELS: Record<string, string> = {
   describe_table: "表结构",
   sample_data: "采样数据",
   render_chart: "生成图表",
+  load_okf_block: "读取知识",
+  write_okf_block: "记录知识",
+  search_okf_recipes: "搜索配方",
+  create_view: "创建视图",
+  drop_object: "删除对象",
 };
 
 /** 工具常用的参数键名映射（仅用于详情展示，未知键回退原样）。 */
