@@ -4285,15 +4285,29 @@ button.lm-select-trigger:hover:not(:disabled) {
 .chat-stream {
   flex: 1 1 auto;
   overflow-y: auto;
-  /* 关闭浏览器原生滚动锚定（scroll anchoring）。流式输出结论时，浏览器会选
-   * 结论段做锚定元素，并在 reasoning 折叠等高度突变时主动改写 scrollTop 想
-   * “稳住”它，反而把用户上滚后的视口拉到结论开头。禁用后滚动完全交由 JS
-   * （stickScrollToBottom + ResizeObserver）掌控：贴底时跟随，上滚时静默。 */
   overflow-anchor: none;
   padding: 16px 24px;
   display: flex;
   flex-direction: column;
   gap: 16px;
+  scrollbar-width: auto;
+  scrollbar-color: rgba(125, 125, 125, 0.4) transparent;
+}
+.chat-stream::-webkit-scrollbar {
+  width: 10px;
+}
+.chat-stream::-webkit-scrollbar-track {
+  background: transparent;
+}
+.chat-stream::-webkit-scrollbar-thumb {
+  background: rgba(125, 125, 125, 0.35);
+  border-radius: 5px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+.chat-stream::-webkit-scrollbar-thumb:hover {
+  background: rgba(125, 125, 125, 0.55);
+  background-clip: content-box;
 }
 .chat-stream-inner {
   position: relative;
