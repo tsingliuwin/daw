@@ -735,15 +735,22 @@ pub async fn link_connection_to_workspace(
 ) -> Result<(), String> {
     // 1. 持久化 link
     crate::db::link_workspace_db_connection(&ws_path, &conn_id)?;
-    // 2. 立即 ATTACH 到主会话
+    // 2. 立即 ATTACH 到主会话（如果尚未 ATTACH）
     let conn_record = crate::db::get_db_connection(&conn_id)?
         .ok_or_else(|| "数据源不存在".to_string())?;
     let duckdb_guard = state.duckdb.lock().await;
     if let Some(duckdb_conn) = &*duckdb_guard {
         let dc = duckdb_conn.clone();
         let rec = conn_record.clone();
+        let alias = crate::duckdb::attach::workspace_attach_alias(&rec.name);
         let result = tokio::task::spawn_blocking(move || {
             let guard = dc.blocking_lock();
+            // 先检查 catalog 是否已存在（启动时可能已 ATTACH）
+            let check_sql = format!("SELECT count(*) FROM duckdb_databases() WHERE database_name = '{}'", alias);
+            let exists: i64 = guard.query_row(&check_sql, [], |r| r.get(0)).unwrap_or(0);
+            if exists > 0 {
+                return Ok(()); // 已 ATTACH，跳过
+            }
             crate::duckdb::attach::attach_one(&guard, &rec)
         }).await
         .map_err(|e| format!("线程生成失败: {e}"))?;
