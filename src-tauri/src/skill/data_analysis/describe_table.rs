@@ -28,7 +28,7 @@ impl Tool for DescribeTableTool {
     async fn definition(&self, _prompt: String) -> ToolDefinition {
         ToolDefinition {
             name: "describe_table".to_string(),
-            description: "获取指定数据表或视图的结构信息（列名、数据类型等）。在对表编写 SQL 前，必须调用此工具了解其结构。table_name 可用全限定名（db_xxx.orders）或短名（orders）。".to_string(),
+            description: "获取已注册表/视图的结构信息（列名、数据类型、业务释义）。只能对 register_table 注册后的短名（如 v_orders）使用，不能直接用远程表名（如 default.orders）。".to_string(),
             parameters: json!({
                 "type": "object",
                 "properties": {
@@ -41,9 +41,12 @@ impl Tool for DescribeTableTool {
 
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
         let table_name = args.table_name.trim();
-        // 白名单校验：允许字母数字下划线、点（catalog.table）、双引号（标识符转义）。
-        if !table_name.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '.' || c == '"') {
-            return Err(ToolError("表名包含非法字符，仅允许字母、数字、下划线、点和引号。".to_string()));
+        // 拒绝远程表名（schema.table 格式），避免触发 postgres 元数据扫描。
+        // agent 必须先 register_table 注册短名，再用短名调 describe_table。
+        if table_name.contains('.') && !table_name.starts_with('"') {
+            return Err(ToolError(
+                format!("describe_table 只能对注册后的短名使用（如 v_orders），不能直接用远程表名「{table_name}」。请先调用 register_table 注册，再用短名调用。")
+            ));
         }
 
         let call_id = next_tool_id("desc");

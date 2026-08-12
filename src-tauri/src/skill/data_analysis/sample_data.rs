@@ -28,7 +28,7 @@ impl Tool for SampleDataTool {
     async fn definition(&self, _prompt: String) -> ToolDefinition {
         ToolDefinition {
             name: "sample_data".to_string(),
-            description: "获取指定数据表或视图的前 5 行样例数据。用于直观了解数据的具体内容和字段格式。table_name 可用全限定名（db_xxx.orders）或短名（orders）。".to_string(),
+            description: "获取已注册表/视图的前 5 行样例数据。只能对 register_table 注册后的短名（如 v_orders）使用。".to_string(),
             parameters: json!({
                 "type": "object",
                 "properties": {
@@ -41,8 +41,10 @@ impl Tool for SampleDataTool {
 
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
         let table_name = args.table_name.trim();
-        if !table_name.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '.' || c == '"') {
-            return Err(ToolError("表名包含非法字符，仅允许字母、数字、下划线、点和引号。".to_string()));
+        if table_name.contains('.') && !table_name.starts_with('"') {
+            return Err(ToolError(
+                format!("sample_data 只能对注册后的短名使用（如 v_orders），不能直接用远程表名「{table_name}」。请先调用 register_table 注册，再用短名调用。")
+            ));
         }
 
         let call_id = next_tool_id("sample");
