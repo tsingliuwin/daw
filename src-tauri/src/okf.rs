@@ -515,68 +515,45 @@ pub fn write_view_okf(ws_path: &str, view_name: &str, select_sql: &str) -> Resul
 /// 生成工作区 OKF 的 memory summary（注入 preamble）。
 /// 遍历 tables/views/pipelines 目录，摘要每张表的探索状态+字段释义+关联关系。
 pub fn get_okf_memory_summary(ws_path: &str) -> String {
-    let okf_dir = get_okf_dir(ws_path);
-    if !okf_dir.exists() {
-        return String::new();
-    }
+    // 从 table_registry 读取已注册的表（结构化元数据）。
+    let entries = crate::db::list_table_registry(ws_path).unwrap_or_default();
     let mut summary = String::new();
 
-    // tables
-    let tables_dir = okf_dir.join("tables");
-    if tables_dir.exists() {
-        let mut entries: Vec<_> = Vec::new();
-        if let Ok(dir) = fs::read_dir(&tables_dir) {
-            for e in dir.flatten() {
-                if e.path().extension().and_then(|x| x.to_str()) == Some("md") {
-                    entries.push(e);
-                }
-            }
-        }
-        entries.sort_by_key(|e| e.file_name());
+    if !entries.is_empty() {
         let mut blocks = Vec::new();
         for e in &entries {
-            let name = e.path().file_stem().and_then(|s| s.to_str()).unwrap_or("").to_string();
-            if let Ok(content) = fs::read_to_string(e.path()) {
-                let title = parse_yaml_field(&content, "title").unwrap_or_else(|| name.clone());
-                let status = parse_yaml_field(&content, "status").unwrap_or_else(|| "unknown".to_string());
-                let reason = parse_yaml_field(&content, "unavailable_reason").unwrap_or_default();
-                let (col_comments, relations) = {
-                    let mut cm = HashMap::new();
-                    let mut rl = Vec::new();
-                    // 简化：直接从 parse_column_semantics 拿
-                    let (_, c, r) = parse_column_semantics(ws_path, &name);
-                    cm = c;
-                    rl = r;
-                    (cm, rl)
-                };
-                let status_icon = match status.as_str() {
-                    "available" => "✅",
-                    "unavailable_permanent" => "❌",
-                    "unavailable_temporary" => "⚠️",
-                    _ => "❓",
-                };
-                let mut block = format!("- {status_icon} `{name}` ({title})");
-                if status != "available" && !reason.is_empty() {
-                    block.push_str(&format!(" — 不可用: {reason}"));
-                }
-                if !col_comments.is_empty() {
-                    let cols: Vec<String> = col_comments.iter().map(|(k, v)| format!("`{k}`: {v}")).collect();
-                    block.push_str(&format!("\n  字段释义: {}", cols.join("; ")));
-                }
-                if !relations.is_empty() {
-                    block.push_str(&format!("\n  关联: {}", relations.iter().map(|r| format!("- {r}")).collect::<Vec<_>>().join(" ")));
-                }
-                blocks.push(block);
+            let icon = match e.status.as_str() {
+                "available" => "✅",
+                "unavailable_permanent" => "❌",
+                "unavailable_temporary" => "⚠️",
+                _ => "❓",
+            };
+            let mode = if e.access_mode == "pushdown" { " [pushdown]" } else { "" };
+            let reason = if e.status != "available" && e.unavailable_reason.is_some() {
+                format!(" — 不可用: {}", e.unavailable_reason.as_ref().unwrap())
+            } else { String::new() };
+            // 从 OKF 读取字段释义和关联关系（业务知识仍在 OKF）。
+            let (col_comments, relations) = {
+                let (_, c, r) = parse_column_semantics(ws_path, &e.local_name);
+                (c, r)
+            };
+            let mut block = format!("- {icon} `{}` ({}){}{}", e.local_name, e.connection_name, mode, reason);
+            if !col_comments.is_empty() {
+                let cols: Vec<String> = col_comments.iter().map(|(k, v)| format!("`{k}`: {v}")).collect();
+                block.push_str(&format!("\n  字段释义: {}", cols.join("; ")));
             }
+            if !relations.is_empty() {
+                block.push_str(&format!("\n  关联: {}", relations.iter().map(|r| format!("- {r}")).collect::<Vec<_>>().join(" ")));
+            }
+            blocks.push(block);
         }
-        if !blocks.is_empty() {
-            summary.push_str("# 工作区数据记忆\n以下是你之前探索过的表和知识，直接继承使用，无需重复探索：\n\n");
-            summary.push_str(&blocks.join("\n"));
-            summary.push_str("\n\n");
-        }
+        summary.push_str("# 工作区数据记忆\n以下是你之前探索过的表和知识，直接继承使用，无需重复探索：\n\n");
+        summary.push_str(&blocks.join("\n"));
+        summary.push_str("\n\n");
     }
 
-    // pipelines
+    // pipelines 排障记录仍从 OKF 读。
+    let okf_dir = get_okf_dir(ws_path);
     let pipes_dir = okf_dir.join("pipelines").join("specific");
     if pipes_dir.exists() {
         let mut entries: Vec<_> = Vec::new();

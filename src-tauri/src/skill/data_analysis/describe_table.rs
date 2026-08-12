@@ -74,12 +74,27 @@ impl Tool for DescribeTableTool {
         let table_name_string = table_name.to_string();
         let hard_secs = QUERY_HARD_TIMEOUT_SECS;
         let ws_dir = self.app_state.workspace_dir.lock().await.to_string_lossy().to_string();
+        let ws_path_clone = self.app_state.workspace_path.lock().await.clone();
+        // 查 table_registry 获取 access_mode
+        let registry_entry = {
+            let tn = table_name_string.clone();
+            let ws = ws_path_clone.clone();
+            tokio::task::spawn_blocking(move || crate::db::get_table_registry_by_local_name(&ws, &tn))
+                .await
+                .map_err(|e| ToolError(format!("线程生成失败: {e}")))?
+                .map_err(|e| ToolError(e))?
+        };
         let blocking_fut = tokio::task::spawn_blocking(move || -> Result<(SqlResult, Option<String>, std::collections::HashMap<String, String>, Vec<String>), String> {
             let guard = conn.blocking_lock();
-            // 用 SELECT * LIMIT 0 代替 DESCRIBE——DESCRIBE 内部查 catalog 元数据
-            // 会枚举所有 ATTACH 的 catalog（包括 Hologres），触发元数据扫描。
-            // SELECT * LIMIT 0 只解析视图定义 + 调 postgres_query，不枚举 catalog。
-            let sql = format!("SELECT * FROM \"{}\" LIMIT 0", table_name_string.replace('"', "\"\""));
+            // 根据 access_mode 选择 SQL
+            let sql = match &registry_entry {
+                Some(entry) if entry.access_mode == "pushdown" => {
+                    let catalog = crate::duckdb::attach::workspace_attach_alias(&entry.connection_name);
+                    format!("SELECT * FROM postgres_query('{}', 'SELECT * FROM \"{}\".\"{}\" LIMIT 0')",
+                        catalog, entry.remote_schema, entry.remote_table)
+                }
+                _ => format!("SELECT * FROM \"{}\" LIMIT 0", table_name_string.replace('"', "\"\"")),
+            };
             let query_res = execute::run_query(&guard, &sql, None).map_err(|e| e.to_string())?;
 
             // OKF：解析表的业务释义和关联关系。

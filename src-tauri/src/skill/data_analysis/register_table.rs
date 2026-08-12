@@ -4,7 +4,8 @@ use rig_core::{completion::ToolDefinition, tool::Tool};
 
 use super::super::super::agent::error::ToolError;
 use super::super::super::agent::events::{emit_tool_call, emit_tool_result, next_tool_id};
-use super::super::super::duckdb::attach::{build_pg_conn_str, workspace_attach_alias};
+use super::super::super::duckdb::attach::workspace_attach_alias;
+use super::super::super::model::TableRegistryEntry;
 use super::super::super::state::AppState;
 
 #[derive(Deserialize, Serialize)]
@@ -44,15 +45,15 @@ impl Tool for RegisterTableTool {
     }
 
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
-        let conn_name = args.connection_name.trim();
-        let table_name = args.table_name.trim();
+        let conn_name = args.connection_name.trim().to_string();
+        let table_name = args.table_name.trim().to_string();
         let local = args.local_name.as_deref().map(|s| s.trim()).filter(|s| !s.is_empty());
         let local_name = local.map(|s| s.to_string()).unwrap_or_else(|| {
-            let short = table_name.rsplit('.').next().unwrap_or(table_name);
+            let short = table_name.rsplit('.').next().unwrap_or(&table_name);
             format!("v_{short}")
         });
 
-        for part in [&local_name, conn_name, table_name] {
+        for part in [&local_name, &conn_name, &table_name] {
             if part.is_empty() || part.contains('"') || part.contains('\0') {
                 return Err(ToolError(format!("非法名称: {part:?}")));
             }
@@ -98,103 +99,125 @@ impl Tool for RegisterTableTool {
             }
         };
 
-        let catalog = workspace_attach_alias(conn_name);
+        let catalog = workspace_attach_alias(&conn_name);
         let db_type = conn_record.db_type.clone();
+        let db_product = conn_record.db_product.clone();
+        let db_mode = conn_record.db_mode.clone();
         let local_name_clone = local_name.clone();
-        let table_name_clone = table_name.to_string();
+        let table_name_clone = table_name.clone();
         let catalog_clone = catalog.clone();
+        let ws_path_clone = ws_path.clone();
+        let conn_name_clone = conn_name.clone();
+        let conn_name_for_registry = conn_name.clone();
 
-        let result = tokio::task::spawn_blocking(move || -> Result<String, String> {
+        let result = tokio::task::spawn_blocking(move || -> Result<(String, String, String), String> {
             let guard = duckdb_conn.blocking_lock();
 
-            // 构造视图的远程引用路径。
-            let remote_ref = if db_type == "postgres" {
-                // postgres 类型：先检测是不是 foreign table（Hologres MaxCompute 外表）。
-                // 用 catalog 别名调 postgres_query（和 lakemind 一致）。
-                let parts: Vec<&str> = table_name_clone.splitn(2, '.').collect();
-                if parts.len() != 2 {
-                    return Err(format!("table_name 必须包含 schema，格式为 schema.table（如 default.orders）。请从 list_remote_tables 的结果中获取完整名称。"));
-                }
-                let (schema, tbl) = (parts[0], parts[1]);
+            // 解析 schema.table
+            let parts: Vec<&str> = table_name_clone.splitn(2, '.').collect();
+            if parts.len() != 2 {
+                return Err(format!("table_name 必须包含 schema，格式为 schema.table（如 default.orders）。"));
+            }
+            let (schema, tbl) = (parts[0], parts[1]);
+
+            // 检测 table_type（native vs foreign）
+            let table_type = if db_type == "postgres" {
                 let check_sql = format!(
-                    "SELECT count(*) FROM pg_catalog.pg_class c \
-                     JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace \
-                     WHERE c.relkind = ''f'' AND n.nspname = ''{}'' AND c.relname = ''{}''",
-                    schema, tbl
+                    "SELECT * FROM postgres_query('{}', 'SELECT count(*) FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace WHERE c.relkind = ''f'' AND n.nspname = ''{}'' AND c.relname = ''{}''')",
+                    catalog_clone, schema, tbl
                 );
-                let sql = format!("SELECT * FROM postgres_query('{}', '{}')", catalog_clone, check_sql);
-
-                let is_foreign: i64 = guard.query_row(&sql, [], |r| r.get(0)).unwrap_or(0);
-
-                if is_foreign > 0 {
-                    // foreign table：用 postgres_query 下推创建视图。
-                    // 先尝试 SELECT *，如果因不支持类型失败，逐个 CAST 问题列为 TEXT。
-                    let inner_base = format!("SELECT * FROM \"{}\".\"{}\"", schema, tbl);
-                    let inner_escaped = inner_base.replace('\'', "''");
-                    let pushdown = format!("postgres_query('{}', '{}')", catalog_clone, inner_escaped);
-                    // 先测试 pushdown 能否解析。
-                    let test_sql = format!("SELECT * FROM {} LIMIT 0", pushdown);
-                    match guard.prepare(&test_sql) {
-                        Ok(_) => pushdown,
-                        Err(e1) => {
-                            let err1 = e1.to_string();
-                            tracing::warn!(category = "query", "SELECT * 失败，尝试 CAST 问题列: {}", err1);
-                            // 解析报错列名，CAST 成 TEXT 重试。
-                            let mut cast_cols = Vec::new();
-                            let mut remaining_err = err1.clone();
-                            for _attempt in 0..5 {
-                                if let Some(col) = extract_unsupported_column(&remaining_err) {
-                                    cast_cols.push(col.clone());
-                                    let inner = build_cast_sql(&catalog_clone, schema, tbl, &cast_cols);
-                                    let test_sql2 = format!("SELECT * FROM {} LIMIT 0", inner);
-                                    match guard.prepare(&test_sql2) {
-                                        Ok(_) => return Ok(inner),
-                                        Err(e2) => { remaining_err = e2.to_string(); }
-                                    }
-                                } else {
-                                    break;
-                                }
-                            }
-                            // 最后兜底：全部列 CAST 成 TEXT。
-                            tracing::warn!(category = "query", "逐列 CAST 失败，兜底全 CAST TEXT");
-                            let inner_all = format!(
-                                "postgres_query('{}', 'SELECT * FROM \"{}\".\"{}\"')",
-                                catalog_clone, schema, tbl
-                            );
-                            // 用 to_json 兜底：把每行转成一行 JSON。
-                            // 实际上 DuckDB 的 postgres_query 无法在 prepare 阶段做这个，
-                            // 所以直接返回带报错信息的错误。
-                            return Ok(format!("postgres_query('{}', 'SELECT * FROM \"{}\".\"{}\"')",
-                                catalog_clone, schema, tbl));
-                        }
-                    }
-                } else {
-                    // 普通表：走 catalog 引用。
-                    format!("{}.{}", catalog_clone, table_name_clone)
-                }
+                let is_foreign: i64 = guard.query_row(&check_sql, [], |r| r.get(0)).unwrap_or(0);
+                if is_foreign > 0 { "foreign" } else { "native" }
             } else {
-                // mysql/sqlite：走 catalog 引用。
-                format!("{}.{}", catalog_clone, table_name_clone)
+                "native"
             };
 
-            // CREATE OR REPLACE 视图。CREATE VIEW 本身是惰性的（不触碰数据），
-            // 但视图定义里的远程表引用可能因权限不足在创建时报错。
-            let sql = format!(
-                "CREATE OR REPLACE VIEW \"{}\" AS SELECT * FROM {};",
-                local_name_clone, remote_ref
-            );
+            // 判断 access_mode
+            let access_mode = if db_mode == "external" {
+                // Hologres 外部库：catalog 路径不可用（pg_namespace 扫描报错）
+                "pushdown"
+            } else if db_mode == "standard" {
+                // 标准库：尝试 catalog 路径
+                let test_sql = format!("SELECT * FROM {}.{}.\"{}\" LIMIT 0", catalog_clone, schema, tbl);
+                match guard.prepare(&test_sql) {
+                    Ok(_) => "catalog",
+                    Err(_) => "pushdown",
+                }
+            } else {
+                // unknown：尝试 catalog
+                let test_sql = format!("SELECT * FROM {}.{}.\"{}\" LIMIT 0", catalog_clone, schema, tbl);
+                match guard.prepare(&test_sql) {
+                    Ok(_) => "catalog",
+                    Err(_) => "pushdown",
+                }
+            };
+
+            // 根据 access_mode 创建视图或记录 pushdown 引用
+            let remote_ref = if access_mode == "catalog" {
+                // catalog 模式：创建视图引用远程 catalog 表
+                format!("{}.{}", catalog_clone, table_name_clone)
+            } else {
+                // pushdown 模式：用 postgres_query 创建视图
+                let inner = format!("SELECT * FROM \"{}\".\"{}\"", schema, tbl);
+                let inner_escaped = inner.replace('\'', "''");
+                let pushdown = format!("postgres_query('{}', '{}')", catalog_clone, inner_escaped);
+                // 测试 pushdown 能否解析
+                let test_sql = format!("SELECT * FROM {} LIMIT 0", pushdown);
+                match guard.prepare(&test_sql) {
+                    Ok(_) => pushdown,
+                    Err(e1) => {
+                        let err1 = e1.to_string();
+                        tracing::warn!(category = "query", "pushdown SELECT * 失败，尝试 CAST: {}", err1);
+                        let mut cast_cols = Vec::new();
+                        let mut remaining_err = err1;
+                        for _ in 0..5 {
+                            if let Some(col) = extract_unsupported_column(&remaining_err) {
+                                cast_cols.push(col.clone());
+                                let cast_sql = build_cast_sql(&catalog_clone, schema, tbl, &cast_cols);
+                                let test2 = format!("SELECT * FROM {} LIMIT 0", cast_sql);
+                                match guard.prepare(&test2) {
+                                    Ok(_) => return Ok((cast_sql, table_type.to_string(), access_mode.to_string())),
+                                    Err(e2) => { remaining_err = e2.to_string(); }
+                                }
+                            } else { break; }
+                        }
+                        format!("postgres_query('{}', 'SELECT * FROM \"{}\".\"{}\"')", catalog_clone, schema, tbl)
+                    }
+                }
+            };
+
+            // CREATE OR REPLACE 视图
+            let sql = format!("CREATE OR REPLACE VIEW \"{}\" AS SELECT * FROM {};", local_name_clone, remote_ref);
             guard.execute_batch(&sql).map_err(|e| {
                 let msg = e.to_string();
-                if msg.to_lowercase().contains("permission denied")
-                    || msg.to_lowercase().contains("access denied")
-                    || msg.to_lowercase().contains("does not exist")
-                {
+                let lower = msg.to_lowercase();
+                if lower.contains("permission denied") || lower.contains("access denied") || lower.contains("does not exist") {
                     format!("注册失败，当前用户可能没有表 {table_name_clone} 的查询权限，或表不存在。错误: {msg}\n建议：跳过此表，用 list_remote_tables 查看其他可用表。")
                 } else {
                     format!("注册失败: {msg}")
                 }
             })?;
-            Ok(remote_ref)
+
+            // 写入 table_registry
+            let entry = TableRegistryEntry {
+                id: format!("tr-{}-{}", now_ms(), local_name_clone),
+                workspace_path: ws_path_clone,
+                connection_name: conn_name_for_registry.clone(),
+                local_name: local_name_clone.clone(),
+                remote_schema: schema.to_string(),
+                remote_table: tbl.to_string(),
+                db_type: db_type.clone(),
+                db_product: db_product.clone(),
+                db_mode: db_mode.clone(),
+                table_type: table_type.to_string(),
+                access_mode: access_mode.to_string(),
+                status: "available".to_string(),
+                unavailable_reason: None,
+                last_explored: Some(now_ms()),
+            };
+            let _ = crate::db::upsert_table_registry(&entry);
+
+            Ok((remote_ref, table_type.to_string(), access_mode.to_string()))
         })
         .await
         .map_err(|e| ToolError(format!("线程生成失败: {e}")))?
@@ -202,26 +225,24 @@ impl Tool for RegisterTableTool {
 
         let elapsed = start.elapsed().as_millis() as u64;
         match result {
-            Ok(remote_ref) => {
-                // 更新 OKF 状态为 available。
-                let ws_dir = self.app_state.workspace_dir.lock().await.to_string_lossy().to_string();
-                let local_name_clone = local_name.clone();
-                let _ = tokio::task::spawn_blocking(move || {
-                    crate::okf::update_table_status(&ws_dir, &local_name_clone, "available", None);
-                }).await;
-                let summary = format!("已注册视图 {} -> {}", local_name, remote_ref);
+            Ok((remote_ref, table_type, access_mode)) => {
+                let summary = format!("已注册 {} ({}={}，{}={})", local_name, "access", access_mode, "type", table_type);
                 let detail = format!("CREATE OR REPLACE VIEW \"{}\" AS SELECT * FROM {};", local_name, remote_ref);
                 emit_tool_result(&self.window, &self.task_id, &call_id, "ok", summary.clone(), Some(detail), None, Some(elapsed), None);
-                Ok(format!("{summary}。后续可用 {} 作为表名查询。", local_name))
+                if access_mode == "pushdown" {
+                    Ok(format!("{summary}。此表为 pushdown 模式，查询时请用 SELECT * FROM postgres_query('db_{}', 'SELECT ... FROM \"{}\" ...') 下推。", conn_name, table_name))
+                } else {
+                    Ok(format!("{summary}。后续可用 {} 作为表名查询。", local_name))
+                }
             }
             Err(err) => {
-                // 更新 OKF 状态为不可用。
-                let ws_dir = self.app_state.workspace_dir.lock().await.to_string_lossy().to_string();
-                let local_name_clone = local_name.clone();
                 let err_msg = err.0.clone();
                 let (status, reason) = classify_error(&err_msg);
+                // 更新 table_registry 状态（如果记录存在）
+                let ws_path_clone2 = ws_path.clone();
+                let local_name_clone2 = local_name.clone();
                 let _ = tokio::task::spawn_blocking(move || {
-                    crate::okf::update_table_status(&ws_dir, &local_name_clone, &status, Some(&reason));
+                    crate::db::update_table_registry_status(&ws_path_clone2, &local_name_clone2, &status, Some(&reason));
                 }).await;
                 emit_tool_result(&self.window, &self.task_id, &call_id, "error", err.0.clone(), None, None, Some(elapsed), None);
                 Err(err)
@@ -230,62 +251,44 @@ impl Tool for RegisterTableTool {
     }
 }
 
+fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
+}
+
 /// 从 DuckDB 错误信息中提取不支持类型的列名。
-/// 错误格式: "unsupported type in column xxx"
 fn extract_unsupported_column(err: &str) -> Option<String> {
     let marker = "unsupported type in column ";
     if let Some(pos) = err.find(marker) {
         let rest = &err[pos + marker.len()..];
-        // 列名到行尾或句号或冒号结束。
         let end = rest.find(|c: char| c == '.' || c == ':' || c == '\n').unwrap_or(rest.len());
         let col = rest[..end].trim().trim_end_matches('.').to_string();
-        if !col.is_empty() {
-            return Some(col);
-        }
+        if !col.is_empty() { return Some(col); }
     }
     None
 }
 
-/// 构造 CAST 问题列为 TEXT 的下推 SQL。
-/// 先查出表的全部列名，然后把问题列 CAST 成 TEXT。
 fn build_cast_sql(catalog: &str, schema: &str, tbl: &str, cast_cols: &[String]) -> String {
-    // 用 postgres_query 查列名，然后构造 SELECT 语句。
-    // 这里简化处理：内层 SQL 用 SELECT * 但把已知的 CAST 列单独列出。
-    // 实际上 DuckDB 的 postgres_query 不支持在 prepare 阶段做列重命名，
-    // 所以改为在内层 SQL 里用 CASE/CAST。
-    //
-    // 最简单方案：内层 SQL 用 `SELECT * EXCLUDE(col1,col2), CAST(col1 AS TEXT), CAST(col2 AS TEXT)`
-    // 但 Hologres 不支持 EXCLUDE 语法。改为：直接 CAST 问题列为 TEXT。
-    // DuckDB 的 postgres_query 会原样传给 Hologres 执行，所以用 PG 语法。
-    //
-    // 最终方案：内层 SQL 用 `SELECT *` 但外层 DuckDB 做 CAST。
-    // 即：CREATE VIEW v_xxx AS SELECT col1::TEXT, col2, ... FROM postgres_query(...)
-    // 但列名未知...所以改为最务实的方案：
-    // 内层全查，外层用 `SELECT * REPLACE (CAST(col AS TEXT) AS col)`
-    let exclude_list = cast_cols.iter().map(|c| format!("\"{}\"", c)).collect::<Vec<_>>().join(", ");
     let cast_list = cast_cols.iter().map(|c| format!("CAST(\"{}\" AS TEXT) AS \"{}\"", c, c)).collect::<Vec<_>>().join(", ");
     let inner = format!("SELECT * FROM \"{}\".\"{}\"", schema, tbl);
     let inner_escaped = inner.replace('\'', "''");
-    // DuckDB 支持 REPLACE 语法：SELECT * REPLACE (expr AS col)
-    format!(
-        "SELECT * REPLACE ({}) FROM postgres_query('{}', '{}')",
-        cast_list, catalog, inner_escaped
-    )
+    format!("SELECT * REPLACE ({}) FROM postgres_query('{}', '{}')", cast_list, catalog, inner_escaped)
 }
 
-/// 根据错误信息判定可用性等级。
 fn classify_error(err: &str) -> (String, String) {
     let lower = err.to_lowercase();
     if lower.contains("storage tier") || lower.contains("lower meta") || lower.contains("odps") {
         ("unavailable_permanent".to_string(), "MaxCompute 非标准存储，Hologres 不支持访问".to_string())
     } else if lower.contains("unsupported type") {
         ("unavailable_permanent".to_string(), "列类型不兼容".to_string())
-    } else if lower.contains("permission denied") || lower.contains("access denied") {
+    } else if lower.contains("permission") || lower.contains("privilege") || lower.contains("authorize") || lower.contains("deny") {
         ("unavailable_temporary".to_string(), "权限不足".to_string())
     } else if lower.contains("does not exist") || lower.contains("not found") {
         ("unavailable_temporary".to_string(), "表不存在".to_string())
     } else if lower.contains("timeout") || lower.contains("connection") {
-        ("unavailable_temporary".to_string(), "连接超时或网络问题".to_string())
+        ("unavailable_temporary".to_string(), "连接超时".to_string())
     } else {
         ("unavailable_temporary".to_string(), err.to_string())
     }

@@ -4,8 +4,8 @@ use rig_core::{completion::ToolDefinition, tool::Tool};
 
 use super::super::super::agent::error::ToolError;
 use super::super::super::agent::events::{emit_tool_call, emit_tool_result, next_tool_id};
-use super::super::super::duckdb::{execute, QUERY_HARD_TIMEOUT_SECS};
-use super::super::super::model::SqlResult;
+use super::super::super::duckdb::execute;
+use super::super::super::duckdb::attach::workspace_attach_alias;
 use super::super::super::state::AppState;
 
 #[derive(Deserialize, Serialize)]
@@ -32,7 +32,7 @@ impl Tool for SampleDataTool {
             parameters: json!({
                 "type": "object",
                 "properties": {
-                    "table_name": { "type": "string", "description": "要采样查询的表名或视图名" }
+                    "table_name": { "type": "string", "description": "注册后的短名（如 v_orders）" }
                 },
                 "required": ["table_name"]
             }),
@@ -40,7 +40,7 @@ impl Tool for SampleDataTool {
     }
 
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
-        let table_name = args.table_name.trim();
+        let table_name = args.table_name.trim().to_string();
         if table_name.contains('.') && !table_name.starts_with('"') {
             return Err(ToolError(
                 format!("sample_data 只能对注册后的短名使用（如 v_orders），不能直接用远程表名「{table_name}」。请先调用 register_table 注册，再用短名调用。")
@@ -48,43 +48,63 @@ impl Tool for SampleDataTool {
         }
 
         let call_id = next_tool_id("sample");
-        emit_tool_call(
-            &self.window, &self.task_id, &call_id, "sample_data",
-            json!({ "table_name": table_name }),
-        );
+        emit_tool_call(&self.window, &self.task_id, &call_id, "sample_data", json!({
+            "table_name": &table_name,
+        }));
 
         let start = std::time::Instant::now();
+
+        // 查 table_registry 获取 access_mode
+        let ws_path = self.app_state.workspace_path.lock().await.clone();
+        let ws_path_clone = ws_path.clone();
+        let table_name_clone = table_name.clone();
+        let registry_entry = {
+            let tn = table_name.clone();
+            let ws = ws_path.clone();
+            tokio::task::spawn_blocking(move || {
+                crate::db::get_table_registry_by_local_name(&ws, &tn)
+            }).await
+            .map_err(|e| ToolError(format!("线程生成失败: {e}")))?
+            .map_err(|e| ToolError(e))?
+        };
+
         let duckdb_guard = self.app_state.duckdb.lock().await;
         let conn = match &*duckdb_guard {
             Some(c) => c.clone(),
             None => {
-                let msg = "DuckDB 引擎未初始化。请检查是否配置了数据源并重启应用。".to_string();
-                emit_tool_result(
-                    &self.window, &self.task_id, &call_id, "error",
-                    msg.clone(), None, None, Some(0), None,
-                );
+                let msg = "DuckDB 引擎未初始化。".to_string();
+                emit_tool_result(&self.window, &self.task_id, &call_id, "error", msg.clone(), None, None, Some(0), None);
                 return Err(ToolError(msg));
             }
         };
         let ih = self.app_state.interrupt_handle.lock().await.as_ref()
             .and_then(|h| h.lock().ok().map(|g| g.clone()));
 
-        let table_name_string = table_name.to_string();
-        let hard_secs = QUERY_HARD_TIMEOUT_SECS;
-        let blocking_fut = tokio::task::spawn_blocking(move || -> Result<SqlResult, String> {
+        let hard_secs = super::super::super::duckdb::QUERY_HARD_TIMEOUT_SECS;
+        let local_name = table_name.clone();
+
+        let blocking_fut = tokio::task::spawn_blocking(move || -> Result<crate::model::SqlResult, String> {
             let guard = conn.blocking_lock();
-            let sql = format!("SELECT * FROM {} LIMIT 5", table_name_string);
+
+            // 根据 access_mode 选择 SQL
+            let sql = match &registry_entry {
+                Some(entry) if entry.access_mode == "pushdown" => {
+                    let catalog = workspace_attach_alias(&entry.connection_name);
+                    format!("SELECT * FROM postgres_query('{}', 'SELECT * FROM \"{}\".\"{}\" LIMIT 5')",
+                        catalog, entry.remote_schema, entry.remote_table)
+                }
+                _ => format!("SELECT * FROM \"{}\" LIMIT 5", local_name.replace('"', "\"\"")),
+            };
             execute::run_query(&guard, &sql, Some(5))
         });
+
         let query_res = if hard_secs > 0 {
             match tokio::time::timeout(std::time::Duration::from_secs(hard_secs), blocking_fut).await {
                 Ok(r) => r
                     .map_err(|e| ToolError(format!("线程生成失败: {e}")))
                     .and_then(|res| res.map_err(|e| ToolError(format!("采样查询失败: {e}")))),
                 Err(_) => {
-                    if let Some(ih) = ih {
-                        ih.interrupt();
-                    }
+                    if let Some(ih) = ih { ih.interrupt(); }
                     Err(ToolError(format!("采样查询已达到最大等待时间（{} 秒）被强制终止", hard_secs)))
                 }
             }
@@ -101,32 +121,24 @@ impl Tool for SampleDataTool {
                 let summary = format!("完成采样，获取到 {} 行样例数据", n);
                 let detail = format!("SELECT * FROM {} LIMIT 5", table_name);
                 let payload = serde_json::to_value(&res).ok();
-                emit_tool_result(
-                    &self.window, &self.task_id, &call_id, "ok",
-                    summary, Some(detail), payload, Some(elapsed), None,
-                );
+                emit_tool_result(&self.window, &self.task_id, &call_id, "ok", summary, Some(detail), payload, Some(elapsed), None);
                 Ok(format!("表 {} 的前 {} 行样例数据已展示在结果表格中。", table_name, n))
             }
             Err(err) => {
-                // 采样失败时更新 OKF 表探索状态。
                 let ws_dir = self.app_state.workspace_dir.lock().await.to_string_lossy().to_string();
                 let err_msg = err.0.clone();
-                let table_name_clone = table_name.to_string();
+                let table_name_clone2 = table_name.clone();
                 let _ = tokio::task::spawn_blocking(move || {
                     let (status, reason) = classify_sample_error(&err_msg);
-                    crate::okf::update_table_status(&ws_dir, &table_name_clone, &status, Some(&reason));
+                    crate::db::update_table_registry_status(&ws_dir, &table_name_clone2, &status, Some(&reason));
                 }).await;
-                emit_tool_result(
-                    &self.window, &self.task_id, &call_id, "error",
-                    err.0.clone(), None, None, Some(elapsed), None,
-                );
+                emit_tool_result(&self.window, &self.task_id, &call_id, "error", err.0.clone(), None, None, Some(elapsed), None);
                 Err(err)
             }
         }
     }
 }
 
-/// 根据采样错误判定可用性等级。
 fn classify_sample_error(err: &str) -> (String, String) {
     let lower = err.to_lowercase();
     if lower.contains("storage tier") || lower.contains("lower meta") {
