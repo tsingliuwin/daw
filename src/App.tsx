@@ -191,13 +191,14 @@ export default function App() {
   }
 
   // 追加一行到 .jsonl（流式输出时实时落盘，防崩溃丢数据）。
-  async function appendChatLine(taskId: string, line: unknown) {
-    try {
-      await invoke("append_chat_line", { taskId, line, spaceId: "personal", userId: "default" });
-    } catch (err) {
-      logError("agent", "Failed to append chat line", err);
-    }
-  }
+  // 当前未使用：segment 和 ChatMessage 格式不一致，需要后续设计。
+  // async function appendChatLine(taskId: string, line: unknown) {
+  //   try {
+  //     await invoke("append_chat_line", { taskId, line, spaceId: "personal", userId: "default" });
+  //   } catch (err) {
+  //     logError("agent", "Failed to append chat line", err);
+  //   }
+  // }
 
   // 加载工作区列表并为每个工作区加载任务，恢复 workspace.last 决定初始
   // activeTaskId 与首页工作区下拉选中项。onMount 首次加载走此逻辑。
