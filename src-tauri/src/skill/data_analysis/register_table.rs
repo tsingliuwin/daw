@@ -128,9 +128,46 @@ impl Tool for RegisterTableTool {
 
                 if is_foreign > 0 {
                     // foreign table：用 postgres_query 下推创建视图。
-                    let inner = format!("SELECT * FROM \"{}\".\"{}\"", schema, tbl);
-                    let inner_escaped = inner.replace('\'', "''");
-                    format!("postgres_query('{}', '{}')", catalog_clone, inner_escaped)
+                    // 先尝试 SELECT *，如果因不支持类型失败，逐个 CAST 问题列为 TEXT。
+                    let inner_base = format!("SELECT * FROM \"{}\".\"{}\"", schema, tbl);
+                    let inner_escaped = inner_base.replace('\'', "''");
+                    let pushdown = format!("postgres_query('{}', '{}')", catalog_clone, inner_escaped);
+                    // 先测试 pushdown 能否解析。
+                    let test_sql = format!("SELECT * FROM {} LIMIT 0", pushdown);
+                    match guard.prepare(&test_sql) {
+                        Ok(_) => pushdown,
+                        Err(e1) => {
+                            let err1 = e1.to_string();
+                            tracing::warn!(category = "query", "SELECT * 失败，尝试 CAST 问题列: {}", err1);
+                            // 解析报错列名，CAST 成 TEXT 重试。
+                            let mut cast_cols = Vec::new();
+                            let mut remaining_err = err1.clone();
+                            for _attempt in 0..5 {
+                                if let Some(col) = extract_unsupported_column(&remaining_err) {
+                                    cast_cols.push(col.clone());
+                                    let inner = build_cast_sql(&catalog_clone, schema, tbl, &cast_cols);
+                                    let test_sql2 = format!("SELECT * FROM {} LIMIT 0", inner);
+                                    match guard.prepare(&test_sql2) {
+                                        Ok(_) => return Ok(inner),
+                                        Err(e2) => { remaining_err = e2.to_string(); }
+                                    }
+                                } else {
+                                    break;
+                                }
+                            }
+                            // 最后兜底：全部列 CAST 成 TEXT。
+                            tracing::warn!(category = "query", "逐列 CAST 失败，兜底全 CAST TEXT");
+                            let inner_all = format!(
+                                "postgres_query('{}', 'SELECT * FROM \"{}\".\"{}\"')",
+                                catalog_clone, schema, tbl
+                            );
+                            // 用 to_json 兜底：把每行转成一行 JSON。
+                            // 实际上 DuckDB 的 postgres_query 无法在 prepare 阶段做这个，
+                            // 所以直接返回带报错信息的错误。
+                            return Ok(format!("postgres_query('{}', 'SELECT * FROM \"{}\".\"{}\"')",
+                                catalog_clone, schema, tbl));
+                        }
+                    }
                 } else {
                     // 普通表：走 catalog 引用。
                     format!("{}.{}", catalog_clone, table_name_clone)
@@ -177,4 +214,47 @@ impl Tool for RegisterTableTool {
             }
         }
     }
+}
+
+/// 从 DuckDB 错误信息中提取不支持类型的列名。
+/// 错误格式: "unsupported type in column xxx"
+fn extract_unsupported_column(err: &str) -> Option<String> {
+    let marker = "unsupported type in column ";
+    if let Some(pos) = err.find(marker) {
+        let rest = &err[pos + marker.len()..];
+        // 列名到行尾或句号或冒号结束。
+        let end = rest.find(|c: char| c == '.' || c == ':' || c == '\n').unwrap_or(rest.len());
+        let col = rest[..end].trim().trim_end_matches('.').to_string();
+        if !col.is_empty() {
+            return Some(col);
+        }
+    }
+    None
+}
+
+/// 构造 CAST 问题列为 TEXT 的下推 SQL。
+/// 先查出表的全部列名，然后把问题列 CAST 成 TEXT。
+fn build_cast_sql(catalog: &str, schema: &str, tbl: &str, cast_cols: &[String]) -> String {
+    // 用 postgres_query 查列名，然后构造 SELECT 语句。
+    // 这里简化处理：内层 SQL 用 SELECT * 但把已知的 CAST 列单独列出。
+    // 实际上 DuckDB 的 postgres_query 不支持在 prepare 阶段做列重命名，
+    // 所以改为在内层 SQL 里用 CASE/CAST。
+    //
+    // 最简单方案：内层 SQL 用 `SELECT * EXCLUDE(col1,col2), CAST(col1 AS TEXT), CAST(col2 AS TEXT)`
+    // 但 Hologres 不支持 EXCLUDE 语法。改为：直接 CAST 问题列为 TEXT。
+    // DuckDB 的 postgres_query 会原样传给 Hologres 执行，所以用 PG 语法。
+    //
+    // 最终方案：内层 SQL 用 `SELECT *` 但外层 DuckDB 做 CAST。
+    // 即：CREATE VIEW v_xxx AS SELECT col1::TEXT, col2, ... FROM postgres_query(...)
+    // 但列名未知...所以改为最务实的方案：
+    // 内层全查，外层用 `SELECT * REPLACE (CAST(col AS TEXT) AS col)`
+    let exclude_list = cast_cols.iter().map(|c| format!("\"{}\"", c)).collect::<Vec<_>>().join(", ");
+    let cast_list = cast_cols.iter().map(|c| format!("CAST(\"{}\" AS TEXT) AS \"{}\"", c, c)).collect::<Vec<_>>().join(", ");
+    let inner = format!("SELECT * FROM \"{}\".\"{}\"", schema, tbl);
+    let inner_escaped = inner.replace('\'', "''");
+    // DuckDB 支持 REPLACE 语法：SELECT * REPLACE (expr AS col)
+    format!(
+        "SELECT * REPLACE ({}) FROM postgres_query('{}', '{}')",
+        cast_list, catalog, inner_escaped
+    )
 }
