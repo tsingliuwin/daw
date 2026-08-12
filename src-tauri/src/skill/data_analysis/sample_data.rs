@@ -99,10 +99,11 @@ impl Tool for SampleDataTool {
             Ok(res) => {
                 let n = res.rows.len();
                 let summary = format!("完成采样，获取到 {} 行样例数据", n);
+                let detail = format!("SELECT * FROM {} LIMIT 5", table_name);
                 let payload = serde_json::to_value(&res).ok();
                 emit_tool_result(
                     &self.window, &self.task_id, &call_id, "ok",
-                    summary, None, payload, Some(elapsed), None,
+                    summary, Some(detail), payload, Some(elapsed), None,
                 );
                 Ok(format!("表 {} 的前 {} 行样例数据已展示在结果表格中。", table_name, n))
             }
