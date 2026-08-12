@@ -205,7 +205,7 @@ export default function SettingsPage(props: {
     } catch (err) { alert(`删除失败: ${err}`); }
   };
   const handleToggleLink = async (connId: string) => {
-    if (!props.workspacePath) { alert("无法确定当前工作区"); return; }
+    if (!props.workspacePath) { alert("无法确定当前工作区（workspacePath 为空）"); return; }
     const isLinked = !!linkedConns()[connId];
     try {
       if (isLinked) {
@@ -214,7 +214,12 @@ export default function SettingsPage(props: {
         await invoke("link_connection_to_workspace", { wsPath: props.workspacePath, connId });
       }
       await loadWorkspaceLinks();
-    } catch (err) { alert(`操作失败: ${err}`); }
+    } catch (err) {
+      console.error("[link] toggle failed:", err);
+      alert(`操作失败: ${err}`);
+      // 即使失败也刷新状态
+      await loadWorkspaceLinks();
+    }
   };
   const selectDbType = (t: DataSourceConfig["dbType"]) => {
     setFormType(t);
