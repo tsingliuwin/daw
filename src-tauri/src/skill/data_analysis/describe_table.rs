@@ -73,7 +73,12 @@ impl Tool for DescribeTableTool {
         let ws_dir = self.app_state.workspace_dir.lock().await.to_string_lossy().to_string();
         let blocking_fut = tokio::task::spawn_blocking(move || -> Result<(SqlResult, Option<String>, std::collections::HashMap<String, String>, Vec<String>), String> {
             let guard = conn.blocking_lock();
-            let sql = format!("DESCRIBE {}", table_name_string);
+            // 对 schema.table 格式的表名，每段加双引号转义保留字（如 default）。
+            let quoted = table_name_string.split('.')
+                .map(|p| format!("\"{}\"", p.replace('"', "\"\"")))
+                .collect::<Vec<_>>()
+                .join(".");
+            let sql = format!("DESCRIBE {}", quoted);
             let query_res = execute::run_query(&guard, &sql, None).map_err(|e| e.to_string())?;
 
             // OKF：解析表的业务释义和关联关系。
