@@ -17,6 +17,7 @@ pub struct CreateViewTool {
     pub app_state: AppState,
     pub task_id: String,
     pub window: tauri::Window,
+    pub confirm_mode: String,
 }
 
 /// 名称校验：拒空、拒双引号（防注入）、拒 null byte。
@@ -65,9 +66,9 @@ impl Tool for CreateViewTool {
         let start = std::time::Instant::now();
         let summary_pending = format!("创建视图 {}", name);
 
-        // 确认 gate：变更前确认模式下挂起等待用户确认。
-        let approved = if self.app_state.workspace_path.lock().await.is_empty() {
-            true // 无工作区上下文时直接执行（兜底）
+        // 确认 gate：仅"变更前确认"模式才挂起等待用户确认，"自动执行"直接执行。
+        let approved = if self.confirm_mode != "变更前确认" {
+            true
         } else {
             // 用 pending_confirmations + oneshot 实现
             let (tx, rx) = oneshot::channel::<crate::state::ConfirmDecision>();

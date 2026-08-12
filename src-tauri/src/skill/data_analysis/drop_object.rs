@@ -16,6 +16,7 @@ pub struct DropObjectTool {
     pub app_state: AppState,
     pub task_id: String,
     pub window: tauri::Window,
+    pub confirm_mode: String,
 }
 
 impl Tool for DropObjectTool {
@@ -56,18 +57,21 @@ impl Tool for DropObjectTool {
             "DROP VIEW IF EXISTS \"{name}\";\nDROP TABLE IF EXISTS \"{name}\";",
         );
 
-        // 确认 gate。
-        let (tx, rx) = oneshot::channel::<crate::state::ConfirmDecision>();
-        {
-            let key = format!("{}:{}", self.task_id, call_id);
-            let mut pending = self.app_state.pending_confirmations.lock().await;
-            pending.insert(key, crate::state::PendingConfirmation { tx });
-        }
-        emit_tool_awaiting(&self.window, &self.task_id, &call_id, summary_pending.clone(), ddl.clone());
-
-        let approved = match rx.await {
-            Ok(d) => d.approved,
-            Err(_) => false,
+        // 确认 gate：仅"变更前确认"模式才挂起等待用户确认。
+        let approved = if self.confirm_mode != "变更前确认" {
+            true
+        } else {
+            let (tx, rx) = oneshot::channel::<crate::state::ConfirmDecision>();
+            {
+                let key = format!("{}:{}", self.task_id, call_id);
+                let mut pending = self.app_state.pending_confirmations.lock().await;
+                pending.insert(key, crate::state::PendingConfirmation { tx });
+            }
+            emit_tool_awaiting(&self.window, &self.task_id, &call_id, summary_pending.clone(), ddl.clone());
+            match rx.await {
+                Ok(d) => d.approved,
+                Err(_) => false,
+            }
         };
 
         if !approved {
