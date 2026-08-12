@@ -254,15 +254,25 @@ pub async fn load_workspace_tasks(
                 let mut messages = None;
                 let jsonl_path = chats_dir.join(format!("{id}.jsonl"));
                 if jsonl_path.exists() {
-                    // 读 JSONL：逐行解析。
+                    // 读 JSONL：逐行解析，按 msg_id 去重取最后一条，保持首次出现顺序。
                     let content = std::fs::read_to_string(&jsonl_path).unwrap_or_default();
-                    let mut arr = Vec::new();
+                    let mut first_order: Vec<String> = Vec::new();
+                    let mut last_val: std::collections::HashMap<String, serde_json::Value> = std::collections::HashMap::new();
                     for line in content.lines() {
                         if line.trim().is_empty() { continue; }
                         if let Ok(v) = serde_json::from_str::<serde_json::Value>(line) {
-                            arr.push(v);
+                            if let Some(msg_id) = v.get("id").and_then(|i| i.as_str()) {
+                                let msg_id = msg_id.to_string();
+                                if !last_val.contains_key(&msg_id) {
+                                    first_order.push(msg_id.clone());
+                                }
+                                last_val.insert(msg_id, v);
+                            }
                         }
                     }
+                    let arr: Vec<serde_json::Value> = first_order.into_iter()
+                        .filter_map(|id| last_val.remove(&id))
+                        .collect();
                     messages = Some(serde_json::Value::Array(arr));
                 }
                 let token_usage = token_usage_json

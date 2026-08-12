@@ -191,14 +191,13 @@ export default function App() {
   }
 
   // 追加一行到 .jsonl（流式输出时实时落盘，防崩溃丢数据）。
-  // 当前未使用：segment 和 ChatMessage 格式不一致，需要后续设计。
-  // async function appendChatLine(taskId: string, line: unknown) {
-  //   try {
-  //     await invoke("append_chat_line", { taskId, line, spaceId: "personal", userId: "default" });
-  //   } catch (err) {
-  //     logError("agent", "Failed to append chat line", err);
-  //   }
-  // }
+  async function appendChatLine(taskId: string, line: unknown) {
+    try {
+      await invoke("append_chat_line", { taskId, line, spaceId: "personal", userId: "default" });
+    } catch (err) {
+      logError("agent", "Failed to append chat line", err);
+    }
+  }
 
   // 加载工作区列表并为每个工作区加载任务，恢复 workspace.last 决定初始
   // activeTaskId 与首页工作区下拉选中项。onMount 首次加载走此逻辑。
@@ -335,6 +334,14 @@ export default function App() {
           }
 
           messages[messages.length - 1] = { ...lastMsg, segments };
+
+          // tool_result/chart/error 时追加完整 assistant 消息到 .jsonl（实时落盘）。
+          // 同一 msg_id 多行，load 时去重取最后一条。
+          // text/reasoning delta 太频繁不追加，done 时全量写覆盖。
+          if (kind === "tool_result" || kind === "chart" || kind === "error") {
+            const assistantMsg = messages[messages.length - 1];
+            void appendChatLine(targetId, assistantMsg);
+          }
 
           // done/error：关闭最后一段 reasoning 的 elapsedMs，并落库。
           if (kind === "done" || kind === "error") {
@@ -529,7 +536,9 @@ export default function App() {
       ...prev,
       [wsPath]: (prev[wsPath] ?? []).map((t) => (t.id === id ? updatedTask : t)),
     }));
-    await saveTaskBackend(updatedTask, wsPath);
+    // 追加用户消息到 .jsonl（实时落盘）+ 更新 SQLite 元数据。
+    void appendChatLine(id, userMsg);
+    await invoke("save_task", { workspacePath: wsPath, taskId: id, name: newName, messages: [], modelId: task.modelId || null, tokenUsage: task.tokenUsage ?? null, spaceId: "personal", userId: "default", kind: task.kind ?? "task" }).catch(() => {});
 
     try {
       setStreamingTaskId(id);
