@@ -25,7 +25,7 @@ pub fn get_okf_dir(ws_path: &str) -> PathBuf {
 /// Ensure that all standard OKF subdirectories exist.
 pub fn ensure_okf_dirs(ws_path: &str) -> Result<PathBuf, String> {
     let okf_dir = get_okf_dir(ws_path);
-    let subdirs = ["tables", "views", "concepts", "pipelines/specific"];
+    let subdirs = ["tables", "views", "sources", "concepts", "pipelines/specific"];
     for sub in &subdirs {
         let path = okf_dir.join(sub);
         if !path.exists() {
@@ -121,7 +121,8 @@ pub fn read_okf_block(
     heading: &str,
 ) -> Result<String, String> {
     let okf_dir = get_okf_dir(ws_path);
-    let mut file_path = okf_dir.join(category).join(format!("{name}.md"));
+    let requested_path = okf_dir.join(category).join(format!("{name}.md"));
+    let mut file_path = requested_path.clone();
     if !file_path.exists() {
         let candidates = [
             okf_dir.join("tables").join(format!("{name}.md")),
@@ -137,7 +138,7 @@ pub fn read_okf_block(
             }
         }
         if !found {
-            return Err(format!("文件不存在: {:?}", file_path));
+            return Err(format!("文件不存在: {:?}", requested_path));
         }
     }
 
@@ -159,20 +160,8 @@ pub fn write_okf_block(
     new_content: &str,
 ) -> Result<(), String> {
     let okf_dir = ensure_okf_dirs(ws_path)?;
-    let mut file_path = okf_dir.join(category).join(format!("{name}.md"));
-    if !file_path.exists() {
-        let candidates = [
-            okf_dir.join("tables").join(format!("{name}.md")),
-            okf_dir.join("views").join(format!("{name}.md")),
-            okf_dir.join("sources").join(format!("{name}.md")),
-        ];
-        for c in &candidates {
-            if c.exists() {
-                file_path = c.clone();
-                break;
-            }
-        }
-    }
+    // 写操作不跨类别 fallback——避免 concept 内容写进 table 文件造成数据污染。
+    let file_path = okf_dir.join(category).join(format!("{name}.md"));
 
     let content = if file_path.exists() {
         fs::read_to_string(&file_path).map_err(|e| format!("读取文件失败: {e}"))?
@@ -423,7 +412,23 @@ fn current_timestamp() -> String {
             break;
         }
     }
-    format!("{year:04}-01-01T00:00:00Z")
+    // days_rem 是当年第几天（0-based），换算成月日。
+    let leap = (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0);
+    let month_days = [31, if leap { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    let mut month = 1;
+    let mut day = days_rem as u32 + 1;
+    for &md in &month_days {
+        if day > md {
+            day -= md;
+            month += 1;
+        } else {
+            break;
+        }
+    }
+    let h = (secs % 86400) / 3600;
+    let m = (secs % 3600) / 60;
+    let s = secs % 60;
+    format!("{year:04}-{month:02}-{day:02}T{h:02}:{m:02}:{s:02}Z")
 }
 
 /// Delete an OKF file for a given object name (checks tables/views/sources).

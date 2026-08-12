@@ -78,9 +78,12 @@ impl Tool for DescribeTableTool {
 
             // OKF：解析表的业务释义和关联关系。
             // 如果 OKF 文件不存在，用 DESCRIBE 结果自动生成骨架（空业务释义）。
+            // OKF 文件名取最后一段短名（v_orders 而非 db_xxx.v_orders），
+            // 和 agent 调 write_okf_block 时用的短名一致。
+            let okf_short_name = table_name_string.rsplit('.').next().unwrap_or(&table_name_string).to_string();
             let okf_file = crate::okf::get_okf_dir(&ws_dir)
                 .join("tables")
-                .join(format!("{table_name_string}.md"));
+                .join(format!("{okf_short_name}.md"));
             if !okf_file.exists() {
                 // 自动生成骨架：从 DESCRIBE 结果提取列信息。
                 let columns: Vec<crate::okf::ColumnInfo> = query_res.rows.iter().map(|r| {
@@ -89,9 +92,9 @@ impl Tool for DescribeTableTool {
                     let nullable = r.get(2).map(|v: &serde_json::Value| v.to_string().to_uppercase().contains("YES")).unwrap_or(true);
                     (name, ty, nullable)
                 }).collect();
-                let _ = crate::okf::write_table_okf(&ws_dir, &table_name_string, &columns, None);
+                let _ = crate::okf::write_table_okf(&ws_dir, &okf_short_name, &columns, None);
             }
-            let (okf_title, col_comments, relations) = crate::okf::parse_column_semantics(&ws_dir, &table_name_string);
+            let (okf_title, col_comments, relations) = crate::okf::parse_column_semantics(&ws_dir, &okf_short_name);
             Ok((query_res, okf_title, col_comments, relations))
         });
         let desc_res = if hard_secs > 0 {
