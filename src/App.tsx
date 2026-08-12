@@ -61,6 +61,16 @@ export default function App() {
   /** 数据分析环境是否就绪（DuckLake 扩展已安装）。 */
   const [dataAnalysisReady, setDataAnalysisReady] = createSignal(false);
 
+  // 当前活跃工作区路径（供 SettingsPage 使用，避免在 prop 表达式里做响应式读取）。
+  const activeWorkspacePath = createMemo(() => {
+    const id = activeTaskId();
+    if (id) {
+      const ws = findTaskWorkspace(id);
+      if (ws) return ws;
+    }
+    return homeWorkspacePath();
+  });
+
   // 在 tasksByWorkspace 中查找 taskId 所属的工作区路径（不存在返回 null）。
   function findTaskWorkspace(taskId: string): string | null {
     const all = tasksByWorkspace();
@@ -725,14 +735,11 @@ export default function App() {
       {/* 设置页（覆盖层） */}
       <Show when={settingsOpen()}>
         <div class="app-overlay">
-          {(() => {
-            const ws = activeTaskId() ? findTaskWorkspace(activeTaskId()!) ?? homeWorkspacePath() : homeWorkspacePath();
-            return <SettingsPage
-              onClose={() => setSettingsOpen(false)}
-              onProvidersChanged={() => { void loadModelsFromSettings(); }}
-              workspacePath={ws}
-            />;
-          })()}
+          <SettingsPage
+            onClose={() => setSettingsOpen(false)}
+            onProvidersChanged={() => { void loadModelsFromSettings(); }}
+            workspacePath={activeWorkspacePath()}
+          />
         </div>
       </Show>
 
