@@ -7724,10 +7724,11 @@ input[type="number"] {
 
 .result-head {
   display: flex; position: sticky; top: 0; z-index: 2;
-  background: rgba(30, 30, 35, 0.95);
+  background: linear-gradient(to bottom, rgba(45, 45, 52, 0.98), rgba(35, 35, 40, 0.98));
   backdrop-filter: blur(4px);
-  border-bottom: 1px solid rgba(125, 125, 125, 0.2);
+  border-bottom: 1px solid rgba(99, 102, 241, 0.25);
   min-width: max-content;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
 }
 .result-row {
   display: flex;
@@ -7745,9 +7746,10 @@ input[type="number"] {
   user-select: text;
 }
 .head-cell {
-  color: #e0e0e0;
+  color: #a5b4fc;
   font-weight: 600;
   padding: 8px 12px;
+  font-size: 12px;
 }
 .row-idx {
   flex: 0 0 54px; width: 54px;
