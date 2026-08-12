@@ -130,6 +130,17 @@ impl Tool for ExecuteQueryTool {
                 Ok(out)
             }
             Err(err) => {
+                // 查询失败时更新 OKF 表探索状态（如果 SQL 引用了已注册的表）。
+                let ws_dir = self.app_state.workspace_dir.lock().await.to_string_lossy().to_string();
+                let err_msg = err.0.clone();
+                let sql_clone = sql.to_string();
+                let _ = tokio::task::spawn_blocking(move || {
+                    // 从 SQL 里提取表名（FROM 后面的词）。
+                    if let Some(table_name) = extract_table_from_sql(&sql_clone) {
+                        let (status, reason) = classify_query_error(&err_msg);
+                        crate::okf::update_table_status(&ws_dir, &table_name, &status, Some(&reason));
+                    }
+                }).await;
                 emit_tool_result(
                     &self.window, &self.task_id, &call_id, "error",
                     err.0.clone(), Some(sql.to_string()), None, Some(elapsed), None,
@@ -137,5 +148,38 @@ impl Tool for ExecuteQueryTool {
                 Err(err)
             }
         }
+    }
+}
+
+/// 从 SQL 中提取 FROM 后面的表名（简单解析，取第一个表名）。
+fn extract_table_from_sql(sql: &str) -> Option<String> {
+    let upper = sql.to_uppercase();
+    if let Some(pos) = upper.find("FROM") {
+        let rest = sql[pos + 4..].trim();
+        // 跳过前导括号/空格，取第一个 token。
+        let token = rest.trim_start_matches('(').trim();
+        let end = token.find(|c: char| c.is_whitespace() || c == ',' || c == ')').unwrap_or(token.len());
+        let name = token[..end].trim().trim_matches('"').to_string();
+        if !name.is_empty() {
+            return Some(name);
+        }
+    }
+    None
+}
+
+/// 根据查询错误判定可用性等级。
+fn classify_query_error(err: &str) -> (String, String) {
+    let lower = err.to_lowercase();
+    if lower.contains("storage tier") || lower.contains("lower meta") || lower.contains("odps") {
+        ("unavailable_permanent".to_string(), "MaxCompute 非标准存储，Hologres 不支持访问".to_string())
+    } else if lower.contains("unsupported type") {
+        ("unavailable_permanent".to_string(), "列类型不兼容".to_string())
+    } else if lower.contains("permission denied") || lower.contains("access denied") {
+        ("unavailable_temporary".to_string(), "权限不足".to_string())
+    } else if lower.contains("timeout") || lower.contains("connection") {
+        ("unavailable_temporary".to_string(), "连接超时".to_string())
+    } else {
+        // 未知错误不改状态（可能是 SQL 语法错误，不是表不可用）。
+        ("available".to_string(), String::new())
     }
 }
