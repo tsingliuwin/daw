@@ -35,7 +35,7 @@ impl Tool for RegisterTableTool {
                 "type": "object",
                 "properties": {
                     "connection_name": { "type": "string", "description": "数据源名称（如 myshop）" },
-                    "table_name": { "type": "string", "description": "远程表名，必须包含 schema（如 default.orders 或 public.orders），从 list_remote_tables 的结果中获取" },
+                    "table_name": { "type": "string", "description": "远程表名，必须包含 schema（如 default.orders 或 public.orders），从 list_remote_tables 的返回结果中复制完整 schema.table" },
                     "local_name": { "type": "string", "description": "本地视图名（可选，默认 v_{table名}）。注册后用此名查询" }
                 },
                 "required": ["connection_name", "table_name"]
@@ -112,7 +112,10 @@ impl Tool for RegisterTableTool {
                 // postgres 类型：先检测是不是 foreign table（Hologres MaxCompute 外表）。
                 // 用 catalog 别名调 postgres_query（和 lakemind 一致）。
                 let parts: Vec<&str> = table_name_clone.splitn(2, '.').collect();
-                let (schema, tbl) = if parts.len() == 2 { (parts[0], parts[1]) } else { ("default", parts[0]) };
+                if parts.len() != 2 {
+                    return Err(format!("table_name 必须包含 schema，格式为 schema.table（如 default.orders）。请从 list_remote_tables 的结果中获取完整名称。"));
+                }
+                let (schema, tbl) = (parts[0], parts[1]);
                 let check_sql = format!(
                     "SELECT count(*) FROM pg_catalog.pg_class c \
                      JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace \
