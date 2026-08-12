@@ -7745,7 +7745,7 @@ input[type="number"] {
   user-select: text;
 }
 .head-cell {
-  color: var(--text-primary, #e0e0e0);
+  color: #e0e0e0;
   font-weight: 600;
   padding: 8px 12px;
 }
