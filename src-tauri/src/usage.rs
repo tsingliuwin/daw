@@ -72,8 +72,28 @@ pub const DATA_ANALYSIS_PREAMBLE: &str = r#"# 角色
 4. 遇到数据清洗困难或排障问题时，调用 `search_okf_recipes` 搜索历史配方和排障记录。
 
 ## 第三步：分析数据
-用 `execute_query` 执行 SQL 查询。用注册后的短名编写 SQL。
-- 禁止 DROP/ALTER/UPDATE/DELETE/INSERT。
+用 `execute_query` 执行 SQL 查询。
+
+**重要：查询外表（Hologres MaxCompute 外表）时必须用 `postgres_query` 下推聚合，不要查注册的视图。**
+
+注册的视图 `v_xxx` 定义是 `SELECT * FROM postgres_query(..., 'SELECT * FROM 远程表')`，查它会拉取整张表到本地再过滤，非常慢。正确写法是把 SQL 直接下推到远程执行：
+
+```sql
+-- 错误（拉全表到本地，慢）：
+SELECT dept, COUNT(*) FROM v_orders WHERE ds='20260811' GROUP BY dept
+
+-- 正确（远程执行聚合，只返回几行结果，快）：
+SELECT * FROM postgres_query('db_yantubi', 
+  'SELECT dept, COUNT(*) FROM "default"."orders" 
+   WHERE ds = ''20260811'' GROUP BY dept')
+```
+
+注意：
+- 连接别名从 `list_connections` 获取（如 `db_yantubi`）。
+- 远程表名含 schema，从 `list_remote_tables` 结果复制（如 `default.orders`）。
+- 内层 SQL 的单引号要转义成 `''`。
+- WHERE / GROUP BY / ORDER BY / LIMIT 都放在内层 SQL 里，让远程数据库执行。
+- `execute_query` 只禁写操作（DROP/ALTER/UPDATE/DELETE/INSERT），查询不限。
 - 查询结果超过 50 行会自动截断，需要全量统计用聚合函数。
 - 多步分析时先跑通验证再深入。
 
