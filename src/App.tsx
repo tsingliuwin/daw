@@ -725,11 +725,14 @@ export default function App() {
       {/* 设置页（覆盖层） */}
       <Show when={settingsOpen()}>
         <div class="app-overlay">
-          <SettingsPage
-            onClose={() => setSettingsOpen(false)}
-            onProvidersChanged={() => { void loadModelsFromSettings(); }}
-            workspacePath={activeTaskId() ? findTaskWorkspace(activeTaskId()!) ?? homeWorkspacePath() : homeWorkspacePath()}
-          />
+          {(() => {
+            const ws = activeTaskId() ? findTaskWorkspace(activeTaskId()!) ?? homeWorkspacePath() : homeWorkspacePath();
+            return <SettingsPage
+              onClose={() => setSettingsOpen(false)}
+              onProvidersChanged={() => { void loadModelsFromSettings(); }}
+              workspacePath={ws}
+            />;
+          })()}
         </div>
       </Show>
 
