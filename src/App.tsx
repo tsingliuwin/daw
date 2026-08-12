@@ -200,8 +200,7 @@ export default function App() {
         setWorkspaces(list);
         await Promise.all(list.map((w) => loadWorkspaceTasks(w.path)));
 
-        // 恢复 workspace.last：只用于决定初始 activeTaskId（选 last 工作区下
-        // 最新的任务；该工作区默认全部展开，无需单独处理展开态）。
+        // 恢复 workspace.last：决定初始 activeTaskId。
         let last: string | null = null;
         try {
           last = await invoke<string | null>("get_app_config", { key: "workspace.last" });
@@ -211,14 +210,13 @@ export default function App() {
           list.find((w) => w.path === "DefaultProject") ||
           list[0];
 
-        // 首页工作区下拉默认选中 last 工作区。
         setHomeWorkspacePath(lastWs.path);
 
+        // 从 signal 读最新任务列表（Promise.all 已完成，signal 已更新）。
         const lastArr = tasksByWorkspace()[lastWs.path] ?? [];
         if (lastArr.length > 0) {
-          setActiveTaskId(lastArr[0].id); // 已按 createdAt 倒序，第 0 条即最新
+          setActiveTaskId(lastArr[0].id);
         } else {
-          // last 工作区无任务：在所有工作区中找第一个有任务的，否则保持 null。
           for (const w of list) {
             const arr = tasksByWorkspace()[w.path] ?? [];
             if (arr.length > 0) {
@@ -381,6 +379,11 @@ export default function App() {
 
   function selectTask(id: string) {
     setActiveTaskId(id);
+    // 持久化工作区到 workspace.last，下次启动恢复。
+    const ws = findTaskWorkspace(id);
+    if (ws) {
+      void invoke("set_app_config", { key: "workspace.last", value: ws }).catch(() => {});
+    }
   }
 
   // 「新建任务」按钮：跳回首页（HomeView），不创建空任务。场景选择在首页
