@@ -140,12 +140,23 @@ impl Tool for RegisterTableTool {
                 format!("{}.{}", catalog_clone, table_name_clone)
             };
 
-            // CREATE OR REPLACE 视图。
+            // CREATE OR REPLACE 视图。CREATE VIEW 本身是惰性的（不触碰数据），
+            // 但视图定义里的远程表引用可能因权限不足在创建时报错。
             let sql = format!(
                 "CREATE OR REPLACE VIEW \"{}\" AS SELECT * FROM {};",
                 local_name_clone, remote_ref
             );
-            guard.execute_batch(&sql).map_err(|e| e.to_string())?;
+            guard.execute_batch(&sql).map_err(|e| {
+                let msg = e.to_string();
+                if msg.to_lowercase().contains("permission denied")
+                    || msg.to_lowercase().contains("access denied")
+                    || msg.to_lowercase().contains("does not exist")
+                {
+                    format!("注册失败，当前用户可能没有表 {table_name_clone} 的查询权限，或表不存在。错误: {msg}\n建议：跳过此表，用 list_remote_tables 查看其他可用表。")
+                } else {
+                    format!("注册失败: {msg}")
+                }
+            })?;
             Ok(remote_ref)
         })
         .await

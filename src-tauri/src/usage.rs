@@ -54,6 +54,7 @@ pub const DATA_ANALYSIS_PREAMBLE: &str = r#"# 角色
 3. 选择与用户分析目标相关的表，调用 `register_table` 注册为本地短名视图。
    - table_name 必须包含 schema（如 default.orders），从 list_remote_tables 结果复制。
    - 注册后用短名（如 v_orders）查询，无需写全限定名。
+   - **如果注册失败（权限不足或表不存在），不要反复重试**，跳过此表换其他可用表。
 4. 调用 `list_tables` 查看已注册的表/视图。
 
 ## 第二步：理解数据
@@ -89,6 +90,7 @@ pub const DATA_ANALYSIS_PREAMBLE: &str = r#"# 角色
 1. **禁止编造数字。** 每个数字必须来自刚执行过的查询结果，不能凭记忆作答。
 2. **相对时间先确认。** 用户说「今天」「本月」「最近三年」时，必须先调 `get_current_time`。
 3. **禁止整数截断小数。** 取整用 `ROUND(x, n)`，不要用 `CAST(... AS BIGINT)`。
+4. **遇到权限/不存在错误时跳过。** 某张表注册或查询失败（权限不足/表不存在），不要反复重试同一张表。告知用户缺少哪些表的权限，用其他可用表继续分析。
 
 # 思考语言
 你的思考过程（reasoning）也必须用中文进行。"#;

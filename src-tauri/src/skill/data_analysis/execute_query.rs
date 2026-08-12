@@ -76,7 +76,17 @@ impl Tool for ExecuteQueryTool {
         let hard_secs = QUERY_HARD_TIMEOUT_SECS;
         let blocking_fut = tokio::task::spawn_blocking(move || -> Result<SqlResult, String> {
             let guard = conn.blocking_lock();
-            execute::run_query(&guard, &sql_string, Some(50)).map_err(|e| format!("SQL 执行出错: {e}"))
+            execute::run_query(&guard, &sql_string, Some(50)).map_err(|e| {
+                let msg = e.to_string();
+                let lower = msg.to_lowercase();
+                if lower.contains("permission denied") || lower.contains("access denied") {
+                    format!("查询失败：当前用户没有查询权限。错误: {msg}\n建议：检查数据源连接的用户是否有该表的查询权限，或换一张表。")
+                } else if lower.contains("does not exist") || lower.contains("not found") {
+                    format!("查询失败：表或视图不存在。错误: {msg}\n建议：用 list_tables 确认表名是否正确，或用 list_remote_tables 重新探查。")
+                } else {
+                    format!("SQL 执行出错: {msg}")
+                }
+            })
         });
         let query_res = if hard_secs > 0 {
             match tokio::time::timeout(std::time::Duration::from_secs(hard_secs), blocking_fut).await {
