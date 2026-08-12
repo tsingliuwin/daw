@@ -74,6 +74,42 @@ impl Tool for ExecuteQueryTool {
 
         let sql_string = sql.to_string();
         let hard_secs = QUERY_HARD_TIMEOUT_SECS;
+
+        // 执行前检查：解析 SQL 里的表名，查 table_registry access_mode。
+        // pushdown 模式的表不能通过视图查询（会拉全表），必须用 postgres_query 下推。
+        let ws_path = self.app_state.workspace_path.lock().await.clone();
+        let sql_for_check = sql_string.clone();
+        let pushdown_violation = {
+            let ws = ws_path.clone();
+            tokio::task::spawn_blocking(move || -> Option<(String, String, String, String)> {
+                // 提取 SQL 里的所有 FROM 表名
+                let tables = extract_table_names(&sql_for_check);
+                for t in &tables {
+                    if let Ok(Some(entry)) = crate::db::get_table_registry_by_local_name(&ws, t) {
+                        if entry.access_mode == "pushdown" {
+                            return Some((t.clone(), entry.connection_name, entry.remote_schema, entry.remote_table));
+                        }
+                    }
+                }
+                None
+            }).await
+        };
+
+        // pushdown 检查
+        if let Ok(Some((table_name, conn_name, schema, remote_table))) = &pushdown_violation {
+            let msg = format!(
+                "表 `{}` 是 pushdown 模式（Hologres 外部库外表），不能通过视图查询（会拉全表到本地，非常慢）。\n\
+                 请用 postgres_query 下推查询：\n\
+                 SELECT * FROM postgres_query('db_{}', 'SELECT ... FROM \"{}\".\"{}\" WHERE ... GROUP BY ...')",
+                table_name, conn_name, schema, remote_table
+            );
+            emit_tool_result(
+                &self.window, &self.task_id, &call_id, "error",
+                msg.clone(), Some(sql_string.clone()), None, Some(0), None,
+            );
+            return Err(ToolError(msg));
+        }
+
         let blocking_fut = tokio::task::spawn_blocking(move || -> Result<SqlResult, String> {
             let guard = conn.blocking_lock();
             execute::run_query(&guard, &sql_string, Some(50)).map_err(|e| {
@@ -182,4 +218,49 @@ fn classify_query_error(err: &str) -> (String, String) {
         // 未知错误不改状态（可能是 SQL 语法错误，不是表不可用）。
         ("available".to_string(), String::new())
     }
+}
+
+/// 从 SQL 里提取所有 FROM 后面的表名（简单解析）。
+/// 匹配 `FROM v_xxx`、`FROM "v_xxx"`、`JOIN v_xxx` 等。
+fn extract_table_names(sql: &str) -> Vec<String> {
+    let mut result = Vec::new();
+    let upper = sql.to_uppercase();
+    let mut search_from = 0;
+    loop {
+        // 找 FROM 或 JOIN 关键词
+        let from_pos = upper[search_from..].find(" FROM");
+        let join_pos = upper[search_from..].find(" JOIN");
+        let pos = match (from_pos, join_pos) {
+            (Some(f), Some(j)) => search_from + f.min(j),
+            (Some(f), None) => search_from + f,
+            (None, Some(j)) => search_from + j,
+            (None, None) => break,
+        };
+        // 跳过关键词
+        let rest = &sql[pos..];
+        let keyword_len = if upper[pos..].starts_with(" FROM") { 5 } else { 5 }; // " FROM" / " JOIN"
+        let after = &rest[keyword_len..];
+        // 跳过前导空格和括号
+        let trimmed = after.trim_start_matches(|c: char| c.is_whitespace() || c == '(');
+        // 取第一个 token（表名）
+        let mut end = 0;
+        let chars = trimmed.char_indices();
+        let mut in_quotes = false;
+        for (i, c) in chars {
+            if c == '"' { in_quotes = !in_quotes; continue; }
+            if !in_quotes && (c.is_whitespace() || c == ',' || c == ')' || c == ';') {
+                end = i;
+                break;
+            }
+            end = i + c.len_utf8();
+        }
+        if end > 0 {
+            let name = trimmed[..end].trim_matches('"').to_string();
+            if !name.is_empty() && !name.to_lowercase().starts_with('(') {
+                result.push(name);
+            }
+        }
+        search_from = pos + keyword_len;
+    }
+    result
 }
