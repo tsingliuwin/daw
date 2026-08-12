@@ -140,6 +140,8 @@ export default function SettingsPage(props: {
   const [formUser, setFormUser] = createSignal("");
   const [formPassword, setFormPassword] = createSignal("");
   const [formSslMode, setFormSslMode] = createSignal("disable");
+  const [formProduct, setFormProduct] = createSignal<string>("postgresql");
+  const [formDbMode, setFormDbMode] = createSignal<string>("standard");
 
   const loadConnections = async () => {
     try {
@@ -167,11 +169,14 @@ export default function SettingsPage(props: {
     setFormId(c.id); setFormName(c.name); setFormType(c.dbType);
     setFormHost(c.host); setFormPort(c.port); setFormDatabase(c.databaseName);
     setFormUser(c.username); setFormPassword(c.password); setFormSslMode(c.sslMode);
+    setFormProduct(c.dbProduct ?? "postgresql");
+    setFormDbMode(c.dbMode ?? "standard");
     setTestStatus({ status: "idle" });
     setEditingConn(c);
   };
   const formToConnData = (): DataSourceConfig => ({
     id: formId(), name: formName(), dbType: formType(),
+    dbProduct: formProduct(), dbMode: formDbMode(),
     host: formHost(), port: formPort(), databaseName: formDatabase(),
     username: formUser(), password: formPassword(), sslMode: formSslMode(),
   });
@@ -761,6 +766,31 @@ export default function SettingsPage(props: {
                       <div class="ds-type-card__name">SQLite</div>
                     </div>
                   </div>
+                  {/* postgres 类型展开产品/库类型选择 */}
+                  <Show when={formType() === "postgres"}>
+                    <div class="settings-row">
+                      <label class="settings-label">数据库产品</label>
+                      <div class="settings-control">
+                        <select class="settings-select" value={formProduct()} onChange={(e) => { setFormProduct(e.currentTarget.value); if (e.currentTarget.value !== "hologres") setFormDbMode("standard"); }}>
+                          <option value="postgresql">PostgreSQL</option>
+                          <option value="hologres">Hologres</option>
+                          <option value="oceanbase">OceanBase</option>
+                          <option value="unknown">其他</option>
+                        </select>
+                      </div>
+                    </div>
+                    <Show when={formProduct() === "hologres"}>
+                      <div class="settings-row">
+                        <label class="settings-label">库类型</label>
+                        <div class="settings-control">
+                          <select class="settings-select" value={formDbMode()} onChange={(e) => setFormDbMode(e.currentTarget.value)}>
+                            <option value="standard">标准库</option>
+                            <option value="external">外部库</option>
+                          </select>
+                        </div>
+                      </div>
+                    </Show>
+                  </Show>
                   <div class="settings-row">
                     <label class="settings-label">连接名称</label>
                     <div class="settings-control">

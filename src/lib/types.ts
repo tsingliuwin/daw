@@ -191,11 +191,13 @@ export interface SqlResult {
   elapsedMs: number;
 }
 
-/** 外部数据源连接配置（存 settings.json 的 dataSources 数组）。 */
+/** 外部数据源连接配置。 */
 export interface DataSourceConfig {
   id: string;
   name: string;
   dbType: "postgres" | "mysql" | "sqlite";
+  dbProduct?: string;   // "postgresql" | "hologres" | "oceanbase" | "unknown"
+  dbMode?: string;       // "standard" | "external" | "unknown"
   host: string;
   port: number;
   databaseName: string;
