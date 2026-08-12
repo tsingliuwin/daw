@@ -110,7 +110,12 @@ export default function LeftNav(props: {
                           onClick={() => props.onSelectTask(task.id)}
                         >
                           <Show when={task.kind === "data_analysis"}>
-                            <span class="ln-task-tag ln-task-tag--data">分析</span>
+                            <span class="ln-task-icon-data" title="数据分析">
+                              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 11px; height: 11px;">
+                                <path d="M3 3v18h18"></path>
+                                <path d="M7 14l4-4 4 4 5-5"></path>
+                              </svg>
+                            </span>
                           </Show>
                           <span class="ln-task-name">{task.name}</span>
                           <button
