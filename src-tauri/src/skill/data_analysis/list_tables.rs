@@ -83,9 +83,14 @@ impl Tool for ListTablesTool {
                 } else {
                     format!("已注册 {} 个表/视图: {}", tables.len(), tables.join(", "))
                 };
+                let result = if tables.is_empty() {
+                    None
+                } else {
+                    Some(tables.iter().map(|t| format!("- {t}")).collect::<Vec<_>>().join("\n"))
+                };
                 emit_tool_result(
                     &self.window, &self.task_id, &call_id, "ok",
-                    summary, None, None, Some(elapsed), None,
+                    summary, None, None, Some(elapsed), result,
                 );
                 Ok(format!("当前已注册的表/视图: {}", tables.join("; ")))
             }
