@@ -453,11 +453,39 @@ fn migrate_legacy_chats() {
             if dest.exists() {
                 continue;
             }
-            // `rename` is atomic on the same volume (the paths share ~/.aioa,
-            // so they always are here); fall back to copy+remove if it ever
-            // fails (e.g. across volumes).
             if fs::rename(&p, &dest).is_err() {
                 let _ = fs::copy(&p, &dest).and_then(|_| fs::remove_file(&p));
+            }
+        }
+    }
+
+    // One-time migration: convert .json → .jsonl in personal/default/chats/.
+    if let Ok(entries) = fs::read_dir(&target) {
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if p.extension().and_then(|e| e.to_str()) != Some("json") {
+                continue;
+            }
+            let jsonl_path = p.with_extension("jsonl");
+            if jsonl_path.exists() {
+                let _ = fs::remove_file(&p);
+                continue;
+            }
+            // Read .json (array), write .jsonl (one line per element), delete .json.
+            if let Ok(content) = fs::read_to_string(&p) {
+                if let Ok(arr) = serde_json::from_str::<serde_json::Value>(&content) {
+                    if let Some(messages) = arr.as_array() {
+                        if let Ok(mut file) = fs::File::create(&jsonl_path) {
+                            use std::io::Write;
+                            for msg in messages {
+                                if let Ok(line) = serde_json::to_string(msg) {
+                                                    let _ = writeln!(file, "{line}");
+                                }
+                            }
+                            let _ = fs::remove_file(&p);
+                        }
+                    }
+                }
             }
         }
     }
