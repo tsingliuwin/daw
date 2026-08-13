@@ -17,6 +17,7 @@ pub struct DescribeTableTool {
     pub app_state: AppState,
     pub task_id: String,
     pub window: tauri::Window,
+    pub ws: crate::skill::WorkspaceRef,
 }
 
 impl Tool for DescribeTableTool {
@@ -56,25 +57,24 @@ impl Tool for DescribeTableTool {
         );
 
         let start = std::time::Instant::now();
-        let duckdb_guard = self.app_state.duckdb.lock().await;
-        let conn = match &*duckdb_guard {
-            Some(c) => c.clone(),
-            None => {
-                let msg = "DuckDB 引擎未初始化。请检查是否配置了数据源并重启应用。".to_string();
+        let wsc = match self.app_state.ensure_workspace_conn(&self.ws.path).await {
+            Ok(w) => w,
+            Err(msg) => {
+                let full = format!("DuckDB 引擎未就绪: {msg}");
                 emit_tool_result(
                     &self.window, &self.task_id, &call_id, "error",
-                    msg.clone(), None, None, Some(0), None,
+                    full.clone(), None, None, Some(0), None,
                 );
-                return Err(ToolError(msg));
+                return Err(ToolError(full));
             }
         };
-        let ih = self.app_state.interrupt_handle.lock().await.as_ref()
-            .and_then(|h| h.lock().ok().map(|g| g.clone()));
+        let conn = wsc.conn.clone();
+        let ih = wsc.interrupt_handle.lock().ok().map(|g| g.clone());
 
         let table_name_string = table_name.to_string();
         let hard_secs = QUERY_HARD_TIMEOUT_SECS;
-        let ws_dir = self.app_state.workspace_dir.lock().await.to_string_lossy().to_string();
-        let ws_path_clone = self.app_state.workspace_path.lock().await.clone();
+        let ws_dir = self.ws.dir.to_string_lossy().to_string();
+        let ws_path_clone = self.ws.path.clone();
         // 查 table_registry 获取 access_mode
         let registry_entry = {
             let tn = table_name_string.clone();

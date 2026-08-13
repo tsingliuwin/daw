@@ -79,10 +79,20 @@ pub fn attach_workspace_lake(conn: &Connection, ws_dir: &Path) -> Result<(), Str
 
     if let Err(first_err) = conn.execute(&sql, []) {
         let msg = first_err.to_string();
-        let wal_mismatch = msg.contains("WAL")
-            || msg.contains("checkpoint iteration")
-            || msg.contains("iteration does not match");
-        if !wal_mismatch {
+        // DuckLake snapshot/data inconsistency — NOT a WAL issue. Deleting the
+        // WAL or rebuilding the lake would silently destroy already-committed
+        // views/tables (the "索引有、沉淀无" class of bug). Surface it instead
+        // so the user can investigate rather than losing data silently.
+        if msg.contains("iteration does not match") || msg.contains("checkpoint iteration") {
+            return Err(format!(
+                "DuckLake catalog 快照不一致（可能数据文件缺失）: {msg}。已保留 catalog 未做破坏性恢复，请检查 {} 与 lake_data 目录。",
+                catalog.display()
+            ));
+        }
+        // SQLite catalog WAL corrupt (e.g. torn write after a crash). The
+        // catalog main file is checkpoint-intact, so dropping the stale WAL
+        // loses no committed data — safe to retry.
+        if !msg.contains("WAL") {
             return Err(format!("ATTACH ducklake 失败: {msg}"));
         }
         tracing::warn!(category = "duckdb", "ducklake WAL mismatch after crash, attempting WAL-only recovery: {msg}");
@@ -90,7 +100,9 @@ pub fn attach_workspace_lake(conn: &Connection, ws_dir: &Path) -> Result<(), Str
         if conn.execute(&sql, []).is_ok() {
             tracing::info!(category = "duckdb", "ducklake recovered via WAL drop (catalog intact)");
         } else {
-            tracing::warn!(category = "duckdb", "ducklake WAL drop failed, rebuilding lake store");
+            // 最后兜底：catalog 本身损坏，重建空 lake。这是破坏性的（已提交
+            // 的视图/表将丢失），显眼告警让用户知情。
+            tracing::error!(category = "duckdb", "ducklake catalog corrupt, rebuilding EMPTY lake store (existing views/tables will be LOST)");
             let _ = std::fs::remove_file(&catalog);
             let _ = std::fs::remove_dir_all(&data_dir);
             std::fs::create_dir_all(&data_dir)

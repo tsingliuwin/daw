@@ -738,6 +738,7 @@ pub fn update_table_registry_status(ws_path: &str, local_name: &str, status: &st
 }
 
 /// 删除 table_registry 记录。
+#[allow(dead_code)]
 pub fn delete_table_registry(ws_path: &str, local_name: &str) -> Result<(), String> {
     let conn = get_db_conn()?;
     conn.execute(

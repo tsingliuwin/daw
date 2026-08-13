@@ -690,6 +690,40 @@ pub fn get_okf_memory_summary(ws_path: &str) -> String {
         summary.push_str("\n\n");
     }
 
+    // 全局业务概念（concepts）索引：列出概念名 + 其二级标题，让 agent 在会话
+    // 开始就知道有哪些已沉淀的业务背景，需要细节时用 load_okf_block 读取。
+    // 否则 concepts 不在 memory summary 里，agent 会误判"没有沉淀"——尽管
+    // 文件已落盘且 load_okf_block 能读到。
+    if let Ok(global_dir) = get_global_okf_dir() {
+        let concepts_dir = global_dir.join("concepts");
+        if let Ok(dir) = fs::read_dir(&concepts_dir) {
+            let mut items: Vec<(String, Vec<String>)> = Vec::new();
+            for e in dir.flatten() {
+                if e.path().extension().and_then(|x| x.to_str()) != Some("md") {
+                    continue;
+                }
+                let name = e.path().file_stem().and_then(|s| s.to_str()).unwrap_or("").to_string();
+                if name.is_empty() {
+                    continue;
+                }
+                let headings = extract_okf_headings(&e.path(), 2);
+                items.push((name, headings));
+            }
+            if !items.is_empty() {
+                items.sort_by(|a, b| a.0.cmp(&b.0));
+                summary.push_str("# 业务概念（全局）\n以下业务背景已沉淀，需要细节时用 load_okf_block(category=\"concepts\", name=\"<名>\", heading=\"<标题>\") 读取：\n");
+                for (name, headings) in &items {
+                    if headings.is_empty() {
+                        summary.push_str(&format!("- {name}\n"));
+                    } else {
+                        summary.push_str(&format!("- {name}（{}）\n", headings.join("、")));
+                    }
+                }
+                summary.push_str("\n");
+            }
+        }
+    }
+
     // pipelines 排障记录仍从 OKF 读。
     let okf_dir = get_okf_dir(ws_path);
     let pipes_dir = okf_dir.join("pipelines").join("specific");
@@ -713,6 +747,45 @@ pub fn get_okf_memory_summary(ws_path: &str) -> String {
     }
 
     summary.trim().to_string()
+}
+
+/// 提取 OKF 文件中指定级别（如 2 → `## `）的标题文本，跳过 frontmatter。
+/// 用于 memory summary 列出 concept 的板块索引（业务描述/组织架构等）。
+fn extract_okf_headings(path: &Path, level: usize) -> Vec<String> {
+    let content = match fs::read_to_string(path) {
+        Ok(c) => c,
+        Err(_) => return Vec::new(),
+    };
+    let prefix = "#".repeat(level) + " ";
+    let mut headings = Vec::new();
+    let mut started = false; // 已越过任何前导 frontmatter
+    let mut in_fm = false;
+    for line in content.lines() {
+        let t = line.trim();
+        if !started {
+            if t == "---" {
+                in_fm = true;
+                started = true;
+                continue;
+            } else if t.is_empty() {
+                continue;
+            } else {
+                started = true; // 无 frontmatter，内容直接开始
+            }
+        }
+        if in_fm {
+            if t == "---" {
+                in_fm = false;
+            }
+            continue;
+        }
+        if let Some(h) = t.strip_prefix(&prefix) {
+            if !h.starts_with('#') {
+                headings.push(h.trim().to_string());
+            }
+        }
+    }
+    headings
 }
 
 /// 更新表 OKF 文件的 frontmatter 状态字段。

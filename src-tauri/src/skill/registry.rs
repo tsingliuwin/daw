@@ -7,10 +7,12 @@ use super::Skill;
 use crate::usage;
 
 /// Skill 注册表。启动时初始化，注册基座 + 各 skill。
+#[allow(dead_code)]
 pub struct SkillRegistry {
     skills: Vec<Box<dyn Skill>>,
 }
 
+#[allow(dead_code)]
 impl SkillRegistry {
     pub fn new() -> Self {
         Self { skills: Vec::new() }

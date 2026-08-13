@@ -5,22 +5,21 @@
 //! 当前为占位结构——基座的能力（confirm/abort/event）已在 AppState 和
 //! agent/events.rs 里，Context 是给未来 skill 用的统一入口。
 
-use std::sync::Arc;
-
 use tauri::Window;
-use tokio::sync::Mutex;
 
 use crate::state::{AppState, ConfirmDecision, PendingConfirmation};
 use tokio::sync::oneshot;
 
 /// Skill 的 Tool 在 `call()` 里访问基座能力的上下文。
 #[derive(Clone)]
+#[allow(dead_code)]
 pub struct SkillContext {
     pub app_state: AppState,
     pub task_id: String,
     pub window: Window,
 }
 
+#[allow(dead_code)]
 impl SkillContext {
     pub fn new(app_state: AppState, task_id: String, window: Window) -> Self {
         Self { app_state, task_id, window }
@@ -34,7 +33,7 @@ impl SkillContext {
         summary: String,
         detail: String,
     ) -> bool {
-        use crate::agent::events::{emit_tool_awaiting, next_tool_id};
+        use crate::agent::events::emit_tool_awaiting;
 
         let (tx, rx) = oneshot::channel::<ConfirmDecision>();
         {

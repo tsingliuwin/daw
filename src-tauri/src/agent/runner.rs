@@ -298,23 +298,37 @@ pub(crate) async fn run_agent_task_stream(
     scenario: Scenario,
     app_state: AppState,
 ) -> Result<(), String> {
-    // 0. 根据当前 task 所属工作区更新 workspace_dir / workspace_path，
-    // 确保 OKF 工具读到正确工作区的知识库。
-    {
+    // 0. 解析本任务所属工作区，并（数据分析场景）获取该工作区的 DuckDB 连接 +
+    //    赢得每工作区单流锁。workspace 指针按任务注入到工具，不再写共享
+    //    AppState 字段——这样跨工作区并发任务不会互相覆盖 workspace 指针 /
+    //    默认 catalog，每个工作区的视图落进各自的 lake。
+    let ws_path = {
         let conn = crate::db::get_db_conn().map_err(|e| format!("打开 DB 失败: {e}"))?;
-        let ws_path: Option<String> = conn
-            .prepare("SELECT workspace_path FROM tasks WHERE id = ?")
+        conn.prepare("SELECT workspace_path FROM tasks WHERE id = ?")
             .ok()
-            .and_then(|mut s| s.query_row([&task_id], |r| r.get::<_, String>(0)).ok());
-        if let Some(ws) = ws_path {
-            let mut wp = app_state.workspace_path.lock().await;
-            *wp = ws.clone();
-            drop(wp);
-            let mut wd = app_state.workspace_dir.lock().await;
-            let aioa_dir = crate::db::get_aioa_dir().unwrap_or_default();
-            *wd = aioa_dir.join(&ws);
+            .and_then(|mut s| s.query_row([&task_id], |r| r.get::<_, String>(0)).ok())
+            .unwrap_or_else(|| "DefaultProject".to_string())
+    };
+    let ws_dir = crate::db::get_aioa_dir().unwrap_or_default().join(&ws_path);
+    let ws_ref = crate::skill::WorkspaceRef { path: ws_path.clone(), dir: ws_dir.clone() };
+
+    // 数据分析场景：懒创建/复用该工作区的 DuckDB 连接（各工作区 lake 隔离），
+    // 并赢得单流锁（同工作区同一时刻只允许一个数据分析任务；跨工作区并发）。
+    // `_busy_guard` 在函数返回时 Drop，自动释放单流锁。
+    let _busy_guard: Option<crate::state::BusyGuard> = if scenario == Scenario::DataAnalysis {
+        let wsc = app_state
+            .ensure_workspace_conn(&ws_path)
+            .await
+            .map_err(|e| format!("数据分析环境未就绪: {e}"))?;
+        if wsc.busy.swap(true, std::sync::atomic::Ordering::SeqCst) {
+            return Err(format!(
+                "工作区「{ws_path}」已有数据分析任务在运行，请等待其完成后再试"
+            ));
         }
-    }
+        Some(crate::state::BusyGuard::new(wsc))
+    } else {
+        None
+    };
 
     // 1. Get model provider config
     let provider = get_provider_for_model(&model_id, provider_id.as_deref())?;
@@ -380,19 +394,19 @@ pub(crate) async fn run_agent_task_stream(
     let build_data_tools = || -> (GetCurrentTimeTool, ExecuteQueryTool, ListTablesTool, DescribeTableTool, SampleDataTool, RenderChartTool, LoadOkfBlockTool, WriteOkfBlockTool, SearchOkfRecipesTool, CreateViewTool, DropObjectTool, ListConnectionsTool, ListRemoteTablesTool, RegisterTableTool) {
         (
             GetCurrentTimeTool { app_state: app_state.clone(), task_id: task_id.clone(), window: window.clone() },
-            ExecuteQueryTool { app_state: app_state.clone(), task_id: task_id.clone(), window: window.clone() },
-            ListTablesTool { app_state: app_state.clone(), task_id: task_id.clone(), window: window.clone() },
-            DescribeTableTool { app_state: app_state.clone(), task_id: task_id.clone(), window: window.clone() },
-            SampleDataTool { app_state: app_state.clone(), task_id: task_id.clone(), window: window.clone() },
-            RenderChartTool { app_state: app_state.clone(), task_id: task_id.clone(), window: window.clone() },
-            LoadOkfBlockTool { app_state: app_state.clone(), task_id: task_id.clone(), window: window.clone() },
-            WriteOkfBlockTool { app_state: app_state.clone(), task_id: task_id.clone(), window: window.clone() },
-            SearchOkfRecipesTool { app_state: app_state.clone(), task_id: task_id.clone(), window: window.clone() },
-            CreateViewTool { app_state: app_state.clone(), task_id: task_id.clone(), window: window.clone(), confirm_mode: confirm_mode.clone() },
-            DropObjectTool { app_state: app_state.clone(), task_id: task_id.clone(), window: window.clone(), confirm_mode: confirm_mode.clone() },
-            ListConnectionsTool { app_state: app_state.clone(), task_id: task_id.clone(), window: window.clone() },
-            ListRemoteTablesTool { app_state: app_state.clone(), task_id: task_id.clone(), window: window.clone() },
-            RegisterTableTool { app_state: app_state.clone(), task_id: task_id.clone(), window: window.clone() },
+            ExecuteQueryTool { app_state: app_state.clone(), task_id: task_id.clone(), window: window.clone(), ws: ws_ref.clone() },
+            ListTablesTool { app_state: app_state.clone(), task_id: task_id.clone(), window: window.clone(), ws: ws_ref.clone() },
+            DescribeTableTool { app_state: app_state.clone(), task_id: task_id.clone(), window: window.clone(), ws: ws_ref.clone() },
+            SampleDataTool { app_state: app_state.clone(), task_id: task_id.clone(), window: window.clone(), ws: ws_ref.clone() },
+            RenderChartTool { app_state: app_state.clone(), task_id: task_id.clone(), window: window.clone(), ws: ws_ref.clone() },
+            LoadOkfBlockTool { app_state: app_state.clone(), task_id: task_id.clone(), window: window.clone(), ws: ws_ref.clone() },
+            WriteOkfBlockTool { app_state: app_state.clone(), task_id: task_id.clone(), window: window.clone(), ws: ws_ref.clone() },
+            SearchOkfRecipesTool { app_state: app_state.clone(), task_id: task_id.clone(), window: window.clone(), ws: ws_ref.clone() },
+            CreateViewTool { app_state: app_state.clone(), task_id: task_id.clone(), window: window.clone(), confirm_mode: confirm_mode.clone(), ws: ws_ref.clone() },
+            DropObjectTool { app_state: app_state.clone(), task_id: task_id.clone(), window: window.clone(), confirm_mode: confirm_mode.clone(), ws: ws_ref.clone() },
+            ListConnectionsTool { app_state: app_state.clone(), task_id: task_id.clone(), window: window.clone(), ws: ws_ref.clone() },
+            ListRemoteTablesTool { app_state: app_state.clone(), task_id: task_id.clone(), window: window.clone(), ws: ws_ref.clone() },
+            RegisterTableTool { app_state: app_state.clone(), task_id: task_id.clone(), window: window.clone(), ws: ws_ref.clone() },
         )
     };
 
@@ -441,7 +455,7 @@ pub(crate) async fn run_agent_task_stream(
     // 数据分析场景注入工作区 OKF memory summary。
     let memory_summary = match scenario {
         Scenario::DataAnalysis => {
-            let ws_dir_str = app_state.workspace_dir.lock().await.to_string_lossy().to_string();
+            let ws_dir_str = ws_dir.to_string_lossy().to_string();
             crate::okf::get_okf_memory_summary(&ws_dir_str)
         }
         Scenario::General => String::new(),

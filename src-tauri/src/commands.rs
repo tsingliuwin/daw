@@ -583,10 +583,10 @@ pub async fn save_image_from_base64(
 // Data analysis environment management
 // ===========================================================================
 
-/// 检查数据分析环境是否就绪（DuckLake 扩展已安装 + lake 已 ATTACH）。
+/// 检查数据分析环境是否就绪（ducklake/sqlite 扩展已安装，可懒创建任意工作区连接）。
 #[tauri::command]
 pub async fn check_data_analysis_env(state: tauri::State<'_, AppState>) -> Result<bool, String> {
-    Ok(state.duckdb_ready.load(std::sync::atomic::Ordering::Relaxed))
+    Ok(state.ext_installed.load(std::sync::atomic::Ordering::Relaxed))
 }
 
 /// 安装数据分析环境（DuckLake + sqlite 扩展 + ATTACH lake）。
@@ -597,8 +597,10 @@ pub async fn install_data_analysis_env(
     state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
     use tauri::Emitter;
-    // 如果已就绪，直接返回。
-    if state.duckdb_ready.load(std::sync::atomic::Ordering::Relaxed) {
+    // 如果已就绪（扩展已安装且 DefaultProject 连接已缓存），直接返回。
+    if state.ext_installed.load(std::sync::atomic::Ordering::Relaxed)
+        && state.workspaces.lock().unwrap().contains_key("DefaultProject")
+    {
         let _ = window.emit("ducklake-install", serde_json::json!({ "step": "done", "message": "已就绪" }));
         return Ok(());
     }
@@ -615,8 +617,8 @@ pub async fn install_data_analysis_env(
 
         let result = {
             let window_inner = window.clone();
-            tokio::task::spawn_blocking(move || -> Result<(std::sync::Arc<tokio::sync::Mutex<duckdb::Connection>>, std::sync::Arc<std::sync::Mutex<std::sync::Arc<duckdb::InterruptHandle>>>), String> {
-                use std::sync::Arc;
+                tokio::task::spawn_blocking(move || -> Result<crate::state::WorkspaceConn, String> {
+                    use std::sync::Arc;
                 let conn = duckdb::Connection::open_in_memory()
                     .map_err(|e| format!("DuckDB 打开失败: {e}"))?;
                 let _ = conn.execute_batch("PRAGMA memory_limit='4GB';\nPRAGMA threads=1;");
@@ -664,24 +666,24 @@ pub async fn install_data_analysis_env(
                 }
 
                 let ih = conn.interrupt_handle();
-                let conn_arc = Arc::new(tokio::sync::Mutex::new(conn));
-                let ih_arc = Arc::new(std::sync::Mutex::new(ih));
-                Ok((conn_arc, ih_arc))
+                let wsc = Arc::new(crate::state::WorkspaceConnInner {
+                    conn: Arc::new(tokio::sync::Mutex::new(conn)),
+                    interrupt_handle: Arc::new(std::sync::Mutex::new(ih)),
+                    ws_dir,
+                    busy: std::sync::atomic::AtomicBool::new(false),
+                });
+                Ok(wsc)
             }).await
         };
 
         match result {
-            Ok(Ok((conn_arc, ih_arc))) => {
-                // 更新 AppState。
+            Ok(Ok(wsc)) => {
+                // 插入 per-workspace 连接池（DefaultProject）+ 标记扩展已安装。
                 {
-                    let mut duckdb_guard = state.duckdb.lock().await;
-                    *duckdb_guard = Some(conn_arc);
+                    let mut map = state.workspaces.lock().unwrap();
+                    map.insert("DefaultProject".to_string(), wsc);
                 }
-                {
-                    let mut ih_guard = state.interrupt_handle.lock().await;
-                    *ih_guard = Some(ih_arc);
-                }
-                state.duckdb_ready.store(true, std::sync::atomic::Ordering::Relaxed);
+                state.ext_installed.store(true, std::sync::atomic::Ordering::Relaxed);
                 let _ = window.emit("ducklake-install", serde_json::json!({
                     "step": "done", "message": "数据分析环境已就绪"
                 }));
@@ -732,13 +734,12 @@ pub async fn upsert_db_connection(
         crate::db::create_db_connection(&rec)?;
     }
 
-    // 新建连接自动 link 到 DefaultProject + 立即 ATTACH。
+    // 新建连接自动 link 到 DefaultProject；若该工作区连接已存在则即时 ATTACH。
     if is_new {
         let ws_path = "DefaultProject".to_string();
         crate::db::link_workspace_db_connection(&ws_path, &config.id)?;
-        let duckdb_guard = state.duckdb.lock().await;
-    if let Some(duckdb_conn) = &*duckdb_guard {
-            let dc = duckdb_conn.clone();
+        if let Some(wsc) = state.get_workspace_conn(&ws_path) {
+            let dc = wsc.conn.clone();
             let rec = config.clone();
             let _ = tokio::task::spawn_blocking(move || {
                 let guard = dc.blocking_lock();
@@ -778,12 +779,12 @@ pub async fn link_connection_to_workspace(
 ) -> Result<(), String> {
     // 1. 持久化 link
     crate::db::link_workspace_db_connection(&ws_path, &conn_id)?;
-    // 2. 立即 ATTACH 到主会话（如果尚未 ATTACH）
+    // 2. 立即 ATTACH 到该工作区的连接（若已存在）；连接未创建则跳过——
+    //    首次任务启动时 lazy attach_all 会补上。
     let conn_record = crate::db::get_db_connection(&conn_id)?
         .ok_or_else(|| "数据源不存在".to_string())?;
-    let duckdb_guard = state.duckdb.lock().await;
-    if let Some(duckdb_conn) = &*duckdb_guard {
-        let dc = duckdb_conn.clone();
+    if let Some(wsc) = state.get_workspace_conn(&ws_path) {
+        let dc = wsc.conn.clone();
         let rec = conn_record.clone();
         let alias = crate::duckdb::attach::workspace_attach_alias(&rec.name);
         let result = tokio::task::spawn_blocking(move || {
@@ -814,11 +815,10 @@ pub async fn unlink_connection_from_workspace(
     state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
     crate::db::unlink_workspace_db_connection(&ws_path, &conn_id)?;
-    // DETACH 从主会话
+    // DETACH 从该工作区的连接（若已存在）
     let conn_record = crate::db::get_db_connection(&conn_id)?;
-    let duckdb_guard = state.duckdb.lock().await;
-    if let (Some(duckdb_conn), Some(rec)) = (&*duckdb_guard, conn_record) {
-        let dc = duckdb_conn.clone();
+    if let (Some(wsc), Some(rec)) = (state.get_workspace_conn(&ws_path), conn_record) {
+        let dc = wsc.conn.clone();
         let name = rec.name.clone();
         let _ = tokio::task::spawn_blocking(move || {
             let guard = dc.blocking_lock();

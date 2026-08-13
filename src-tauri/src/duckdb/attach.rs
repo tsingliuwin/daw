@@ -79,6 +79,7 @@ pub fn detach_one(conn: &duckdb::Connection, name: &str) -> Result<(), String> {
 
 /// 构造 postgres_query 函数用的连接串（和 ATTACH 的格式相同）。
 /// 用于 Hologres 等兼容 PG 协议但 catalog 元数据扫描不兼容的数据库。
+#[allow(dead_code)]
 pub fn build_pg_conn_str(r: &DataSourceConfig) -> String {
     let mut conn_str = format!(
         "host={} port={} dbname={} user={} password={}",

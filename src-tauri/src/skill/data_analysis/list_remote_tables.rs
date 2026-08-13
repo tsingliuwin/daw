@@ -4,7 +4,7 @@ use rig_core::{completion::ToolDefinition, tool::Tool};
 
 use super::super::super::agent::error::ToolError;
 use super::super::super::agent::events::{emit_tool_call, emit_tool_result, next_tool_id};
-use super::super::super::duckdb::attach::{build_pg_conn_str, workspace_attach_alias};
+use super::super::super::duckdb::attach::workspace_attach_alias;
 use super::super::super::state::AppState;
 
 #[derive(Deserialize, Serialize)]
@@ -16,6 +16,7 @@ pub struct ListRemoteTablesTool {
     pub app_state: AppState,
     pub task_id: String,
     pub window: tauri::Window,
+    pub ws: crate::skill::WorkspaceRef,
 }
 
 impl Tool for ListRemoteTablesTool {
@@ -48,7 +49,7 @@ impl Tool for ListRemoteTablesTool {
         let start = std::time::Instant::now();
 
         // 从 SQLite 查连接信息。
-        let ws_path = self.app_state.workspace_path.lock().await.clone();
+        let ws_path = self.ws.path.clone();
         let conn_record = {
             let ws_path = ws_path.clone();
             let name = conn_name.to_string();
@@ -68,15 +69,15 @@ impl Tool for ListRemoteTablesTool {
             }
         };
 
-        let duckdb_guard = self.app_state.duckdb.lock().await;
-        let duckdb_conn = match &*duckdb_guard {
-            Some(c) => c.clone(),
-            None => {
-                let msg = "DuckDB 引擎未初始化。".to_string();
-                emit_tool_result(&self.window, &self.task_id, &call_id, "error", msg.clone(), None, None, Some(0), None);
-                return Err(ToolError(msg));
+        let wsc = match self.app_state.ensure_workspace_conn(&self.ws.path).await {
+            Ok(w) => w,
+            Err(msg) => {
+                let full = format!("DuckDB 引擎未就绪: {msg}");
+                emit_tool_result(&self.window, &self.task_id, &call_id, "error", full.clone(), None, None, Some(0), None);
+                return Err(ToolError(full));
             }
         };
+        let duckdb_conn = wsc.conn.clone();
 
         let db_type = conn_record.db_type.clone();
         let catalog = workspace_attach_alias(&conn_record.name);
@@ -125,7 +126,10 @@ impl Tool for ListRemoteTablesTool {
                 for r in rows {
                     list.push(r.map_err(|e| e.to_string())?);
                 }
-                let _ = guard.execute_batch("USE memory");
+                // 恢复默认 catalog 为 lake（不能恢复成 memory，否则后续未限定的
+                // CREATE VIEW 会落进 in-memory 库，重启即丢——而 table_registry
+                // 仍记录它存在，造成"索引有、沉淀无"的不一致。
+                let _ = guard.execute_batch("USE lake");
                 Ok(list)
             }
         })

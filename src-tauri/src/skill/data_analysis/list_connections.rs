@@ -10,9 +10,11 @@ use super::super::super::state::AppState;
 pub struct ListConnectionsArgs {}
 
 pub struct ListConnectionsTool {
+    #[allow(dead_code)]
     pub app_state: AppState,
     pub task_id: String,
     pub window: tauri::Window,
+    pub ws: crate::skill::WorkspaceRef,
 }
 
 impl Tool for ListConnectionsTool {
@@ -37,7 +39,7 @@ impl Tool for ListConnectionsTool {
         emit_tool_call(&self.window, &self.task_id, &call_id, "list_connections", json!({}));
 
         let start = std::time::Instant::now();
-        let ws_path = self.app_state.workspace_path.lock().await.clone();
+        let ws_path = self.ws.path.clone();
         tracing::info!(category = "agent", "list_connections: workspace_path={}", ws_path);
         let result = tokio::task::spawn_blocking(move || -> Result<Vec<crate::model::DataSourceConfig>, String> {
             crate::db::list_workspace_db_connections(&ws_path).map_err(|e| e.to_string())

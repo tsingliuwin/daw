@@ -18,6 +18,7 @@ pub struct CreateViewTool {
     pub task_id: String,
     pub window: tauri::Window,
     pub confirm_mode: String,
+    pub ws: crate::skill::WorkspaceRef,
 }
 
 /// 名称校验：拒空、拒双引号（防注入）、拒 null byte。
@@ -91,15 +92,15 @@ impl Tool for CreateViewTool {
         }
 
         // 执行 DDL。
-        let duckdb_guard = self.app_state.duckdb.lock().await;
-        let conn = match &*duckdb_guard {
-            Some(c) => c.clone(),
-            None => {
-                let msg = "DuckDB 引擎未初始化".to_string();
-                emit_tool_result(&self.window, &self.task_id, &call_id, "error", msg.clone(), None, None, Some(0), None);
-                return Err(ToolError(msg));
+        let wsc = match self.app_state.ensure_workspace_conn(&self.ws.path).await {
+            Ok(w) => w,
+            Err(msg) => {
+                let full = format!("DuckDB 引擎未就绪: {msg}");
+                emit_tool_result(&self.window, &self.task_id, &call_id, "error", full.clone(), None, None, Some(0), None);
+                return Err(ToolError(full));
             }
         };
+        let conn = wsc.conn.clone();
         let ddl_clone = ddl.clone();
         let result = tokio::task::spawn_blocking(move || -> Result<(), String> {
             let guard = conn.blocking_lock();
@@ -112,7 +113,7 @@ impl Tool for CreateViewTool {
         match result {
             Ok(()) => {
                 // 写 OKF 视图骨架。
-                let ws_dir = self.app_state.workspace_dir.lock().await.to_string_lossy().to_string();
+                let ws_dir = self.ws.dir.to_string_lossy().to_string();
                 let name_clone = name.clone();
                 let sql_clone = select_sql.clone();
                 let _ = tokio::task::spawn_blocking(move || {

@@ -20,6 +20,7 @@ pub struct RegisterTableTool {
     pub app_state: AppState,
     pub task_id: String,
     pub window: tauri::Window,
+    pub ws: crate::skill::WorkspaceRef,
 }
 
 impl Tool for RegisterTableTool {
@@ -69,7 +70,7 @@ impl Tool for RegisterTableTool {
         let start = std::time::Instant::now();
 
         // 从 SQLite 查连接信息。
-        let ws_path = self.app_state.workspace_path.lock().await.clone();
+        let ws_path = self.ws.path.clone();
         let conn_record = {
             let ws_path = ws_path.clone();
             let name = conn_name.to_string();
@@ -89,15 +90,15 @@ impl Tool for RegisterTableTool {
             }
         };
 
-        let duckdb_guard = self.app_state.duckdb.lock().await;
-        let duckdb_conn = match &*duckdb_guard {
-            Some(c) => c.clone(),
-            None => {
-                let msg = "DuckDB 引擎未初始化。".to_string();
-                emit_tool_result(&self.window, &self.task_id, &call_id, "error", msg.clone(), None, None, Some(0), None);
-                return Err(ToolError(msg));
+        let wsc = match self.app_state.ensure_workspace_conn(&self.ws.path).await {
+            Ok(w) => w,
+            Err(msg) => {
+                let full = format!("DuckDB 引擎未就绪: {msg}");
+                emit_tool_result(&self.window, &self.task_id, &call_id, "error", full.clone(), None, None, Some(0), None);
+                return Err(ToolError(full));
             }
         };
+        let duckdb_conn = wsc.conn.clone();
 
         let catalog = workspace_attach_alias(&conn_name);
         let db_type = conn_record.db_type.clone();
@@ -107,7 +108,6 @@ impl Tool for RegisterTableTool {
         let table_name_clone = table_name.clone();
         let catalog_clone = catalog.clone();
         let ws_path_clone = ws_path.clone();
-        let conn_name_clone = conn_name.clone();
         let conn_name_for_registry = conn_name.clone();
 
         let result = tokio::task::spawn_blocking(move || -> Result<(String, String, String), String> {
@@ -242,7 +242,7 @@ impl Tool for RegisterTableTool {
                 let ws_path_clone2 = ws_path.clone();
                 let local_name_clone2 = local_name.clone();
                 let _ = tokio::task::spawn_blocking(move || {
-                    crate::db::update_table_registry_status(&ws_path_clone2, &local_name_clone2, &status, Some(&reason));
+                    let _ = crate::db::update_table_registry_status(&ws_path_clone2, &local_name_clone2, &status, Some(&reason));
                 }).await;
                 emit_tool_result(&self.window, &self.task_id, &call_id, "error", err.0.clone(), None, None, Some(elapsed), None);
                 Err(err)

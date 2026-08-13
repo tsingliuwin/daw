@@ -294,6 +294,7 @@ pub struct SearchArgs {
 }
 
 pub struct SearchTool {
+    #[allow(dead_code)]
     pub app_state: AppState,
     pub task_id: String,
     pub window: tauri::Window,

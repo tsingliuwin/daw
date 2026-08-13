@@ -10,9 +10,11 @@ use super::super::super::state::AppState;
 pub struct ListTablesArgs {}
 
 pub struct ListTablesTool {
+    #[allow(dead_code)]
     pub app_state: AppState,
     pub task_id: String,
     pub window: tauri::Window,
+    pub ws: crate::skill::WorkspaceRef,
 }
 
 impl Tool for ListTablesTool {
@@ -39,7 +41,7 @@ impl Tool for ListTablesTool {
         let start = std::time::Instant::now();
 
         // 从 table_registry 读取已注册的表。
-        let ws_path = self.app_state.workspace_path.lock().await.clone();
+        let ws_path = self.ws.path.clone();
         let entries = {
             let ws = ws_path.clone();
             tokio::task::spawn_blocking(move || crate::db::list_table_registry(&ws))

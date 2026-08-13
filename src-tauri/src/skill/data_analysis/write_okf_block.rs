@@ -15,9 +15,11 @@ pub struct WriteOkfBlockArgs {
 }
 
 pub struct WriteOkfBlockTool {
+    #[allow(dead_code)]
     pub app_state: AppState,
     pub task_id: String,
     pub window: tauri::Window,
+    pub ws: crate::skill::WorkspaceRef,
 }
 
 impl Tool for WriteOkfBlockTool {
@@ -50,7 +52,7 @@ impl Tool for WriteOkfBlockTool {
         }));
 
         let start = std::time::Instant::now();
-        let ws_dir = self.app_state.workspace_dir.lock().await.to_string_lossy().to_string();
+        let ws_dir = self.ws.dir.to_string_lossy().to_string();
         let category = args.category.clone();
         let name = args.name.clone();
         let heading = args.heading.clone();

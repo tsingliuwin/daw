@@ -29,6 +29,7 @@ pub struct RenderChartTool {
     pub app_state: AppState,
     pub task_id: String,
     pub window: tauri::Window,
+    pub ws: crate::skill::WorkspaceRef,
 }
 
 /// Chinese label for a chart type (used in the tool result summary).
@@ -99,17 +100,16 @@ impl Tool for RenderChartTool {
 
         let start = std::time::Instant::now();
 
-        let duckdb_guard = self.app_state.duckdb.lock().await;
-        let conn = match &*duckdb_guard {
-            Some(c) => c.clone(),
-            None => {
-                let msg = "DuckDB 引擎未初始化，无法执行查询。".to_string();
-                emit_tool_result(&self.window, &self.task_id, &call_id, "error", msg.clone(), None, None, Some(0), None);
-                return Err(ToolError(msg));
+        let wsc = match self.app_state.ensure_workspace_conn(&self.ws.path).await {
+            Ok(w) => w,
+            Err(msg) => {
+                let full = format!("DuckDB 引擎未就绪: {msg}");
+                emit_tool_result(&self.window, &self.task_id, &call_id, "error", full.clone(), None, None, Some(0), None);
+                return Err(ToolError(full));
             }
         };
-        let ih = self.app_state.interrupt_handle.lock().await.as_ref()
-            .and_then(|h| h.lock().ok().map(|g| g.clone()));
+        let conn = wsc.conn.clone();
+        let ih = wsc.interrupt_handle.lock().ok().map(|g| g.clone());
 
         let sql_string = sql.to_string();
         let hard_secs = QUERY_HARD_TIMEOUT_SECS;

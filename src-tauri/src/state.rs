@@ -1,12 +1,12 @@
 //! Application-wide singleton state, owned by `tauri::State`.
 //!
 //! Domain-agnostic machinery: the human-confirmation channel for write
-//! operations, the abort flag for stopping a running stream, and the
-//! current workspace path. No domain-specific state here - skills own
-//! their data dependencies.
+//! operations, the abort flag for stopping a running stream, and a lazily
+//! created pool of per-workspace DuckDB connections. No domain-specific state
+//! here - skills own their data dependencies.
 
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
@@ -28,93 +28,175 @@ pub struct PendingConfirmation {
     pub tx: oneshot::Sender<ConfirmDecision>,
 }
 
-/// App-wide singleton: skill registry + cross-tool coordination state.
+/// One DuckDB in-memory session + its DuckLake, scoped to a single workspace.
+///
+/// Each workspace owns its own connection (and thus its own `USE lake` default
+/// catalog and set of attached remote sources), so concurrent agent tasks in
+/// different workspaces never clobber each other's session state. `busy`
+/// enforces single-flight within a workspace: only one data-analysis task may
+/// use a workspace's connection at a time (same-workspace tasks serialize;
+/// cross-workspace tasks run in parallel).
+pub struct WorkspaceConnInner {
+    /// DuckDB in-memory session; DuckLake (`<ws>/.lake/lake.sqlite` + parquet)
+    /// is the sole persistent layer for views/tables under this workspace.
+    pub conn: Arc<Mutex<duckdb::Connection>>,
+    /// Interrupt handle for query timeouts on this connection.
+    pub interrupt_handle: Arc<std::sync::Mutex<Arc<duckdb::InterruptHandle>>>,
+    /// Absolute path of this workspace's directory (`~/.aioa/<workspace>`).
+    /// Retained for introspection/future close-hook checkpoint; not read in
+    /// the tool hot path (tools get their path from the injected `WorkspaceRef`).
+    #[allow(dead_code)]
+    pub ws_dir: PathBuf,
+    /// Single-flight guard: true while a data-analysis task is using this conn.
+    pub busy: AtomicBool,
+}
+pub type WorkspaceConn = Arc<WorkspaceConnInner>;
+
+/// RAII guard that clears a workspace's `busy` flag on drop, so single-flight
+/// is released even on early return / error / panic. Acquired by the runner
+/// after it wins the `busy` swap at task start.
+pub struct BusyGuard {
+    wsc: WorkspaceConn,
+}
+impl BusyGuard {
+    pub fn new(wsc: WorkspaceConn) -> Self {
+        Self { wsc }
+    }
+}
+impl Drop for BusyGuard {
+    fn drop(&mut self) {
+        self.wsc.busy.store(false, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+/// App-wide singleton: cross-tool coordination state + per-workspace DuckDB pool.
 #[derive(Clone)]
 pub struct AppState {
-    /// Absolute path of the workspace directory currently active.
-    #[allow(dead_code)]
-    pub workspace_dir: Arc<Mutex<PathBuf>>,
-    /// The workspace key (`workspaces.path`) currently active, e.g. "DefaultProject".
-    #[allow(dead_code)]
-    pub workspace_path: Arc<Mutex<String>>,
     /// Write tool calls parked in "变更前确认" mode, keyed by `{task_id}:{tool_call_id}`.
     pub pending_confirmations: Arc<Mutex<HashMap<String, PendingConfirmation>>>,
     /// Aborted task IDs.
     pub aborted_tasks: Arc<Mutex<HashSet<String>>>,
-    /// 搜索后端（None=未配置搜索服务，SearchTool 调时报错提示）。
-    pub search_backend: Option<Arc<dyn crate::skill::search::SearchBackend>>,
-    /// DuckDB in-memory 会话（可运行时更新）。安装命令成功后从 None 变 Some。
-    pub duckdb: Arc<Mutex<Option<Arc<Mutex<duckdb::Connection>>>>>,
-    /// DuckDB 中断句柄。
-    pub interrupt_handle: Arc<Mutex<Option<Arc<std::sync::Mutex<Arc<duckdb::InterruptHandle>>>>>>,
-    /// DuckDB 是否就绪（DuckLake 扩展已安装 + lake 已 ATTACH）。
-    pub duckdb_ready: Arc<AtomicBool>,
+    /// Per-workspace DuckDB connections, lazily created on first use.
+    /// Keyed by workspace path (e.g. "DefaultProject"). A `std::sync::Mutex`
+    /// (not tokio) so it can be locked from the blocking creation path too.
+    pub workspaces: Arc<std::sync::Mutex<HashMap<String, WorkspaceConn>>>,
+    /// Whether the ducklake/sqlite extensions have been loaded successfully at
+    /// least once (cached process-wide after the first install). Once true,
+    /// any workspace's connection can be lazily created without re-downloading.
+    /// `check_data_analysis_env` reports this.
+    pub ext_installed: Arc<AtomicBool>,
 }
 
 impl AppState {
     pub fn new() -> Self {
-        let ws = default_workspace_dir();
-        let (duckdb_conn, interrupt_handle) = open_duckdb();
-        let ready = duckdb_conn.is_some();
         Self {
-            workspace_dir: Arc::new(Mutex::new(ws)),
-            workspace_path: Arc::new(Mutex::new("DefaultProject".to_string())),
             pending_confirmations: Arc::new(Mutex::new(HashMap::new())),
             aborted_tasks: Arc::new(Mutex::new(HashSet::new())),
-            search_backend: crate::skill::search::create_search_backend_from_settings(),
-            duckdb: Arc::new(Mutex::new(duckdb_conn)),
-            interrupt_handle: Arc::new(Mutex::new(interrupt_handle)),
-            duckdb_ready: Arc::new(AtomicBool::new(ready)),
+            workspaces: Arc::new(std::sync::Mutex::new(HashMap::new())),
+            ext_installed: Arc::new(AtomicBool::new(false)),
         }
     }
 }
 
-/// 打开 DuckDB in-memory 会话，ATTACH DuckLake + 数据源。
-/// 成功返回 (Some(conn), Some(ih))，失败返回 (None, None)。
-/// 安装命令 install_data_analysis_env 成功后调用此函数初始化。
-pub fn open_duckdb() -> (
-    Option<Arc<Mutex<duckdb::Connection>>>,
-    Option<Arc<std::sync::Mutex<Arc<duckdb::InterruptHandle>>>>,
-) {
-    let ws_dir = match crate::db::get_aioa_dir() {
-        Ok(mut p) => {
-            p.push("DefaultProject");
-            p
-        }
-        Err(e) => {
-            tracing::error!(category = "system", "无法定位 aioa 目录: {e}");
-            return (None, None);
-        }
-    };
+impl Default for AppState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
-    // in-memory 会话 + DuckLake 作为持久层（视图/表定义存 lake.sqlite，重启恢复）。
-    let conn = match duckdb::Connection::open_in_memory() {
-        Ok(c) => c,
-        Err(e) => {
-            tracing::error!(category = "system", "DuckDB 打开失败: {e}");
-            return (None, None);
+impl AppState {
+    /// Resolve a workspace's directory: `~/.aioa/<ws_path>`.
+    fn workspace_dir_for(ws_path: &str) -> PathBuf {
+        let mut home = get_home_dir().unwrap_or_else(|| PathBuf::from("."));
+        home.push(".aioa");
+        home.push(ws_path);
+        home
+    }
+
+    /// Lazily get (or create) the DuckDB connection bundle for `ws_path`.
+    ///
+    /// Fast path: if the workspace's connection is already cached, return it
+    /// without any blocking work. Otherwise open a fresh in-memory session,
+    /// load ducklake/sqlite (INSTALL if never cached), ATTACH the workspace's
+    /// DuckLake + linked remote sources, cache it, and return it.
+    ///
+    /// Returns an error if the ducklake extension cannot be loaded — the user
+    /// must click "安装数据分析环境" first (which downloads the extensions).
+    pub async fn ensure_workspace_conn(&self, ws_path: &str) -> Result<WorkspaceConn, String> {
+        // Fast path: already cached.
+        {
+            let map = self.workspaces.lock().unwrap();
+            if let Some(wsc) = map.get(ws_path) {
+                return Ok(wsc.clone());
+            }
         }
-    };
-    // threads=1: DuckLake 的 SQLite catalog 是单写者，threads>1 会 "database is locked"。
+
+        // Slow path: create in a blocking task (DuckDB open/LOAD/ATTACH blocks).
+        let ws_path = ws_path.to_string();
+        let ws_dir = Self::workspace_dir_for(&ws_path);
+        let workspaces = self.workspaces.clone();
+        let ext_installed = self.ext_installed.clone();
+        let wsc = tokio::task::spawn_blocking(move || -> Result<WorkspaceConn, String> {
+            // Re-check after acquiring the ability to create: another task may
+            // have created it concurrently while we waited.
+            {
+                let map = workspaces.lock().unwrap();
+                if let Some(wsc) = map.get(&ws_path) {
+                    return Ok(wsc.clone());
+                }
+            }
+            let conn = create_workspace_conn(&ws_path, &ws_dir)?;
+            let ih = conn.interrupt_handle();
+            let wsc = Arc::new(WorkspaceConnInner {
+                conn: Arc::new(Mutex::new(conn)),
+                interrupt_handle: Arc::new(std::sync::Mutex::new(ih)),
+                ws_dir,
+                busy: AtomicBool::new(false),
+            });
+            {
+                let mut map = workspaces.lock().unwrap();
+                map.insert(ws_path.clone(), wsc.clone());
+            }
+            ext_installed.store(true, std::sync::atomic::Ordering::Relaxed);
+            Ok(wsc)
+        })
+        .await
+        .map_err(|e| format!("线程生成失败: {e}"))??;
+        Ok(wsc)
+    }
+
+    /// Get an already-cached workspace connection **without** creating one.
+    /// Returns `None` if the workspace's connection hasn't been lazily created
+    /// yet. Used by source link/unlink so they only (de|at)tach against
+    /// already-live connections and never eagerly create one as a side effect.
+    pub fn get_workspace_conn(&self, ws_path: &str) -> Option<WorkspaceConn> {
+        let map = self.workspaces.lock().unwrap();
+        map.get(ws_path).cloned()
+    }
+}
+
+/// Open an in-memory DuckDB session, load ducklake/sqlite, ATTACH the
+/// workspace's DuckLake (as default catalog), and ATTACH the workspace's linked
+/// remote data sources. Used by [`AppState::ensure_workspace_conn`].
+///
+/// For `DefaultProject` specifically, also runs the one-time P1 legacy
+/// `settings.json` migration and auto-links orphaned connections, matching the
+/// previous startup bootstrap behavior.
+fn create_workspace_conn(ws_path: &str, ws_dir: &Path) -> Result<duckdb::Connection, String> {
+    let conn = duckdb::Connection::open_in_memory()
+        .map_err(|e| format!("DuckDB 打开失败: {e}"))?;
     let _ = conn.execute_batch("PRAGMA memory_limit='4GB';\nPRAGMA threads=1;");
 
-    // 加载 ducklake + sqlite 扩展，ATTACH lake 为默认 catalog。
-    if let Err(e) = crate::duckdb::lake::ensure_ducklake_loaded(&conn) {
-        tracing::error!(category = "system", "ducklake 加载失败: {e}");
-        return (None, None);
-    }
-    if let Err(e) = crate::duckdb::lake::attach_workspace_lake(&conn, &ws_dir) {
-        tracing::error!(category = "system", "DuckLake ATTACH 失败: {e}");
-        return (None, None);
-    }
+    // ducklake + sqlite extensions; DuckLake is the persistent catalog backend.
+    crate::duckdb::lake::ensure_ducklake_loaded(&conn)?;
+    // ATTACH this workspace's DuckLake and make it the default catalog.
+    crate::duckdb::lake::attach_workspace_lake(&conn, ws_dir)?;
 
-    // 从 SQLite 查 DefaultProject 工作区已 link 的数据源并 ATTACH。
-    // 如果 db_connections 表为空但 settings.json 有 dataSources（P1 遗留），
-    // 自动迁移到表 + link 到 DefaultProject。
-    let ws_path = "DefaultProject";
+    // ATTACH the workspace's linked remote data sources. For DefaultProject,
+    // also run the one-time P1 legacy migration + auto-link bootstrap so a
+    // fresh install still picks up existing data sources.
     let mut sources = crate::db::list_workspace_db_connections(ws_path).unwrap_or_default();
-    if sources.is_empty() {
-        // 迁移兼容：P1 的 settings.json dataSources → SQLite 表
+    if sources.is_empty() && ws_path == "DefaultProject" {
         let legacy = crate::duckdb::load_data_sources();
         if !legacy.is_empty() {
             tracing::info!(category = "system", "迁移 {} 个 P1 settings.json 数据源到 SQLite", legacy.len());
@@ -125,9 +207,7 @@ pub fn open_duckdb() -> (
             sources = crate::db::list_workspace_db_connections(ws_path).unwrap_or_default();
         }
     }
-    // 兜底修复：如果 db_connections 表有连接但 workspace_db_connections 没有 link
-    // （P3 创建连接但没手动点"启用"），自动 link 到 DefaultProject。
-    if sources.is_empty() {
+    if sources.is_empty() && ws_path == "DefaultProject" {
         let all_conns = crate::db::list_db_connections().unwrap_or_default();
         if !all_conns.is_empty() {
             tracing::info!(category = "system", "自动 link {} 个未关联的数据源到 DefaultProject", all_conns.len());
@@ -142,24 +222,6 @@ pub fn open_duckdb() -> (
             tracing::warn!(category = "link", "启动 ATTACH 数据源失败: {e}");
         }
     }
-
-    let ih = conn.interrupt_handle();
-    let conn_arc = Arc::new(Mutex::new(conn));
-    let ih_arc = Arc::new(std::sync::Mutex::new(ih));
-    tracing::info!(category = "system", "DuckDB in-memory 会话就绪，已 ATTACH {} 个数据源", sources.len());
-    (Some(conn_arc), Some(ih_arc))
-}
-
-/// The default workspace directory: `~/.aioa/DefaultProject/`.
-fn default_workspace_dir() -> PathBuf {
-    let mut home = get_home_dir().unwrap_or_else(|| PathBuf::from("."));
-    home.push(".aioa");
-    home.push("DefaultProject");
-    home
-}
-
-impl Default for AppState {
-    fn default() -> Self {
-        Self::new()
-    }
+    tracing::info!(category = "system", "DuckDB 工作区连接就绪 ({}): 已 ATTACH {} 个数据源", ws_path, sources.len());
+    Ok(conn)
 }

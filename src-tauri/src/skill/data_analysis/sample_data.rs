@@ -17,6 +17,7 @@ pub struct SampleDataTool {
     pub app_state: AppState,
     pub task_id: String,
     pub window: tauri::Window,
+    pub ws: crate::skill::WorkspaceRef,
 }
 
 impl Tool for SampleDataTool {
@@ -55,9 +56,7 @@ impl Tool for SampleDataTool {
         let start = std::time::Instant::now();
 
         // 查 table_registry 获取 access_mode
-        let ws_path = self.app_state.workspace_path.lock().await.clone();
-        let ws_path_clone = ws_path.clone();
-        let table_name_clone = table_name.clone();
+        let ws_path = self.ws.path.clone();
         let registry_entry = {
             let tn = table_name.clone();
             let ws = ws_path.clone();
@@ -68,17 +67,16 @@ impl Tool for SampleDataTool {
             .map_err(|e| ToolError(e))?
         };
 
-        let duckdb_guard = self.app_state.duckdb.lock().await;
-        let conn = match &*duckdb_guard {
-            Some(c) => c.clone(),
-            None => {
-                let msg = "DuckDB 引擎未初始化。".to_string();
-                emit_tool_result(&self.window, &self.task_id, &call_id, "error", msg.clone(), None, None, Some(0), None);
-                return Err(ToolError(msg));
+        let wsc = match self.app_state.ensure_workspace_conn(&self.ws.path).await {
+            Ok(w) => w,
+            Err(msg) => {
+                let full = format!("DuckDB 引擎未就绪: {msg}");
+                emit_tool_result(&self.window, &self.task_id, &call_id, "error", full.clone(), None, None, Some(0), None);
+                return Err(ToolError(full));
             }
         };
-        let ih = self.app_state.interrupt_handle.lock().await.as_ref()
-            .and_then(|h| h.lock().ok().map(|g| g.clone()));
+        let conn = wsc.conn.clone();
+        let ih = wsc.interrupt_handle.lock().ok().map(|g| g.clone());
 
         let hard_secs = super::super::super::duckdb::QUERY_HARD_TIMEOUT_SECS;
 
@@ -131,12 +129,12 @@ impl Tool for SampleDataTool {
                 Ok(format!("表 {} 的前 {} 行样例数据已展示在结果表格中。", table_name, n))
             }
             Err(err) => {
-                let ws_dir = self.app_state.workspace_dir.lock().await.to_string_lossy().to_string();
+                let ws_dir = self.ws.dir.to_string_lossy().to_string();
                 let err_msg = err.0.clone();
                 let table_name_clone2 = table_name.clone();
                 let _ = tokio::task::spawn_blocking(move || {
                     let (status, reason) = classify_sample_error(&err_msg);
-                    crate::db::update_table_registry_status(&ws_dir, &table_name_clone2, &status, Some(&reason));
+                    let _ = crate::db::update_table_registry_status(&ws_dir, &table_name_clone2, &status, Some(&reason));
                 }).await;
                 emit_tool_result(&self.window, &self.task_id, &call_id, "error", err.0.clone(), None, None, Some(elapsed), None);
                 Err(err)

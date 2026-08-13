@@ -26,13 +26,25 @@ pub mod data_analysis;
 pub mod registry;
 pub mod search;
 
-pub use context::SkillContext;
-pub use registry::SkillRegistry;
+/// Per-task workspace pointer injected into data-analysis tools.
+///
+/// Replaces the old shared `AppState.workspace_path`/`workspace_dir` fields,
+/// which were clobbered whenever multiple workspaces ran concurrently. Each
+/// tool reads its task's workspace from this owned clone, so concurrent
+/// cross-workspace tasks never read each other's workspace.
+#[derive(Clone)]
+pub struct WorkspaceRef {
+    /// Workspace key (`workspaces.path`), e.g. "DefaultProject".
+    pub path: String,
+    /// Absolute workspace directory `~/.aioa/<path>`.
+    pub dir: std::path::PathBuf,
+}
 
 /// 一个可插拔的能力包。
 ///
 /// Skill 自带领域 preamble（注入 LLM 的领域指令），工具在 runner 里按
 /// skill id 条件构造（rig Tool trait 非 dyn-compatible）。
+#[allow(dead_code)]
 pub trait Skill: Send + Sync {
     /// Skill 唯一标识（如 `"oa"`、`"finance"`）。
     fn id(&self) -> &str;

@@ -17,6 +17,7 @@ pub struct ExecuteQueryTool {
     pub app_state: AppState,
     pub task_id: String,
     pub window: tauri::Window,
+    pub ws: crate::skill::WorkspaceRef,
 }
 
 impl Tool for ExecuteQueryTool {
@@ -57,27 +58,26 @@ impl Tool for ExecuteQueryTool {
 
         let start = std::time::Instant::now();
 
-        let duckdb_guard = self.app_state.duckdb.lock().await;
-        let conn = match &*duckdb_guard {
-            Some(c) => c.clone(),
-            None => {
-                let msg = "DuckDB 引擎未初始化，无法执行查询。请检查应用日志。".to_string();
+        let wsc = match self.app_state.ensure_workspace_conn(&self.ws.path).await {
+            Ok(w) => w,
+            Err(msg) => {
+                let full = format!("DuckDB 引擎未就绪: {msg}");
                 emit_tool_result(
                     &self.window, &self.task_id, &call_id, "error",
-                    msg.clone(), Some(sql.to_string()), None, Some(0), None,
+                    full.clone(), Some(sql.to_string()), None, Some(0), None,
                 );
-                return Err(ToolError(msg));
+                return Err(ToolError(full));
             }
         };
-        let ih = self.app_state.interrupt_handle.lock().await.as_ref()
-            .and_then(|h| h.lock().ok().map(|g| g.clone()));
+        let conn = wsc.conn.clone();
+        let ih = wsc.interrupt_handle.lock().ok().map(|g| g.clone());
 
         let sql_string = sql.to_string();
         let hard_secs = QUERY_HARD_TIMEOUT_SECS;
 
         // 执行前检查：解析 SQL 里的表名，查 table_registry access_mode。
         // pushdown 模式的表不能通过视图查询（会拉全表），必须用 postgres_query 下推。
-        let ws_path = self.app_state.workspace_path.lock().await.clone();
+        let ws_path = self.ws.path.clone();
         let sql_for_check = sql_string.clone();
         let pushdown_violation = {
             let ws = ws_path.clone();
@@ -167,7 +167,7 @@ impl Tool for ExecuteQueryTool {
             }
             Err(err) => {
                 // 查询失败时更新 OKF 表探索状态（如果 SQL 引用了已注册的表）。
-                let ws_dir = self.app_state.workspace_dir.lock().await.to_string_lossy().to_string();
+                let ws_dir = self.ws.dir.to_string_lossy().to_string();
                 let err_msg = err.0.clone();
                 let sql_clone = sql.to_string();
                 let _ = tokio::task::spawn_blocking(move || {
