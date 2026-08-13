@@ -3840,7 +3840,7 @@ button.lm-select-trigger:hover:not(:disabled) {
  * .custom-dropdown-list 设置）。覆盖共用的 min-width:120px 自由变宽行为，
  * 超长模型名在卡片内部用省略号截断，避免卡片过宽。 */
 .custom-dropdown-list.model-dropdown {
-  width: 220px;
+  width: 180px;
   min-width: 0;
 }
 .custom-dropdown-list.model-dropdown .dropdown-item,
