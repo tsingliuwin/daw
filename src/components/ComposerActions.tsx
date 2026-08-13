@@ -78,7 +78,7 @@ export default function ComposerActions(props: {
           </span>
         </button>
         <Show when={modelDropdownOpen()}>
-          <div class="custom-dropdown-list">
+          <div class="custom-dropdown-list model-dropdown">
             <Show
               when={props.availableModels.length > 0}
               fallback={

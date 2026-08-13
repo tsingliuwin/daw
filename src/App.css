@@ -3836,6 +3836,20 @@ button.lm-select-trigger:hover:not(:disabled) {
   max-width: 200px;
 }
 
+/* 模型下拉卡片：固定宽度，右侧与触发按钮右侧对齐（right:0 已在
+ * .custom-dropdown-list 设置）。覆盖共用的 min-width:120px 自由变宽行为，
+ * 超长模型名在卡片内部用省略号截断，避免卡片过宽。 */
+.custom-dropdown-list.model-dropdown {
+  width: 220px;
+  min-width: 0;
+}
+.custom-dropdown-list.model-dropdown .dropdown-item,
+.custom-dropdown-list.model-dropdown .dropdown-group-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* + 按钮在底栏左侧，下拉面板需左对齐向右展开（默认 right:0 会向左挤出）。
  * 独立 min-width，容纳「选择文件夹扫描…」文案。 */
 .source-menu-wrapper .custom-dropdown-list {
@@ -4991,6 +5005,11 @@ button.lm-select-trigger:hover:not(:disabled) {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+/* 模型名称自适应宽度：覆盖默认 90px 截断，让按钮按名称自然撑开。
+ * 仅对模型按钮生效，优先级 / 确认模式仍保持 90px 上限。 */
+.chat-composer__model-btn > span:not(.btn-caret):not(.btn-prefix) {
+  max-width: none;
 }
 .chat-composer__pill-btn:hover {
   background: var(--bg-hover);
