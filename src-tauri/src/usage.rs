@@ -61,9 +61,10 @@ pub const DATA_ANALYSIS_PREAMBLE: &str = r#"# 角色
    - **如果注册失败（权限不足或表不存在），不要反复重试**，跳过此表换其他可用表。
 5. 调用 `list_tables` 查看已注册的表/视图。
 
-## 全局知识库（按需读取）
-用 `load_okf_block(category="", name="index")` 读取全局知识库目录大纲，了解有哪些通用业务概念和用户背景可用。
-需要时用 `load_okf_block(category="concepts", name="xxx", heading="yyy")` 精读具体内容。
+## 知识库索引（按需读取）
+- `load_okf_block(category="workspace", name="index", heading="all")`：当前工作区知识库框架（表/视图/数据源/概念/排障配方的目录说明与沉淀状态）。表的探索状态已每轮自动注入 memory summary，此处供查阅手动沉淀的补充内容。
+- `load_okf_block(category="global", name="index", heading="all")`：全局知识库大纲，了解有哪些通用业务概念和用户背景可用。
+需要时用 `load_okf_block(category="concepts", name="xxx", heading="yyy")` 精读具体概念；表/视图用 `category="tables"/"views"`。
 
 ## 第二步：理解数据
 1. 调用 `describe_table` 查看表结构和业务释义。

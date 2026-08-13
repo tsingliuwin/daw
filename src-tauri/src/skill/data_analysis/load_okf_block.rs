@@ -28,13 +28,13 @@ impl Tool for LoadOkfBlockTool {
     async fn definition(&self, _prompt: String) -> ToolDefinition {
         ToolDefinition {
             name: "load_okf_block".to_string(),
-            description: "读取本地 OKF 知识库中某个文件下指定二级标题的内容。用于精简读取业务释义、关联关系、排障记录等，避免加载全文节省 token。".to_string(),
+            description: "读取本地 OKF 知识库内容。可读取某文件下指定二级标题（精简读取业务释义/关联关系/排障记录以省 token），也可读取知识库索引全文。".to_string(),
             parameters: json!({
                 "type": "object",
                 "properties": {
-                    "category": { "type": "string", "description": "OKF 目录类别：tables, views, concepts, pipelines/specific" },
-                    "name": { "type": "string", "description": "文件名（不含 .md 后缀），如表名 orders" },
-                    "heading": { "type": "string", "description": "要读取的标题，如：关联关系、异常排障记录、业务描述" }
+                    "category": { "type": "string", "description": "OKF 目录类别：tables, views, sources, concepts, pipelines/specific。读取索引必须用 workspace（当前工作区 index.md）或 global（全局 index.md）" },
+                    "name": { "type": "string", "description": "文件名（不含 .md 后缀），如表名 orders；读取索引填 index" },
+                    "heading": { "type": "string", "description": "要读取的标题，如：关联关系、异常排障记录、业务描述。读取索引（name=index）时忽略此项，填 all 即可" }
                 },
                 "required": ["category", "name", "heading"]
             }),

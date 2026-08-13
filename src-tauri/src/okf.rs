@@ -14,6 +14,59 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+/// Seed content for the global OKF `index.md` — the progressive-disclosure
+/// outline the agent reads via `load_okf_block(category="global", name="index")`.
+const GLOBAL_INDEX_SEED: &str = r#"---
+type: Global Knowledge Index
+description: 全局知识库目录大纲（渐进式披露入口，agent 按需精读）
+---
+
+# 全局知识库
+
+跨工作区共享的知识。agent 先读本大纲，再按名精读具体文件，无需全部加载。
+
+## 通用业务概念（concepts/）
+用 `load_okf_block(category="concepts", name="<概念名>", heading="<标题>")` 精读。
+- （暂无，使用中由 agent 或用户沉淀）
+
+## 用户背景（users/）
+用 `load_okf_block(category="users/default", name="<名称>", heading="<标题>")` 精读。
+- （暂无，使用中由 agent 或用户沉淀）
+"#;
+
+/// Seed content for each workspace OKF `index.md`. Complements the
+/// auto-injected memory summary with a manually-refinable framework that
+/// documents every standard subdir's purpose.
+const WORKSPACE_INDEX_SEED: &str = r#"---
+type: Workspace Knowledge Index
+description: 工作区知识库索引（表探索状态自动注入 preamble，本文件供手动沉淀补充）
+---
+
+# 工作区知识库
+
+本工作区的数据探索知识。表/视图的探索状态由系统自动跟踪并每轮注入 memory summary，
+此处记录补充的业务上下文、字段释义、关联关系与排障配方。
+
+## 表（tables/）
+每张已探索的表自动生成 `tables/<表名>.md` 骨架（字段 Schema + 关联关系），agent 后续补充业务释义。
+- （暂无已探索的表）
+
+## 视图（views/）
+注册的本地视图 `v_xxx` 定义存于 `views/<视图名>.md`。
+- （暂无）
+
+## 数据源（sources/）
+- （暂无）
+
+## 工作区概念（concepts/）
+工作区级业务概念（跨工作区共享的概念在全局 okf/concepts/）。
+- （暂无）
+
+## 排障配方（pipelines/specific/）
+数据清洗、加载等排障记录 `pipelines/specific/<名称>.md`，可用 `search_okf_recipes` 检索。
+- （暂无）
+"#;
+
 /// Get the root OKF directory for a workspace: `<ws_path>/okf`
 pub fn get_okf_dir(ws_path: &str) -> PathBuf {
     Path::new(ws_path).join("okf")
@@ -49,6 +102,79 @@ pub fn ensure_okf_dirs(ws_path: &str) -> Result<PathBuf, String> {
         }
     }
     Ok(okf_dir)
+}
+
+/// Resolve a `workspaces.path` value to its actual filesystem directory.
+///
+/// Custom workspaces (registered via `add_workspace`) store an absolute path
+/// picked by the directory dialog, returned as-is. The default workspace
+/// stores the relative key `"DefaultProject"` (seeded by `init_global_db`),
+/// resolved to `~/.aioa/DefaultProject`.
+pub fn resolve_workspace_dir(path: &str) -> Result<PathBuf, String> {
+    let p = PathBuf::from(path);
+    if p.is_absolute() {
+        Ok(p)
+    } else {
+        Ok(crate::db::get_aioa_dir()?.join(path))
+    }
+}
+
+/// 若 `<okf_dir>/index.md` 不存在，写入种子内容并 git 提交（幂等）。
+/// 已存在不覆盖，保留后续沉淀的内容。run_git_commit 只 add 传入的具体文件，
+/// 故种子必须在写入时一并提交，否则后续 write_okf_block 触发 git init 时
+/// 也不会把 index.md 纳入版本控制。
+fn seed_index_md(okf_dir: &Path, seed: &str, commit_msg: &str) -> Result<(), String> {
+    let index_path = okf_dir.join("index.md");
+    if !index_path.exists() {
+        fs::write(&index_path, seed).map_err(|e| format!("写入 index.md 失败: {e}"))?;
+        run_git_commit(okf_dir, &index_path, commit_msg);
+    }
+    Ok(())
+}
+
+/// 为单个工作区初始化 OKF：标准目录 + 种子 index.md + git 版本化（幂等）。
+/// 供 `init_okf`（启动遍历所有工作区）与 `add_workspace`（新建工作区）共用。
+pub fn init_workspace_okf(ws_path: &str) -> Result<PathBuf, String> {
+    let okf_dir = ensure_okf_dirs(ws_path)?;
+    seed_index_md(&okf_dir, WORKSPACE_INDEX_SEED, "Bootstrap workspace OKF index")?;
+    Ok(okf_dir)
+}
+
+/// 首次启动时确保 OKF 全局 + 所有已注册工作区的目录结构完整（幂等）。
+///
+/// 独立于 DuckDB：即使 DuckLake 扩展未就绪，OKF 仍可读写。由 `lib::run()`
+/// 在 `init_global_db` 之后调用，保证 agent 首次读取 `load_okf_block("",
+/// "index")` 时不报"全局知识库目录尚不存在"，且每个 OKF（全局 + 各工作区）
+/// 都具备标准目录、种子 index.md 与初始内容，后续再按知识沉淀补充修改。
+pub fn init_okf() -> Result<(), String> {
+    // 1) 全局 OKF：concepts/ + users/default/ + 种子 index.md（渐进式披露入口）。
+    let global_dir = ensure_global_okf_dirs("default")?;
+    seed_index_md(&global_dir, GLOBAL_INDEX_SEED, "Bootstrap global OKF index")?;
+
+    // 2) 所有已注册工作区的 OKF（DefaultProject + 自定义工作区）。
+    //    workspaces.path：自定义工作区是绝对路径（目录选择器），DefaultProject
+    //    是相对键（init_global_db 种子），由 resolve_workspace_dir 统一解析。
+    //    逐工作区幂等初始化（目录 + 种子 index.md + git），单个失败不阻断其余
+    //    （如某工作区目录在不可访问的移动盘）。此处 tracing 尚未安装，用 eprintln。
+    match crate::db::list_workspace_paths() {
+        Ok(paths) => {
+            for p in paths {
+                let ws_str = match resolve_workspace_dir(&p) {
+                    Ok(d) => d.to_string_lossy().to_string(),
+                    Err(e) => {
+                        eprintln!("Failed to resolve workspace dir for OKF init '{p}': {e}");
+                        continue;
+                    }
+                };
+                if let Err(e) = init_workspace_okf(&ws_str) {
+                    eprintln!("Failed to init OKF for workspace '{p}': {e}");
+                }
+            }
+        }
+        Err(e) => eprintln!("Failed to list workspaces for OKF init: {e}"),
+    }
+
+    Ok(())
 }
 
 /// 列信息三元组：(字段名, 物理类型, 是否允许空)。
@@ -131,22 +257,34 @@ pub fn parse_okf_block_from_content(content: &str, heading: &str) -> Option<Stri
 /// Read a specific heading block from an OKF file.
 /// concepts/users 类别：先查工作区，找不到再查全局。
 /// tables/views/sources/pipelines 类别：只查工作区。
-/// 特殊：category="" + name="index" → 读全局 index.md。
+/// 特殊（索引读取，返回整个 index.md 全文，忽略 heading）：
+///   category="workspace" + name="index" → 当前工作区 index.md（<ws>/okf/index.md）
+///   category="global"    + name="index" → 全局 index.md（~/.aioa/okf/index.md）
+/// category 必须显式为 workspace 或 global；空字符串已废弃（不再是全局别名）。
 pub fn read_okf_block(
     ws_path: &str,
     category: &str,
     name: &str,
     heading: &str,
 ) -> Result<String, String> {
-    // 特殊：读全局 index.md。
-    if category.is_empty() && name == "index" {
-        let global_dir = get_global_okf_dir().map_err(|e| format!("全局 OKF 目录不可用: {e}"))?;
-        let index_path = global_dir.join("index.md");
+    // 索引读取：返回整个 index.md 全文（heading 被忽略）。仅 workspace/global 有效。
+    if name == "index" && (category == "workspace" || category == "global") {
+        let (index_path, scope) = if category == "workspace" {
+            (get_okf_dir(ws_path).join("index.md"), "工作区")
+        } else {
+            let global_dir = get_global_okf_dir().map_err(|e| format!("全局 OKF 目录不可用: {e}"))?;
+            (global_dir.join("index.md"), "全局")
+        };
         if !index_path.exists() {
-            return Err("全局知识库目录尚不存在。".to_string());
+            return Err(format!("{scope}知识库 index.md 尚不存在。"));
         }
         let content = fs::read_to_string(&index_path).map_err(|e| format!("读取 index.md 失败: {e}"))?;
         return Ok(content);
+    }
+    // category="" + name=index 已废弃：明确报错，避免静默回退到正常路径
+    // 把工作区 index.md 当 heading 块读（隐蔽的魔法行为）。
+    if name == "index" && category.is_empty() {
+        return Err("读取索引需显式指定 category=\"workspace\" 或 \"global\"（空字符串已废弃）。".to_string());
     }
 
     let okf_dir = get_okf_dir(ws_path);

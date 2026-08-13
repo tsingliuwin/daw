@@ -1,6 +1,7 @@
 import { createSignal, Show, For, onMount, onCleanup, createMemo } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { Workspace, Task, ChatMessage, ModelOption } from "./lib/types";
 import { modelKeyOf, modelIdOfKey, providerIdOfKey } from "./lib/types";
 import { appendDelta, pushToolCall, mergeToolResult, normalizeMessage, newSegmentId } from "./lib/chat";
@@ -387,9 +388,25 @@ export default function App() {
 
     // 后端 tracing 事件 → 统一日志 signal（前端日志与后端日志在同一控制台混合展示）。
     const unlistenAppLog = await installAppLogListener();
+
+    // 关闭窗口时若有 streaming 任务，先把内存消息 flush 到 .jsonl 再退出，
+    // 防止"对话过程中关窗/重启"丢失用户消息与已流式片段（兜底）。
+    const win = getCurrentWindow();
+    const unlistenClose = await win.onCloseRequested(async (event) => {
+      const sid = streamingTaskId();
+      if (!sid) return; // 无流式任务，放行正常关闭
+      event.preventDefault();
+      const wsPath = findTaskWorkspace(sid);
+      const task = wsPath ? tasksByWorkspace()[wsPath]?.find((t) => t.id === sid) : undefined;
+      if (task && wsPath) {
+        try { await saveTaskBackend(task, wsPath); } catch (err) { logError("agent", "flush on close failed", err); }
+      }
+      await win.destroy(); // destroy 不再二次触发 close-requested，避免递归
+    });
     onCleanup(() => {
       unlistenAppLog();
       unlistenAgent();
+      unlistenClose();
     });
   });
 
@@ -546,9 +563,13 @@ export default function App() {
       ...prev,
       [wsPath]: (prev[wsPath] ?? []).map((t) => (t.id === id ? updatedTask : t)),
     }));
-    // 追加用户消息到 .jsonl（实时落盘）+ 更新 SQLite 元数据。
+    // 追加用户消息到 .jsonl（实时落盘）+ 更新 SQLite 元数据（不触碰内容文件）。
     void appendChatLine(id, userMsg);
-    await invoke("save_task", { workspacePath: wsPath, taskId: id, name: newName, messages: [], modelId: task.modelId || null, tokenUsage: task.tokenUsage ?? null, spaceId: "personal", userId: "default", kind: task.kind ?? "task" }).catch(() => {});
+    await invoke("update_task_meta", {
+      workspacePath: wsPath, taskId: id, name: newName,
+      modelId: task.modelId || null, tokenUsage: task.tokenUsage ?? null,
+      spaceId: "personal", userId: "default", kind: task.kind ?? "task",
+    }).catch((err) => logError("agent", "Failed to update task meta", err));
 
     try {
       setStreamingTaskId(id);

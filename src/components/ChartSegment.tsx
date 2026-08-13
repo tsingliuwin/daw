@@ -1,7 +1,7 @@
 import { onCleanup, onMount, createSignal, For, Show, createEffect } from "solid-js";
 import * as echarts from "echarts";
 import { invoke } from "@tauri-apps/api/core";
-import type { Segment, SqlResult } from "../lib/types";
+import type { Segment, SqlResult, JsonValue } from "../lib/types";
 import { currentTheme, Theme } from "../lib/theme";
 import { Portal } from "solid-js/web";
 
@@ -85,6 +85,15 @@ export default function ChartSegment(props: { seg: Extract<Segment, { type: "cha
     const yCols = yFields && yFields.length > 0 ? yFields : findNumericCols(cols, table.columnTypes, xIdx);
     const styles = getThemeStyles(currentTheme());
 
+    // For category-based charts, try to sort rows by the temporal / ordinal
+    // meaning of the x-axis so that months, years, quarters, weeks, dates …
+    // always appear in natural order even when the SQL lacks a matching
+    // ORDER BY. Non-temporal categories keep their original order.
+    const catXIdx = xIdx >= 0 ? xIdx : 0;
+    const rows = (type === "bar" || type === "line" || type === "pie" || type === "funnel")
+      ? sortRowsByCategory(table.rows, catXIdx)
+      : table.rows;
+
     const AXIS_STYLE = {
       axisLine: { lineStyle: { color: styles.axisLineColor } },
       axisTick: { show: false, lineStyle: { color: styles.axisTickColor } },
@@ -105,23 +114,23 @@ export default function ChartSegment(props: { seg: Extract<Segment, { type: "cha
 
     if (type === "pie") {
       const yIdx = yCols.length > 0 ? cols.indexOf(yCols[0]) : -1;
-      const data = table.rows.filter((r) => r[xIdx] != null && r[yIdx] != null).map((r) => ({ name: String(r[xIdx]), value: num(r[yIdx]) }));
+      const data = rows.filter((r) => r[xIdx] != null && r[yIdx] != null).map((r) => ({ name: String(r[xIdx]), value: num(r[yIdx]) }));
       return { color: styles.palette, title: title ? { ...TITLE_STYLE(title), top: 8 } : undefined, tooltip: { trigger: "item", formatter: "{b}: {c} ({d}%)", ...TOOLTIP_STYLE }, legend: { bottom: 2, type: "scroll", textStyle: { color: styles.legendColor, fontSize: 11 }, itemWidth: 8, itemHeight: 8, itemGap: 12 }, series: [{ type: "pie", radius: ["40%", "60%"], center: ["50%", "50%"], data, label: { color: styles.textColor, fontSize: 11, formatter: "{b}: {d}%", fontWeight: 500 }, labelLine: { lineStyle: { color: styles.lineStyleColor } }, itemStyle: { borderRadius: 6, borderColor: styles.tooltipBg, borderWidth: 2 } }] };
     }
     if (type === "scatter") {
       const yIdx = yCols.length > 0 ? cols.indexOf(yCols[0]) : -1;
-      const data = table.rows.filter((r) => r[xIdx] != null && r[yIdx] != null).map((r) => [num(r[xIdx]), num(r[yIdx])]);
+      const data = rows.filter((r) => r[xIdx] != null && r[yIdx] != null).map((r) => [num(r[xIdx]), num(r[yIdx])]);
       return { color: styles.palette, title: title ? TITLE_STYLE(title) : undefined, tooltip: { trigger: "item", ...TOOLTIP_STYLE }, grid: { left: 60, right: 24, top: title ? 44 : 20, bottom: 32, containLabel: true }, xAxis: { type: "value", name: xField ?? cols[xIdx] ?? "X", nameTextStyle: { color: styles.axisLabelColor, fontSize: 11 }, scale: true, ...AXIS_STYLE }, yAxis: { type: "value", name: yCols[0] ?? "Y", nameTextStyle: { color: styles.axisLabelColor, fontSize: 11 }, scale: true, ...AXIS_STYLE }, series: [{ type: "scatter", data, symbolSize: 8, itemStyle: { opacity: 0.8, borderColor: styles.tooltipBg, borderWidth: 1.5 }, emphasis: { focus: "self", itemStyle: { opacity: 1 } } }] };
     }
     if (type === "funnel") {
       const yIdx = yCols.length > 0 ? cols.indexOf(yCols[0]) : -1;
-      const data = table.rows.filter((r) => r[xIdx] != null && r[yIdx] != null).map((r) => ({ name: String(r[xIdx]), value: num(r[yIdx]) }));
+      const data = rows.filter((r) => r[xIdx] != null && r[yIdx] != null).map((r) => ({ name: String(r[xIdx]), value: num(r[yIdx]) }));
       return { color: styles.palette, title: title ? { ...TITLE_STYLE(title), top: 8 } : undefined, tooltip: { trigger: "item", formatter: "{b}: {c}", ...TOOLTIP_STYLE }, legend: { bottom: 2, type: "scroll", textStyle: { color: styles.legendColor, fontSize: 11 }, itemWidth: 8, itemHeight: 8, itemGap: 12 }, series: [{ type: "funnel", data, sort: "descending", gap: 2, label: { color: styles.textColor, fontSize: 11, formatter: "{b}: {c}", fontWeight: 500 }, itemStyle: { borderRadius: 4, borderColor: styles.tooltipBg, borderWidth: 1.5 } }] };
     }
     if (type === "gauge") {
       const yIdx = yCols.length > 0 ? cols.indexOf(yCols[0]) : findFirstNumeric(table.columnTypes, xIdx);
       const label = yIdx >= 0 ? cols[yIdx] : (xField ?? "值");
-      const value = yIdx >= 0 && table.rows.length > 0 ? num(table.rows[0][yIdx]) : 0;
+      const value = yIdx >= 0 && rows.length > 0 ? num(rows[0][yIdx]) : 0;
       return { color: styles.palette, title: title ? { ...TITLE_STYLE(title), top: 8 } : undefined, tooltip: { ...TOOLTIP_STYLE }, series: [{ type: "gauge", center: ["50%", "55%"], radius: "70%", min: 0, max: (() => { if (value <= 0) return 100; const mag = Math.pow(10, Math.floor(Math.log10(value))); const norm = value / mag; const nice = norm <= 1 ? 1 : norm <= 2 ? 2 : norm <= 5 ? 5 : 10; return nice * mag; })(), progress: { show: true, width: 12, itemStyle: { color: styles.palette[0] } }, axisLine: { lineStyle: { width: 12, color: [[1, styles.gaugeLineColor]] } }, pointer: { width: 4, itemStyle: { color: styles.axisLabelColor } }, axisTick: { show: false }, splitLine: { length: 8, lineStyle: { color: styles.axisLineColor, width: 1.5 } }, axisLabel: { color: styles.legendColor, fontSize: 10, distance: 16 }, detail: { valueAnimation: true, color: styles.textColor, fontSize: 18, fontWeight: 600, offsetCenter: [0, "62%"], formatter: `{value}` }, data: [{ value, name: label }] }] };
     }
 
@@ -132,14 +141,14 @@ export default function ChartSegment(props: { seg: Extract<Segment, { type: "cha
     const rightCols = yCols.filter((yn) => rightSet.has(yn));
     const leftAxisName = leftCols.length === 1 ? labelOf(leftCols[0]) : undefined;
     const rightAxisName = rightCols.length === 1 ? labelOf(rightCols[0]) : undefined;
-    const categoryData = table.rows.map((r) => String(r[xIdx >= 0 ? xIdx : 0] ?? ""));
+    const categoryData = rows.map((r) => String(r[xIdx >= 0 ? xIdx : 0] ?? ""));
     const rotated = categoryData.length > 8;
     const series = yCols.map((yn, colorOffset) => {
       const yi = cols.indexOf(yn);
       const baseColor = styles.palette[colorOffset % styles.palette.length];
       return {
         name: labelOf(yn), type, yAxisIndex: rightSet.has(yn) ? 1 : 0,
-        data: table.rows.map((r) => num(r[yi])), smooth: type === "line",
+        data: rows.map((r) => num(r[yi])), smooth: type === "line",
         ...(type === "bar" ? { itemStyle: { borderRadius: [4, 4, 0, 0], color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [{ offset: 0, color: baseColor }, { offset: 1, color: hexToRgba(baseColor, 0.35) }]) }, barMaxWidth: 24 } : {}),
         ...(type === "line" ? { symbol: "circle", symbolSize: 6, lineStyle: { width: 3, shadowColor: hexToRgba(baseColor, 0.2), shadowBlur: 6, shadowOffsetY: 3 }, itemStyle: { color: baseColor }, areaStyle: { color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [{ offset: 0, color: hexToRgba(baseColor, 0.15) }, { offset: 1, color: hexToRgba(baseColor, 0.01) }]) } } : {}),
       };
@@ -313,4 +322,114 @@ function findNumericCols(cols: string[], types: string[], excludeIdx: number): s
   }
   if (out.length === 0 && cols.length > 0) return cols.filter((_, i) => i !== excludeIdx);
   return out;
+}
+
+// ── temporal / ordinal x-axis sorting ──
+
+/** English month name (full or abbreviated) → 1-based index. */
+const ENGLISH_MONTHS: Record<string, number> = {
+  jan: 1, january: 1, feb: 2, february: 2, mar: 3, march: 3, apr: 4, april: 4,
+  may: 5, jun: 6, june: 6, jul: 7, july: 7, aug: 8, august: 8,
+  sep: 9, sept: 9, september: 9, oct: 10, october: 10, nov: 11, november: 11, dec: 12, december: 12,
+};
+
+/** Chinese numeral → number (for 第一季度 etc.). */
+const CN_NUMS: Record<string, number> = {
+  一: 1, 二: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9, 十: 10, 十一: 11, 十二: 12,
+};
+
+/**
+ * Try to extract a numeric sort key from an x-axis category value based on its
+ * temporal / ordinal meaning. Returns null when the value doesn't match any
+ * recognised temporal pattern — in that case the caller keeps the original
+ * SQL-returned order so that arbitrary categories (product names, regions …)
+ * are not spuriously re-ordered.
+ *
+ * Recognised patterns (all must match for the column to be sortable):
+ *  • Dates   — YYYY-MM-DD, YYYY/MM/DD, YYYY-MM, YYYY/MM
+ *  • 年月     — 2024年1月, 2024年12月
+ *  • 季度+年  — 2024Q1, 2024年Q1
+ *  • Years   — 4-digit 1900–2099
+ *  • 月份     — 1月 … 12月
+ *  • Quarters — Q1–Q4, 第N季度
+ *  • Weeks   — 第1周, W1
+ *  • English month names — January / Jan / …
+ *  • Plain numbers — general numeric ordering
+ */
+function extractTemporalSortKey(val: string): number | null {
+  const s = val.trim();
+  if (!s) return null;
+
+  let m: RegExpMatchArray | null;
+
+  // Date: YYYY-MM-DD, YYYY/MM/DD, YYYY-MM, YYYY/MM
+  m = s.match(/^(\d{4})[-/](\d{1,2})(?:[-/](\d{1,2}))?$/);
+  if (m) return +m[1] * 10000 + +m[2] * 100 + (m[3] ? +m[3] : 1);
+
+  // Chinese year+month: 2024年1月
+  m = s.match(/^(\d{4})年(\d{1,2})月$/);
+  if (m) return +m[1] * 100 + +m[2];
+
+  // Quarter with year: 2024Q1, 2024年Q1
+  m = s.match(/^(\d{4})年?[Qq](\d)$/);
+  if (m) return +m[1] * 10 + +m[2];
+
+  // Pure 4-digit year (1900–2099)
+  m = s.match(/^(19\d{2}|20\d{2})$/);
+  if (m) return +m[1];
+
+  // Chinese month: 1月 ~ 12月 (leading zero allowed)
+  m = s.match(/^0?(\d{1,2})月$/);
+  if (m) { const n = +m[1]; if (n >= 1 && n <= 12) return n; }
+
+  // Quarter: Q1–Q4 / q1–q4
+  m = s.match(/^[Qq](\d)$/);
+  if (m) { const n = +m[1]; if (n >= 1 && n <= 4) return n; }
+
+  // Chinese quarter: 第1季度 / 第一季度
+  m = s.match(/^第([一二三四\d])季度$/);
+  if (m) { const n = m[1] in CN_NUMS ? CN_NUMS[m[1]] : +m[1]; if (n >= 1 && n <= 4) return n; }
+
+  // Week: 第1周 / 第01周
+  m = s.match(/^第0?(\d{1,2})周$/);
+  if (m) return +m[1];
+
+  // Week: W1 / w01
+  m = s.match(/^[Ww]0?(\d{1,2})$/);
+  if (m) return +m[1];
+
+  // English month name
+  const mo = ENGLISH_MONTHS[s.toLowerCase()];
+  if (mo !== undefined) return mo;
+
+  // Plain number (general numeric ordering)
+  if (/^-?\d+(\.\d+)?$/.test(s)) return parseFloat(s);
+
+  return null;
+}
+
+/**
+ * Reorder rows by the temporal / ordinal meaning of their x-axis (category)
+ * values.  When every x value matches a recognised temporal pattern the rows
+ * are sorted by ascending key; otherwise the original order is preserved so
+ * that non-temporal categories (product names, regions …) respect the SQL
+ * ORDER BY or natural row order.
+ */
+function sortRowsByCategory(
+  rows: JsonValue[][],
+  xIdx: number,
+): JsonValue[][] {
+  if (xIdx < 0 || rows.length <= 1) return rows;
+  const keys = rows.map((r) => extractTemporalSortKey(String(r[xIdx] ?? "")));
+  // A single non-match aborts sorting for the whole column.
+  if (keys.some((k) => k === null)) return rows;
+  // Already ascending? Skip to avoid an unnecessary (and potentially unstable) reorder.
+  let sorted = true;
+  for (let i = 1; i < keys.length; i++) {
+    if (keys[i]! < keys[i - 1]!) { sorted = false; break; }
+  }
+  if (sorted) return rows;
+  const indices = rows.map((_, i) => i);
+  indices.sort((a, b) => keys[a]! - keys[b]!);
+  return indices.map((i) => rows[i]);
 }

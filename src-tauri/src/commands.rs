@@ -16,6 +16,7 @@ use std::path::PathBuf;
 use tauri::Emitter;
 
 use crate::db::{self};
+use crate::okf;
 use crate::state::AppState;
 
 // ===========================================================================
@@ -167,6 +168,20 @@ pub async fn add_workspace(name: String, path: String) -> Result<(), String> {
         rusqlite::params![path, name, now],
     )
     .map_err(|e| e.to_string())?;
+
+    // Ensure the new workspace has the standard OKF skeleton + seed index.md +
+    // git versioning (idempotent, non-fatal). `path` is the user-picked absolute
+    // folder; init_workspace_okf creates the okf/ subtree and seeds initial
+    // content under it. Knowledge is filled in later as it is discovered.
+    match okf::resolve_workspace_dir(&path) {
+        Ok(d) => {
+            let ws_str = d.to_string_lossy().to_string();
+            if let Err(e) = okf::init_workspace_okf(&ws_str) {
+                tracing::warn!(category = "system", "新建工作区 OKF 初始化失败 ({path}): {e}");
+            }
+        }
+        Err(e) => tracing::warn!(category = "system", "解析新工作区目录失败 ({path}): {e}"),
+    }
     Ok(())
 }
 
@@ -328,6 +343,34 @@ pub async fn save_task(
         let line = serde_json::to_string(msg).map_err(|e| e.to_string())?;
         writeln!(file, "{line}").map_err(|e| format!("写入失败: {e}"))?;
     }
+    Ok(())
+}
+
+/// 只更新 tasks 表的元数据（name/kind/saved/modelId/tokenUsage），
+/// **不触碰 .jsonl 内容文件**。与 save_task 的区别：save_task 会截断并重写
+/// .jsonl，而本命令仅 upsert 元数据行，供"用户消息已增量 append 落盘、
+/// 只需同步元数据"的场景使用，避免 save_task 误清空内容文件。
+#[tauri::command]
+pub async fn update_task_meta(
+    workspace_path: String,
+    task_id: String,
+    name: String,
+    model_id: Option<String>,
+    token_usage: Option<serde_json::Value>,
+    space_id: String,
+    user_id: String,
+    kind: Option<String>,
+) -> Result<(), String> {
+    let conn = db::get_db_conn()?;
+    let now = now_ms();
+    let usage_json = token_usage.map(|v| serde_json::to_string(&v).unwrap_or_default());
+    let kind = kind.unwrap_or_else(|| "task".to_string());
+    conn.execute(
+        "INSERT OR REPLACE INTO tasks (id, workspace_path, name, kind, created_at, saved, model_id, token_usage, space_id, user_id)
+         VALUES (?, ?, ?, ?, COALESCE((SELECT created_at FROM tasks WHERE id = ?), ?), 1, ?, ?, ?, ?)",
+        rusqlite::params![task_id, workspace_path, name, kind, task_id, now, model_id, usage_json, space_id, user_id],
+    )
+    .map_err(|e| e.to_string())?;
     Ok(())
 }
 

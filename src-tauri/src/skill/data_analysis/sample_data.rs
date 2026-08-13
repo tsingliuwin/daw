@@ -81,21 +81,27 @@ impl Tool for SampleDataTool {
             .and_then(|h| h.lock().ok().map(|g| g.clone()));
 
         let hard_secs = super::super::super::duckdb::QUERY_HARD_TIMEOUT_SECS;
-        let local_name = table_name.clone();
+
+        // 在闭包前构造实际 SQL，便于在结果中透出——调用方能从 detail 看出
+        // 走的是 catalog（SELECT * FROM "v_xxx"）还是 pushdown（postgres_query 下推）。
+        let access_mode = registry_entry
+            .as_ref()
+            .map(|e| e.access_mode.as_str())
+            .unwrap_or("catalog")
+            .to_string();
+        let sql = match &registry_entry {
+            Some(entry) if entry.access_mode == "pushdown" => {
+                let catalog = workspace_attach_alias(&entry.connection_name);
+                format!("SELECT * FROM postgres_query('{}', 'SELECT * FROM \"{}\".\"{}\" LIMIT 5')",
+                    catalog, entry.remote_schema, entry.remote_table)
+            }
+            _ => format!("SELECT * FROM \"{}\" LIMIT 5", table_name.replace('"', "\"\"")),
+        };
+        let sql_for_query = sql.clone();
 
         let blocking_fut = tokio::task::spawn_blocking(move || -> Result<crate::model::SqlResult, String> {
             let guard = conn.blocking_lock();
-
-            // 根据 access_mode 选择 SQL
-            let sql = match &registry_entry {
-                Some(entry) if entry.access_mode == "pushdown" => {
-                    let catalog = workspace_attach_alias(&entry.connection_name);
-                    format!("SELECT * FROM postgres_query('{}', 'SELECT * FROM \"{}\".\"{}\" LIMIT 5')",
-                        catalog, entry.remote_schema, entry.remote_table)
-                }
-                _ => format!("SELECT * FROM \"{}\" LIMIT 5", local_name.replace('"', "\"\"")),
-            };
-            execute::run_query(&guard, &sql, Some(5))
+            execute::run_query(&guard, &sql_for_query, Some(5))
         });
 
         let query_res = if hard_secs > 0 {
@@ -118,8 +124,8 @@ impl Tool for SampleDataTool {
         match query_res {
             Ok(res) => {
                 let n = res.rows.len();
-                let summary = format!("完成采样，获取到 {} 行样例数据", n);
-                let detail = format!("SELECT * FROM {} LIMIT 5", table_name);
+                let summary = format!("完成采样（access_mode={}），获取到 {} 行样例数据", access_mode, n);
+                let detail = sql.clone();
                 let payload = serde_json::to_value(&res).ok();
                 emit_tool_result(&self.window, &self.task_id, &call_id, "ok", summary, Some(detail), payload, Some(elapsed), None);
                 Ok(format!("表 {} 的前 {} 行样例数据已展示在结果表格中。", table_name, n))

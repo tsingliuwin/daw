@@ -302,6 +302,26 @@ pub fn init_global_db() -> Result<(), String> {
     Ok(())
 }
 
+/// List all registered workspace paths (the `workspaces.path` column), ordered
+/// by creation. Used by `okf::init_okf` to seed the standard OKF structure for
+/// every workspace on startup — not just the default one.
+pub fn list_workspace_paths() -> Result<Vec<String>, String> {
+    let conn = get_db_conn()?;
+    let mut stmt = conn
+        .prepare("SELECT path FROM workspaces ORDER BY created_at ASC")
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map([], |row| row.get::<_, String>(0))
+        .map_err(|e| e.to_string())?;
+    let mut out = Vec::new();
+    for r in rows {
+        if let Ok(p) = r {
+            out.push(p);
+        }
+    }
+    Ok(out)
+}
+
 // ---------------------------------------------------------------------------
 // logs: the unified, queryable log store
 // ---------------------------------------------------------------------------
@@ -601,7 +621,7 @@ pub fn list_workspace_db_connections(ws_path: &str) -> Result<Vec<DataSourceConf
     let conn = get_db_conn()?;
     let mut stmt = conn
         .prepare(
-            "SELECT c.id, c.name, c.db_type, c.host, c.port, c.database_name, c.username, c.password, c.ssl_mode, c.created_at
+            "SELECT c.id, c.name, c.db_type, c.host, c.port, c.database_name, c.username, c.password, c.ssl_mode, c.created_at, c.db_product, c.db_mode
              FROM db_connections c
              INNER JOIN workspace_db_connections w ON c.id = w.connection_id
              WHERE w.workspace_path = ? ORDER BY c.created_at",

@@ -188,13 +188,10 @@ export default function ChatView(props: {
   const [stickToBottom, setStickToBottom] = createSignal(true);
   const [showScrollDown, setShowScrollDown] = createSignal(false);
   let isProgrammaticScroll = false;
-  let userScrollTop = 0;
-  let lastWheelTs = 0;
 
   const handleScroll = (e: Event) => {
     if (isProgrammaticScroll) return;
     const el = e.currentTarget as HTMLDivElement;
-    if (performance.now() - lastWheelTs < 200) userScrollTop = el.scrollTop;
     const diff = el.scrollHeight - el.scrollTop - el.clientHeight;
     const nearBottom = diff <= 30;
     if (!nearBottom) {
@@ -207,8 +204,6 @@ export default function ChatView(props: {
   };
 
   const handleWheel = (e: WheelEvent) => {
-    lastWheelTs = performance.now();
-    if (scrollEl) userScrollTop = scrollEl.scrollTop;
     if (e.deltaY < 0) {
       setStickToBottom(false);
       startScrollLock();
@@ -249,25 +244,11 @@ export default function ChatView(props: {
     if (scrollEl && untrack(stickToBottom)) stickScrollToBottom();
   });
 
-  // 对抗 WKWebView 原生滚动锚定的 rAF 锁。
-  let rafLocked = false;
-  function startScrollLock() {
-    if (rafLocked) return;
-    rafLocked = true;
-    const tick = () => {
-      if (!scrollEl || !rafLocked) return;
-      isProgrammaticScroll = false;
-      if (untrack(stickToBottom)) { rafLocked = false; return; }
-      if (scrollEl.scrollTop !== userScrollTop) {
-        isProgrammaticScroll = true;
-        scrollEl.scrollTop = userScrollTop;
-      }
-      requestAnimationFrame(tick);
-    };
-    requestAnimationFrame(tick);
-  }
+  // 滚动锚定已由 .chat-stream { overflow-anchor: none } 禁用。
+  // 此前的 rAF 锁会每帧把 scrollTop 强制拉回 userScrollTop，但拖动滚动条不触发
+  // wheel 事件、userScrollTop 不更新，导致滚动条"拖不动、只有图表在动"——已停用。
+  function startScrollLock() {}
   function stopScrollLock() {
-    rafLocked = false;
     isProgrammaticScroll = false;
   }
   createEffect(() => {

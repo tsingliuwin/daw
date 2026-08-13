@@ -84,18 +84,24 @@ impl Tool for DescribeTableTool {
                 .map_err(|e| ToolError(format!("线程生成失败: {e}")))?
                 .map_err(|e| ToolError(e))?
         };
+        // 在闭包前构造实际 SQL，便于在结果中透出（catalog vs pushdown）。
+        let access_mode = registry_entry
+            .as_ref()
+            .map(|e| e.access_mode.as_str())
+            .unwrap_or("catalog")
+            .to_string();
+        let sql = match &registry_entry {
+            Some(entry) if entry.access_mode == "pushdown" => {
+                let catalog = crate::duckdb::attach::workspace_attach_alias(&entry.connection_name);
+                format!("SELECT * FROM postgres_query('{}', 'SELECT * FROM \"{}\".\"{}\" LIMIT 0')",
+                    catalog, entry.remote_schema, entry.remote_table)
+            }
+            _ => format!("SELECT * FROM \"{}\" LIMIT 0", table_name_string.replace('"', "\"\"")),
+        };
+        let sql_for_query = sql.clone();
         let blocking_fut = tokio::task::spawn_blocking(move || -> Result<(SqlResult, Option<String>, std::collections::HashMap<String, String>, Vec<String>), String> {
             let guard = conn.blocking_lock();
-            // 根据 access_mode 选择 SQL
-            let sql = match &registry_entry {
-                Some(entry) if entry.access_mode == "pushdown" => {
-                    let catalog = crate::duckdb::attach::workspace_attach_alias(&entry.connection_name);
-                    format!("SELECT * FROM postgres_query('{}', 'SELECT * FROM \"{}\".\"{}\" LIMIT 0')",
-                        catalog, entry.remote_schema, entry.remote_table)
-                }
-                _ => format!("SELECT * FROM \"{}\" LIMIT 0", table_name_string.replace('"', "\"\"")),
-            };
-            let query_res = execute::run_query(&guard, &sql, None).map_err(|e| e.to_string())?;
+            let query_res = execute::run_query(&guard, &sql_for_query, None).map_err(|e| e.to_string())?;
 
             // OKF：解析表的业务释义和关联关系。
             let okf_short_name = table_name_string.clone();
@@ -150,11 +156,11 @@ impl Tool for DescribeTableTool {
                     rels_part = format!("\n\n关联关系:\n{}", relations.iter().map(|r| format!("- {r}")).collect::<Vec<_>>().join("\n"));
                 }
 
-                let summary = format!("结构分析完成，{}{} 共 {} 个字段", table_name, title_part, n);
+                let summary = format!("结构分析完成（access_mode={}），{}{} 共 {} 个字段", access_mode, table_name, title_part, n);
                 let payload = serde_json::to_value(&res).ok();
                 emit_tool_result(
                     &self.window, &self.task_id, &call_id, "ok",
-                    summary, None, payload, Some(elapsed), None,
+                    summary, Some(sql.clone()), payload, Some(elapsed), None,
                 );
                 Ok(format!("表 {}{} 的列结构如下:\n{}{}", table_name, title_part, col_lines.join("\n"), rels_part))
             }

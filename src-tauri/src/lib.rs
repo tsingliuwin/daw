@@ -29,6 +29,13 @@ pub fn run() {
         eprintln!("Failed to initialize central SQLite database: {e}");
     }
 
+    // Ensure the OKF global + default-workspace directory structure is complete.
+    // Idempotent and independent of DuckDB: even if the DuckLake extension fails
+    // to install, the knowledge base remains readable/writable.
+    if let Err(e) = okf::init_okf() {
+        eprintln!("Failed to initialize OKF directories: {e}");
+    }
+
     // Install the tracing subscriber: the custom [`SqliteEmitLayer`] persists
     // every event to SQLite and pushes info+ to the frontend console, while the
     // fmt layer mirrors to stdout for dev diagnostics.
@@ -77,6 +84,7 @@ pub fn run() {
             commands::remove_workspace,
             commands::load_workspace_tasks,
             commands::save_task,
+            commands::update_task_meta,
             commands::delete_task,
             commands::append_log,
             commands::query_logs,

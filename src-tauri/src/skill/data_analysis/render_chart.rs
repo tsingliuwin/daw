@@ -59,7 +59,7 @@ impl Tool for RenderChartTool {
                 "properties": {
                     "sql": { "type": "string", "description": "用于获取图表数据的 SELECT 查询语句" },
                     "chart_type": { "type": "string", "enum": ["bar", "line", "pie", "scatter", "funnel", "gauge"], "description": "图表类型：bar(柱状对比)、line(趋势)、pie(占比)、scatter(相关性)、funnel(转化漏斗)、gauge(单值指标)" },
-                    "x_field": { "type": "string", "description": "X 轴/分类列名（饼图时为名称列）" },
+                    "x_field": { "type": "string", "description": "X 轴/分类列名（饼图时为名称列）。若为时间维度（月份、季度、年份、日期等），SQL 应加 ORDER BY 按时间排序，避免横轴乱序" },
                     "y_fields": { "type": "array", "items": { "type": "string" }, "description": "Y 轴/数值列名，支持多列（多系列）。饼图时取第一个" },
                     "right_y_fields": { "type": "array", "items": { "type": "string" }, "description": "双 Y 轴：放到右轴的列名（须为 y_fields 的子集）。仅当序列数量级差异大、单轴会把小量级序列压成直线时使用。默认全部在左轴" },
                     "y_field_labels": { "type": "object", "additionalProperties": { "type": "string" }, "description": "列名→可读标签（含单位）的映射，如 revenue→销售额(万元)。图例与轴名会用它显示单位" },
