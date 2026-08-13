@@ -325,6 +325,15 @@ pub(crate) async fn run_agent_task_stream(
         _ => "medium",
     };
 
+    // Anthropic 扩展思考的 budget_tokens（须 >= 1024 且 < max_tokens）。
+    // low 不开启思考以优先速度。按格式而非模型名决定是否传思考参数，
+    // 避免对每个供应商做特殊处理。
+    let thinking_budget = match effort {
+        "high" => 16000,
+        "medium" => 8000,
+        _ => 0,
+    };
+
     let max_tokens_limit = provider
         .models
         .iter()
@@ -480,9 +489,7 @@ pub(crate) async fn run_agent_task_stream(
                         .max_tokens(max_tokens_limit)
                         .tool(time_tool)
                         .tool(search_tool);
-                    if model_id.starts_with("o1") || model_id.starts_with("o3") {
-                        agent_builder = agent_builder.additional_params(json!({"reasoning_effort": effort}));
-                    }
+                    agent_builder = agent_builder.additional_params(json!({"reasoning_effort": effort}));
                     let agent = agent_builder.build();
                     let stream = agent
                         .stream_chat(prompt.clone(), rig_history.clone())
@@ -502,9 +509,7 @@ pub(crate) async fn run_agent_task_stream(
                         .max_tokens(max_tokens_limit)
                         .tool(time_tool)
                         .tool(search_tool);
-                    if model_id.starts_with("o1") || model_id.starts_with("o3") {
-                        agent_builder = agent_builder.additional_params(json!({"reasoning_effort": effort}));
-                    }
+                    agent_builder = agent_builder.additional_params(json!({"reasoning_effort": effort}));
                     let agent = agent_builder.build();
                     let stream = agent
                         .stream_chat(prompt.clone(), rig_history.clone())
@@ -519,13 +524,16 @@ pub(crate) async fn run_agent_task_stream(
                             .base_url(&base_url)
                             .build()
                             .map_err(|e| format!("构建 Anthropic 客户端失败: {e}"))?;
-                    let agent = client
+                    let mut agent_builder = client
                         .agent(&model_id)
                         .preamble(&combined_preamble)
-                        .max_tokens(4096)
+                        .max_tokens(if thinking_budget > 0 { thinking_budget + 4096 } else { 4096 })
                         .tool(time_tool)
-                        .tool(search_tool)
-                        .build();
+                        .tool(search_tool);
+                    if thinking_budget > 0 {
+                        agent_builder = agent_builder.additional_params(json!({"thinking": {"type": "enabled", "budget_tokens": thinking_budget}}));
+                    }
+                    let agent = agent_builder.build();
                     let stream = agent
                         .stream_chat(prompt.clone(), rig_history.clone())
                         .multi_turn(100)
@@ -563,9 +571,7 @@ pub(crate) async fn run_agent_task_stream(
                         .tool(lc_tool)
                         .tool(lrt_tool)
                         .tool(rt_tool);
-                    if model_id.starts_with("o1") || model_id.starts_with("o3") {
-                        agent_builder = agent_builder.additional_params(json!({"reasoning_effort": effort}));
-                    }
+                    agent_builder = agent_builder.additional_params(json!({"reasoning_effort": effort}));
                     let agent = agent_builder.build();
                     let stream = agent
                         .stream_chat(prompt.clone(), rig_history.clone())
@@ -597,9 +603,7 @@ pub(crate) async fn run_agent_task_stream(
                         .tool(lc_tool)
                         .tool(lrt_tool)
                         .tool(rt_tool);
-                    if model_id.starts_with("o1") || model_id.starts_with("o3") {
-                        agent_builder = agent_builder.additional_params(json!({"reasoning_effort": effort}));
-                    }
+                    agent_builder = agent_builder.additional_params(json!({"reasoning_effort": effort}));
                     let agent = agent_builder.build();
                     let stream = agent
                         .stream_chat(prompt.clone(), rig_history.clone())
@@ -614,10 +618,10 @@ pub(crate) async fn run_agent_task_stream(
                             .base_url(&base_url)
                             .build()
                             .map_err(|e| format!("构建 Anthropic 客户端失败: {e}"))?;
-                    let agent = client
+                    let mut agent_builder = client
                         .agent(&model_id)
                         .preamble(&combined_preamble)
-                        .max_tokens(4096)
+                        .max_tokens(if thinking_budget > 0 { thinking_budget + 4096 } else { 4096 })
                         .tool(time_tool)
                         .tool(exec_tool)
                         .tool(list_tool)
@@ -631,8 +635,11 @@ pub(crate) async fn run_agent_task_stream(
                         .tool(drop_tool)
                         .tool(lc_tool)
                         .tool(lrt_tool)
-                        .tool(rt_tool)
-                        .build();
+                        .tool(rt_tool);
+                    if thinking_budget > 0 {
+                        agent_builder = agent_builder.additional_params(json!({"thinking": {"type": "enabled", "budget_tokens": thinking_budget}}));
+                    }
+                    let agent = agent_builder.build();
                     let stream = agent
                         .stream_chat(prompt.clone(), rig_history.clone())
                         .multi_turn(100)
