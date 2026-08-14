@@ -112,12 +112,12 @@ impl Tool for CreateViewTool {
         let elapsed = start.elapsed().as_millis() as u64;
         match result {
             Ok(()) => {
-                // 写 OKF 视图骨架。
+                // 写 OKF 视图骨架（幂等，已存在不覆盖）。
                 let ws_dir = self.ws.dir.to_string_lossy().to_string();
                 let name_clone = name.clone();
                 let sql_clone = select_sql.clone();
                 let _ = tokio::task::spawn_blocking(move || {
-                    crate::okf::write_view_okf(&ws_dir, &name_clone, &sql_clone)
+                    crate::okf::Okf::production().ensure_view_skeleton(&ws_dir, &name_clone, &sql_clone)
                 }).await;
 
                 let summary = format!("视图 {} 创建成功", name);

@@ -16,7 +16,7 @@ const TOOL_LABELS: Record<string, string> = {
   render_chart: "生成图表",
   load_okf_block: "读取知识",
   write_okf_block: "记录知识",
-  search_okf_recipes: "搜索配方",
+  search_okf_knowledge: "搜索知识",
   create_view: "创建视图",
   drop_object: "删除对象",
 };

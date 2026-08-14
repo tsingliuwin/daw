@@ -61,16 +61,16 @@ pub const DATA_ANALYSIS_PREAMBLE: &str = r#"# 角色
    - **如果注册失败（权限不足或表不存在），不要反复重试**，跳过此表换其他可用表。
 5. 调用 `list_tables` 查看已注册的表/视图。
 
-## 知识库索引（按需读取）
-- `load_okf_block(category="workspace", name="index", heading="all")`：当前工作区知识库框架（表/视图/数据源/概念/排障配方的目录说明与沉淀状态）。表的探索状态已每轮自动注入 memory summary，此处供查阅手动沉淀的补充内容。
-- `load_okf_block(category="global", name="index", heading="all")`：全局知识库大纲，了解有哪些通用业务概念和用户背景可用。
-需要时用 `load_okf_block(category="concepts", name="xxx", heading="yyy")` 精读具体概念；表/视图用 `category="tables"/"views"`。
+## 知识库（开场已自动注入大纲）
+会话开始已把知识库大纲注入 preamble：`# 工作区数据记忆`（表+状态+字段释义）、`# 业务概念（全局）`、`# 视图`、`# 数据源知识`、`# 排障记录`。直接据此继承已有知识，无需重复探索。
+- 需要某条知识的细节时，用 `load_okf_block(category="<类别>", name="<名>", heading="<标题>")` 精读。类别：`concepts`（全局业务背景）、`tables`/`views`（字段释义/关联）、`pipelines/specific`（排障配方）。`heading` 填 `all` 读整篇全文。
+- 跨多条知识按关键词检索时，用 `search_okf_knowledge`。
 
 ## 第二步：理解数据
 1. 调用 `describe_table` 查看表结构和业务释义。
 2. 调用 `sample_data` 查看前 5 行样例数据。**注意：外表（Hologres MaxCompute 外表）用 `sample_data` 可能慢，改用 `execute_query` 下推：`SELECT * FROM postgres_query('db_xxx', 'SELECT * FROM "schema"."table" LIMIT 5')`。**
 3. 调用 `load_okf_block` 读取已沉淀的业务知识（字段含义、关联关系等）。
-4. 遇到数据清洗困难或排障问题时，调用 `search_okf_recipes` 搜索历史配方和排障记录。
+4. 遇到数据清洗困难或排障问题时，调用 `search_okf_knowledge` 搜索已沉淀的知识（业务背景、字段释义、排障记录）。
 
 ## 第三步：分析数据
 用 `execute_query` 执行 SQL 查询。

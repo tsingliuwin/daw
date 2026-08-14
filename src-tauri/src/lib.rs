@@ -32,7 +32,7 @@ pub fn run() {
     // Ensure the OKF global + default-workspace directory structure is complete.
     // Idempotent and independent of DuckDB: even if the DuckLake extension fails
     // to install, the knowledge base remains readable/writable.
-    if let Err(e) = okf::init_okf() {
+    if let Err(e) = okf::Okf::production().init_all() {
         eprintln!("Failed to initialize OKF directories: {e}");
     }
 

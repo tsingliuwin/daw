@@ -103,20 +103,15 @@ impl Tool for DescribeTableTool {
             let guard = conn.blocking_lock();
             let query_res = execute::run_query(&guard, &sql_for_query, None).map_err(|e| e.to_string())?;
 
-            // OKF：解析表的业务释义和关联关系。
+            // OKF：生成表骨架（幂等，已存在不覆盖）+ 解析业务释义/关联。
             let okf_short_name = table_name_string.clone();
-            let okf_file = crate::okf::get_okf_dir(&ws_dir)
-                .join("tables")
-                .join(format!("{okf_short_name}.md"));
-            if !okf_file.exists() {
-                // 用 columns/column_types 生成骨架（替代 DESCRIBE 的 rows）。
-                let columns: Vec<crate::okf::ColumnInfo> = query_res.columns.iter().enumerate().map(|(i, name)| {
-                    let ty = query_res.column_types.get(i).cloned().unwrap_or_default();
-                    (name.clone(), ty, true)
-                }).collect();
-                let _ = crate::okf::write_table_okf(&ws_dir, &okf_short_name, &columns, None);
-            }
-            let (okf_title, col_comments, relations) = crate::okf::parse_column_semantics(&ws_dir, &okf_short_name);
+            let columns: Vec<crate::okf::model::ColumnInfo> = query_res.columns.iter().enumerate().map(|(i, name)| {
+                let ty = query_res.column_types.get(i).cloned().unwrap_or_default();
+                (name.clone(), ty, true)
+            }).collect();
+            let okf = crate::okf::Okf::production();
+            let _ = okf.ensure_table_skeleton(&ws_dir, &okf_short_name, &columns, None);
+            let (okf_title, col_comments, relations) = okf.column_semantics(&ws_dir, &okf_short_name);
             Ok((query_res, okf_title, col_comments, relations))
         });
         let desc_res = if hard_secs > 0 {

@@ -15,5 +15,5 @@ pub mod load_okf_block;
 pub mod register_table;
 pub mod render_chart;
 pub mod sample_data;
-pub mod search_okf_recipes;
+pub mod search_okf_knowledge;
 pub mod write_okf_block;

@@ -30,13 +30,13 @@ impl Tool for LoadOkfBlockTool {
     async fn definition(&self, _prompt: String) -> ToolDefinition {
         ToolDefinition {
             name: "load_okf_block".to_string(),
-            description: "读取本地 OKF 知识库内容。可读取某文件下指定二级标题（精简读取业务释义/关联关系/排障记录以省 token），也可读取知识库索引全文。".to_string(),
+            description: "读取本地 OKF 知识库某条知识的细节。可读某文件下指定标题（精简读取以省 token），或用 heading=all 读整篇全文。会话开场已注入大纲，按需精读具体条目即可。".to_string(),
             parameters: json!({
                 "type": "object",
                 "properties": {
-                    "category": { "type": "string", "description": "OKF 目录类别：tables, views, sources, concepts, pipelines/specific。读取索引必须用 workspace（当前工作区 index.md）或 global（全局 index.md）" },
-                    "name": { "type": "string", "description": "文件名（不含 .md 后缀），如表名 orders；读取索引填 index" },
-                    "heading": { "type": "string", "description": "要读取的标题，如：关联关系、异常排障记录、业务描述。读取索引（name=index）时忽略此项，填 all 即可" }
+                    "category": { "type": "string", "description": "OKF 类别：concepts（全局业务背景）、tables（表字段释义/关联）、views（视图）、sources（数据源）、pipelines/specific（排障配方）" },
+                    "name": { "type": "string", "description": "文件名（不含 .md 后缀），如 concepts 的 company_profile、表的 v_orders" },
+                    "heading": { "type": "string", "description": "要读取的标题，如：业务描述、关联关系、异常排障记录。填 all（或留空）返回整个文件全文（文件存在即成功）" }
                 },
                 "required": ["category", "name", "heading"]
             }),
@@ -50,21 +50,36 @@ impl Tool for LoadOkfBlockTool {
         }));
 
         let start = std::time::Instant::now();
-        let ws_dir = self.ws.dir.to_string_lossy().to_string();
-        let category = args.category.clone();
+        let cat = crate::okf::model::Category::from_str(&args.category)
+            .ok_or_else(|| ToolError(format!("未知知识类别: {}", args.category)))?;
+        let ws_path = self.ws.path.clone();
         let name = args.name.clone();
         let heading = args.heading.clone();
         let result = tokio::task::spawn_blocking(move || {
-            crate::okf::read_okf_block(&ws_dir, &category, &name, &heading)
+            crate::okf::Okf::production().read(&ws_path, cat, &name, &heading)
         }).await
         .map_err(|e| ToolError(format!("线程生成失败: {e}")))?;
 
         let elapsed = start.elapsed().as_millis() as u64;
         match result {
-            Ok(content) => {
-                let summary = format!("读取 OKF: {}/{}/{}", args.category, args.name, args.heading);
-                emit_tool_result(&self.window, &self.task_id, &call_id, "ok", summary, None, None, Some(elapsed), None);
-                Ok(content)
+            Ok(o) => {
+                let scope_cn = o.scope.label();
+                let heading_label = if args.heading.eq_ignore_ascii_case("all") || args.heading.trim().is_empty() {
+                    "全文"
+                } else {
+                    args.heading.as_str()
+                };
+                let summary = format!("读取【{}】{}/{} 的「{}」", scope_cn, args.category, args.name, heading_label);
+                let detail = Some(o.content.clone());
+                let payload = serde_json::json!({
+                    "scope": scope_cn,
+                    "file": o.file_path.to_string_lossy(),
+                });
+                emit_tool_result(
+                    &self.window, &self.task_id, &call_id, "ok",
+                    summary, detail, Some(payload), Some(elapsed), None,
+                );
+                Ok(o.content)
             }
             Err(err) => {
                 emit_tool_result(&self.window, &self.task_id, &call_id, "error", err.clone(), None, None, Some(elapsed), None);

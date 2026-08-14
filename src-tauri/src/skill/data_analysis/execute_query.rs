@@ -166,15 +166,14 @@ impl Tool for ExecuteQueryTool {
                 Ok(out)
             }
             Err(err) => {
-                // 查询失败时更新 OKF 表探索状态（如果 SQL 引用了已注册的表）。
-                let ws_dir = self.ws.dir.to_string_lossy().to_string();
+                // 查询失败时更新 table_registry 的表状态（status 真源在 SQLite）。
+                let ws_path = self.ws.path.clone();
                 let err_msg = err.0.clone();
                 let sql_clone = sql.to_string();
                 let _ = tokio::task::spawn_blocking(move || {
-                    // 从 SQL 里提取表名（FROM 后面的词）。
                     if let Some(table_name) = extract_table_from_sql(&sql_clone) {
                         let (status, reason) = classify_query_error(&err_msg);
-                        crate::okf::update_table_status(&ws_dir, &table_name, &status, Some(&reason));
+                        let _ = crate::db::update_table_registry_status(&ws_path, &table_name, &status, Some(&reason));
                     }
                 }).await;
                 emit_tool_result(

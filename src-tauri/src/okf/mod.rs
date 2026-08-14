@@ -1,0 +1,303 @@
+//! OKF（Open Knowledge Format）— 独立知识管理模块。
+//!
+//! 给 agent 用的知识库：跨会话继承业务背景、表字段释义、关联、排障经验。
+//!
+//! 设计要点：
+//! - **统一 API 契约**（[`Okf`] facade）：调用方只依赖 facade 方法，不伸手进文件
+//!   内部；存储格式/解析/缓存可在模块内自由演进。
+//! - **大纲 = 自动扫描唯一源**（[`catalog::summary`]），无 index.md 维护负担。
+//! - **状态归 table_registry**（结构化），OKF 文件只存业务知识——不双写。
+//! - **可测根基**：`OkfPaths`/`Versioner`/`Clock` 可注入（tempdir + 固定时钟 + noop 版本）。
+//!
+//! 子模块：[`model`]（类型）、[`paths`]（路径）、[`frontmatter`]（YAML）、
+//! [`markdown`]（正文）、[`store`]（文件 I/O）、[`catalog`]（大纲/搜索）。
+//! 文件格式：YAML frontmatter + Markdown body。
+
+pub mod catalog;
+pub mod frontmatter;
+pub mod markdown;
+pub mod model;
+pub mod paths;
+pub mod store;
+
+use std::fs;
+use std::path::Path;
+use std::sync::Arc;
+
+use model::{Category, ColumnSemantics, SearchHit};
+use paths::OkfPaths;
+
+// ===========================================================================
+// 公共 facade + 可注入的 Versioner / Clock（DI，测试根基）
+// ===========================================================================
+
+/// 文件版本控制（git 提交）。可注入 noop 用于测试。
+pub trait Versioner: Send + Sync {
+    /// 在 `repo_root`（okf 根目录）仓库内提交 `file_path`，首次自动 git init。
+    fn commit(&self, repo_root: &Path, file_path: &Path, commit_msg: &str);
+}
+
+/// 真实 git 版本控制（复用 [`run_git_commit`]）。
+pub struct GitVersioner;
+impl Versioner for GitVersioner {
+    fn commit(&self, repo_root: &Path, file_path: &Path, commit_msg: &str) {
+        run_git_commit(repo_root, file_path, commit_msg);
+    }
+}
+
+/// 测试用：什么都不做。
+#[allow(dead_code)]
+pub struct NoopVersioner;
+impl Versioner for NoopVersioner {
+    fn commit(&self, _repo_root: &Path, _file_path: &Path, _commit_msg: &str) {}
+}
+
+/// 时钟。可注入固定值用于测试。
+pub trait Clock: Send + Sync {
+    fn now_ts(&self) -> String;
+}
+
+pub struct SystemClock;
+impl Clock for SystemClock {
+    fn now_ts(&self) -> String {
+        current_timestamp()
+    }
+}
+
+/// 固定时钟（测试用）。
+#[allow(dead_code)]
+pub struct FixedClock(pub String);
+impl Clock for FixedClock {
+    fn now_ts(&self) -> String {
+        self.0.clone()
+    }
+}
+
+/// OKF 模块 facade。持有路径 + 版本器 + 时钟，对外提供统一 API。
+///
+/// 调用方只依赖此结构的方法，不再伸手进文件内部——内部实现可自由演进。
+/// 生产用 [`Okf::production`]，测试用 [`Okf::new`] 注入 tempdir + NoopVersioner + FixedClock。
+pub struct Okf {
+    pub paths: OkfPaths,
+    pub versioner: Arc<dyn Versioner>,
+    pub clock: Arc<dyn Clock>,
+}
+
+impl Okf {
+    /// 生产构造：真 git + 系统时钟，根 = `~/.aioa`。
+    pub fn production() -> Self {
+        Self::with_paths(OkfPaths::production())
+    }
+
+    /// 用指定 paths + 真 git + 系统时钟。
+    pub fn with_paths(paths: OkfPaths) -> Self {
+        Self {
+            paths,
+            versioner: Arc::new(GitVersioner),
+            clock: Arc::new(SystemClock),
+        }
+    }
+
+    /// 测试构造：完全注入。
+    #[allow(dead_code)]
+    pub fn new(paths: OkfPaths, versioner: Arc<dyn Versioner>, clock: Arc<dyn Clock>) -> Self {
+        Self { paths, versioner, clock }
+    }
+
+    // ---- 生命周期 ----
+
+    /// 初始化全局 OKF（建 concepts/users 目录）。
+    pub fn init_global(&self) -> Result<(), String> {
+        store::init_global(&self.paths)
+    }
+
+    /// 初始化单个工作区 OKF（建标准子目录）。
+    pub fn init_workspace(&self, ws: &str) -> Result<(), String> {
+        store::init_workspace(&self.paths, ws)
+    }
+
+    /// 启动总初始化：全局 + 所有已注册工作区（幂等）。
+    pub fn init_all(&self) -> Result<(), String> {
+        self.init_global()?;
+        for ws in crate::db::list_workspace_paths().unwrap_or_default() {
+            if let Err(e) = self.init_workspace(&ws) {
+                tracing::warn!(category = "okf", "工作区 {ws} OKF 初始化失败: {e}");
+            }
+        }
+        Ok(())
+    }
+
+    // ---- 读写 ----
+
+    pub fn read(
+        &self,
+        ws: &str,
+        category: Category,
+        name: &str,
+        heading: &str,
+    ) -> Result<model::OkfReadOutcome, String> {
+        store::read(&self.paths, ws, category, name, heading)
+    }
+
+    pub fn write(
+        &self,
+        ws: &str,
+        category: Category,
+        name: &str,
+        heading: &str,
+        content: &str,
+        description: Option<&str>,
+    ) -> Result<model::OkfWriteOutcome, String> {
+        store::write(
+            &self.paths,
+            self.versioner.as_ref(),
+            self.clock.as_ref(),
+            ws,
+            category,
+            name,
+            heading,
+            content,
+            description,
+        )
+    }
+
+    pub fn delete(&self, ws: &str, name: &str) -> Result<bool, String> {
+        store::delete(&self.paths, self.versioner.as_ref(), ws, name)
+    }
+
+    // ---- 骨架 ----
+
+    pub fn ensure_table_skeleton(
+        &self,
+        ws: &str,
+        table: &str,
+        columns: &[model::ColumnInfo],
+        row_count: Option<i64>,
+    ) -> Result<bool, String> {
+        store::ensure_table_skeleton(
+            &self.paths,
+            self.versioner.as_ref(),
+            self.clock.as_ref(),
+            ws,
+            table,
+            columns,
+            row_count,
+        )
+    }
+
+    pub fn ensure_view_skeleton(&self, ws: &str, view: &str, sql: &str) -> Result<bool, String> {
+        store::ensure_view_skeleton(
+            &self.paths,
+            self.versioner.as_ref(),
+            self.clock.as_ref(),
+            ws,
+            view,
+            sql,
+        )
+    }
+
+    // ---- 语义 / 大纲 / 搜索 ----
+
+    pub fn column_semantics(&self, ws: &str, name: &str) -> ColumnSemantics {
+        store::column_semantics(&self.paths, ws, name)
+    }
+
+    /// 生成注入 preamble 的大纲（表清单由调用方从 table_registry 传入）。
+    pub fn catalog_summary(&self, ws: &str, table_entries: &[crate::model::TableRegistryEntry]) -> String {
+        catalog::summary(&self.paths, ws, table_entries)
+    }
+
+    pub fn search(&self, ws: &str, query: &str) -> Vec<SearchHit> {
+        catalog::search(&self.paths, ws, query)
+    }
+}
+
+// ===========================================================================
+// 生产实现依赖：git 版本 + UTC 时间戳（无 chrono）
+// ===========================================================================
+
+/// 在 `okf_dir` 仓库内提交 `file_path`（首次自动 git init + 换行配置）。失败静默。
+fn run_git_commit(okf_dir: &Path, file_path: &Path, commit_msg: &str) {
+    use std::process::Command;
+    #[cfg(target_os = "windows")]
+    use std::os::windows::process::CommandExt;
+
+    let git_dir = okf_dir.join(".git");
+    if !git_dir.exists() {
+        let mut cmd = Command::new("git");
+        cmd.arg("init").current_dir(okf_dir);
+        #[cfg(target_os = "windows")]
+        {
+            cmd.creation_flags(0x08000000);
+        }
+        let _ = cmd.status();
+
+        let _ = fs::write(okf_dir.join(".gitignore"), ".DS_Store\n");
+        let _ = fs::write(
+            okf_dir.join(".gitattributes"),
+            "* text=auto eol=lf\n*.md text eol=lf\n",
+        );
+
+        let mut cmd = Command::new("git");
+        cmd.args(["config", "core.autocrlf", "false"]).current_dir(okf_dir);
+        #[cfg(target_os = "windows")]
+        {
+            cmd.creation_flags(0x08000000);
+        }
+        let _ = cmd.status();
+    }
+    if let Ok(rel_path) = file_path.strip_prefix(okf_dir) {
+        let mut cmd = Command::new("git");
+        cmd.arg("add").arg(rel_path).current_dir(okf_dir);
+        #[cfg(target_os = "windows")]
+        {
+            cmd.creation_flags(0x08000000);
+        }
+        let _ = cmd.status();
+
+        let mut cmd = Command::new("git");
+        cmd.arg("commit").arg("-m").arg(commit_msg).current_dir(okf_dir);
+        #[cfg(target_os = "windows")]
+        {
+            cmd.creation_flags(0x08000000);
+        }
+        let _ = cmd.status();
+    }
+}
+
+/// 当前 UTC 时间戳 `YYYY-MM-DDTHH:MM:SSZ`（手写日期换算，不依赖 chrono）。
+fn current_timestamp() -> String {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default();
+    let secs = now.as_secs();
+    let days = secs / 86400;
+    let mut year = 1970;
+    let mut days_rem = days;
+    loop {
+        let leap = (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0);
+        let size = if leap { 366 } else { 365 };
+        if days_rem >= size {
+            days_rem -= size;
+            year += 1;
+        } else {
+            break;
+        }
+    }
+    let leap = (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0);
+    let month_days = [31, if leap { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    let mut month = 1;
+    let mut day = days_rem as u32 + 1;
+    for &md in &month_days {
+        if day > md {
+            day -= md;
+            month += 1;
+        } else {
+            break;
+        }
+    }
+    let h = (secs % 86400) / 3600;
+    let m = (secs % 3600) / 60;
+    let s = secs % 60;
+    format!("{year:04}-{month:02}-{day:02}T{h:02}:{m:02}:{s:02}Z")
+}

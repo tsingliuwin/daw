@@ -20,7 +20,7 @@ use super::events::{
 };
 use super::wire::{ChatMessageDto, Segment};
 use crate::skill::builtin::GetCurrentTimeTool;
-use crate::skill::data_analysis::{create_view::CreateViewTool, describe_table::DescribeTableTool, drop_object::DropObjectTool, execute_query::ExecuteQueryTool, list_connections::ListConnectionsTool, list_remote_tables::ListRemoteTablesTool, list_tables::ListTablesTool, load_okf_block::LoadOkfBlockTool, register_table::RegisterTableTool, render_chart::RenderChartTool, sample_data::SampleDataTool, search_okf_recipes::SearchOkfRecipesTool, write_okf_block::WriteOkfBlockTool};
+use crate::skill::data_analysis::{create_view::CreateViewTool, describe_table::DescribeTableTool, drop_object::DropObjectTool, execute_query::ExecuteQueryTool, list_connections::ListConnectionsTool, list_remote_tables::ListRemoteTablesTool, list_tables::ListTablesTool, load_okf_block::LoadOkfBlockTool, register_table::RegisterTableTool, render_chart::RenderChartTool, sample_data::SampleDataTool, search_okf_knowledge::SearchOkfKnowledgeTool, write_okf_block::WriteOkfBlockTool};
 use crate::skill::search::SearchTool;
 use crate::skill::Scenario;
 use crate::state::AppState;
@@ -391,7 +391,7 @@ pub(crate) async fn run_agent_task_stream(
             },
         )
     };
-    let build_data_tools = || -> (GetCurrentTimeTool, ExecuteQueryTool, ListTablesTool, DescribeTableTool, SampleDataTool, RenderChartTool, LoadOkfBlockTool, WriteOkfBlockTool, SearchOkfRecipesTool, CreateViewTool, DropObjectTool, ListConnectionsTool, ListRemoteTablesTool, RegisterTableTool) {
+    let build_data_tools = || -> (GetCurrentTimeTool, ExecuteQueryTool, ListTablesTool, DescribeTableTool, SampleDataTool, RenderChartTool, LoadOkfBlockTool, WriteOkfBlockTool, SearchOkfKnowledgeTool, CreateViewTool, DropObjectTool, ListConnectionsTool, ListRemoteTablesTool, RegisterTableTool) {
         (
             GetCurrentTimeTool { app_state: app_state.clone(), task_id: task_id.clone(), window: window.clone() },
             ExecuteQueryTool { app_state: app_state.clone(), task_id: task_id.clone(), window: window.clone(), ws: ws_ref.clone() },
@@ -401,7 +401,7 @@ pub(crate) async fn run_agent_task_stream(
             RenderChartTool { app_state: app_state.clone(), task_id: task_id.clone(), window: window.clone(), ws: ws_ref.clone() },
             LoadOkfBlockTool { app_state: app_state.clone(), task_id: task_id.clone(), window: window.clone(), ws: ws_ref.clone() },
             WriteOkfBlockTool { app_state: app_state.clone(), task_id: task_id.clone(), window: window.clone(), ws: ws_ref.clone() },
-            SearchOkfRecipesTool { app_state: app_state.clone(), task_id: task_id.clone(), window: window.clone(), ws: ws_ref.clone() },
+            SearchOkfKnowledgeTool { app_state: app_state.clone(), task_id: task_id.clone(), window: window.clone(), ws: ws_ref.clone() },
             CreateViewTool { app_state: app_state.clone(), task_id: task_id.clone(), window: window.clone(), confirm_mode: confirm_mode.clone(), ws: ws_ref.clone() },
             DropObjectTool { app_state: app_state.clone(), task_id: task_id.clone(), window: window.clone(), confirm_mode: confirm_mode.clone(), ws: ws_ref.clone() },
             ListConnectionsTool { app_state: app_state.clone(), task_id: task_id.clone(), window: window.clone(), ws: ws_ref.clone() },
@@ -455,8 +455,8 @@ pub(crate) async fn run_agent_task_stream(
     // 数据分析场景注入工作区 OKF memory summary。
     let memory_summary = match scenario {
         Scenario::DataAnalysis => {
-            let ws_dir_str = ws_dir.to_string_lossy().to_string();
-            crate::okf::get_okf_memory_summary(&ws_dir_str)
+            let entries = crate::db::list_table_registry(&ws_path).unwrap_or_default();
+            crate::okf::Okf::production().catalog_summary(&ws_path, &entries)
         }
         Scenario::General => String::new(),
     };

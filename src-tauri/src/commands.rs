@@ -169,14 +169,14 @@ pub async fn add_workspace(name: String, path: String) -> Result<(), String> {
     )
     .map_err(|e| e.to_string())?;
 
-    // Ensure the new workspace has the standard OKF skeleton + seed index.md +
-    // git versioning (idempotent, non-fatal). `path` is the user-picked absolute
-    // folder; init_workspace_okf creates the okf/ subtree and seeds initial
-    // content under it. Knowledge is filled in later as it is discovered.
-    match okf::resolve_workspace_dir(&path) {
+    // Ensure the new workspace has the standard OKF directory skeleton + git
+    // versioning (idempotent, non-fatal). `path` is the user-picked absolute
+    // folder; init_workspace creates the okf/ subtree under it. Knowledge is
+    // filled in later as it is discovered.
+    match okf::paths::resolve_workspace_dir(&path) {
         Ok(d) => {
             let ws_str = d.to_string_lossy().to_string();
-            if let Err(e) = okf::init_workspace_okf(&ws_str) {
+            if let Err(e) = okf::Okf::production().init_workspace(&ws_str) {
                 tracing::warn!(category = "system", "新建工作区 OKF 初始化失败 ({path}): {e}");
             }
         }
