@@ -63,6 +63,7 @@ pub const DATA_ANALYSIS_PREAMBLE: &str = r#"# 角色
 
 ## 知识库（开场已自动注入大纲）
 会话开始已把知识库大纲注入 preamble：`# 工作区数据记忆`（表+状态+字段释义）、`# 业务概念（全局）`、`# 视图`、`# 数据源知识`、`# 排障记录`。直接据此继承已有知识，无需重复探索。
+- 想看最新大纲（或开场后新增了知识、或用户问"有哪些知识/表/概念"时），调 `list_okf_knowledge` 刷新。
 - 需要某条知识的细节时，用 `load_okf_block(category="<类别>", name="<名>", heading="<标题>")` 精读。类别：`concepts`（全局业务背景）、`tables`/`views`（字段释义/关联）、`pipelines/specific`（排障配方）。`heading` 填 `all` 读整篇全文。
 - 跨多条知识按关键词检索时，用 `search_okf_knowledge`。
 

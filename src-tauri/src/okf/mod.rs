@@ -202,6 +202,35 @@ impl Okf {
         store::column_semantics(&self.paths, ws, name)
     }
 
+    /// 读取一个 OKF 文件的结构化元数据（frontmatter 字段）。
+    pub fn read_metadata(
+        &self,
+        ws: &str,
+        category: Category,
+        name: &str,
+    ) -> Result<frontmatter::Frontmatter, String> {
+        store::read_metadata(&self.paths, ws, category, name)
+    }
+
+    /// 只改 frontmatter 指定字段（不动正文，自动刷 updated_at）。
+    pub fn update_metadata(
+        &self,
+        ws: &str,
+        category: Category,
+        name: &str,
+        fields: &[(String, String)],
+    ) -> Result<(), String> {
+        store::update_metadata(
+            &self.paths,
+            self.versioner.as_ref(),
+            self.clock.as_ref(),
+            ws,
+            category,
+            name,
+            fields,
+        )
+    }
+
     /// 生成注入 preamble 的大纲（表清单由调用方从 table_registry 传入）。
     pub fn catalog_summary(&self, ws: &str, table_entries: &[crate::model::TableRegistryEntry]) -> String {
         catalog::summary(&self.paths, ws, table_entries)

@@ -10,6 +10,7 @@ const TOOL_LABELS: Record<string, string> = {
   list_tables: "列出数据表",
   list_connections: "列出数据源",
   list_remote_tables: "列出远程表",
+  list_okf_knowledge: "查看知识库",
   register_table: "注册表",
   describe_table: "表结构",
   sample_data: "采样数据",
@@ -17,6 +18,8 @@ const TOOL_LABELS: Record<string, string> = {
   load_okf_block: "读取知识",
   write_okf_block: "记录知识",
   search_okf_knowledge: "搜索知识",
+  read_okf_metadata: "读取元数据",
+  update_okf_metadata: "修改元数据",
   create_view: "创建视图",
   drop_object: "删除对象",
 };

@@ -74,6 +74,7 @@ pub fn read(
 
 // ---------- 写 ----------
 
+#[allow(clippy::too_many_arguments)]
 pub fn write(
     paths: &OkfPaths,
     versioner: &dyn Versioner,
@@ -275,18 +276,61 @@ pub fn parse_semantics_from_content(content: &str) -> ColumnSemantics {
                     }
                 }
             }
-        } else if current_heading == "关联关系" || current_heading == "Relationships" {
-            if trimmed.starts_with('-') || trimmed.starts_with('*') {
-                let rel = trimmed
-                    .trim_start_matches(|c| c == '-' || c == '*' || c == ' ')
-                    .to_string();
-                if !rel.is_empty() {
-                    relations.push(rel);
-                }
+        } else if (current_heading == "关联关系" || current_heading == "Relationships")
+            && (trimmed.starts_with('-') || trimmed.starts_with('*'))
+        {
+            let rel = trimmed.trim_start_matches(['-', '*', ' ']).to_string();
+            if !rel.is_empty() {
+                relations.push(rel);
             }
         }
     }
     (title, col_comments, relations)
+}
+
+// ---------- 元数据（frontmatter）读写 ----------
+
+/// 读取一个 OKF 文件的元数据（结构化 Frontmatter）。文件不存在则报错。
+pub fn read_metadata(paths: &OkfPaths, ws: &str, category: Category, name: &str) -> Result<Frontmatter, String> {
+    let file = doc_file(paths, ws, category, name);
+    if !file.exists() {
+        return Err(format!("文件不存在: {}", file.display()));
+    }
+    let content = fs::read_to_string(&file).map_err(|e| format!("读取文件失败: {e}"))?;
+    let (fm, _) = frontmatter::split_document(&content);
+    Ok(fm.unwrap_or_default())
+}
+
+/// 更新元数据：只改 frontmatter 指定字段，正文不动，自动刷 updated_at。
+/// 文件不存在则报错。
+pub fn update_metadata(
+    paths: &OkfPaths,
+    versioner: &dyn Versioner,
+    clock: &dyn crate::okf::Clock,
+    ws: &str,
+    category: Category,
+    name: &str,
+    fields: &[(String, String)],
+) -> Result<(), String> {
+    let file = doc_file(paths, ws, category, name);
+    if !file.exists() {
+        return Err(format!("文件不存在: {}", file.display()));
+    }
+    let content = fs::read_to_string(&file).map_err(|e| format!("读取文件失败: {e}"))?;
+    let (fm_opt, body) = frontmatter::split_document(&content);
+    let mut fm = fm_opt.unwrap_or_default();
+    for (k, v) in fields {
+        fm.set(k, v);
+    }
+    fm.set("updated_at", &clock.now_ts());
+    let new_content = frontmatter::join_document(Some(&fm), &body);
+    fs::write(&file, new_content).map_err(|e| format!("写入文件失败: {e}"))?;
+    versioner.commit(
+        &repo_root(paths, ws, category.scope()),
+        &file,
+        &format!("Update metadata: {}/{name}", category.dir()),
+    );
+    Ok(())
 }
 
 #[cfg(test)]
@@ -418,5 +462,55 @@ mod tests {
         assert_eq!(title.as_deref(), Some("订单表"));
         assert_eq!(cols.get("order_id").map(|s| s.as_str()), Some("订单编号"));
         assert!(rels.iter().any(|r| r.contains("users.user_id")));
+    }
+
+    #[test]
+    fn read_metadata_returns_frontmatter() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (paths, ver, clock) = okf(tmp.path());
+        write(&paths, ver.as_ref(), clock.as_ref(), "ws", Category::Concept, "co", "业务描述", "body", Some("a desc")).unwrap();
+        let fm = read_metadata(&paths, "ws", Category::Concept, "co").unwrap();
+        assert_eq!(fm.get("type"), Some("Business Concept"));
+        assert_eq!(fm.get("description"), Some("a desc"));
+        assert!(fm.get("created_at").is_some());
+    }
+
+    #[test]
+    fn read_metadata_missing_file_errors() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (paths, _ver, _clock) = okf(tmp.path());
+        assert!(read_metadata(&paths, "ws", Category::Concept, "nope").is_err());
+    }
+
+    #[test]
+    fn update_metadata_changes_fields_without_touching_body() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (paths, ver, clock) = okf(tmp.path());
+        write(&paths, ver.as_ref(), clock.as_ref(), "ws", Category::Concept, "co", "业务描述", "the-body", Some("old desc")).unwrap();
+        // 只改 title + description，不动正文
+        let fields = vec![("title".to_string(), "新标题".to_string()), ("description".to_string(), "new desc".to_string())];
+        update_metadata(&paths, ver.as_ref(), clock.as_ref(), "ws", Category::Concept, "co", &fields).unwrap();
+        // 元数据变了
+        let fm = read_metadata(&paths, "ws", Category::Concept, "co").unwrap();
+        assert_eq!(fm.get("title"), Some("新标题"));
+        assert_eq!(fm.get("description"), Some("new desc"));
+        // 正文未被破坏
+        let o = read(&paths, "ws", Category::Concept, "co", "业务描述").unwrap();
+        assert_eq!(o.content, "the-body");
+    }
+
+    #[test]
+    fn update_metadata_bumps_updated_at() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (paths, ver, clock) = okf(tmp.path());
+        write(&paths, ver.as_ref(), clock.as_ref(), "ws", Category::Concept, "co", "h", "b", None).unwrap();
+        let before = read_metadata(&paths, "ws", Category::Concept, "co").unwrap();
+        let created = before.get("created_at").map(|s| s.to_string());
+        update_metadata(&paths, ver.as_ref(), clock.as_ref(), "ws", Category::Concept, "co", &[("description".into(), "d".into())]).unwrap();
+        let after = read_metadata(&paths, "ws", Category::Concept, "co").unwrap();
+        // created_at 不变
+        assert_eq!(after.get("created_at"), created.as_deref());
+        // updated_at 字段存在（FixedClock 固定值，只需确认字段在）
+        assert!(after.get("updated_at").is_some());
     }
 }
