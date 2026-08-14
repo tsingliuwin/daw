@@ -102,11 +102,13 @@ impl Tool for DropObjectTool {
         let elapsed = start.elapsed().as_millis() as u64;
         match result {
             Ok(()) => {
-                // 删 OKF 文件（tables/views/sources 下同名）。
+                // 删 table_registry 记录 + OKF 文件（tables/views/sources 下同名）。
+                let ws_path = self.ws.path.clone();
                 let ws_dir = self.ws.dir.to_string_lossy().to_string();
                 let name_clone = name.to_string();
                 let _ = tokio::task::spawn_blocking(move || {
-                    crate::okf::Okf::production().delete(&ws_dir, &name_clone)
+                    let _ = crate::db::delete_table_registry(&ws_path, &name_clone);
+                    let _ = crate::okf::Okf::production().delete(&ws_dir, &name_clone);
                 }).await;
 
                 let summary = format!("对象 {} 已删除", name);

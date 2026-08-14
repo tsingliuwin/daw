@@ -99,18 +99,22 @@ impl Tool for DescribeTableTool {
             _ => format!("SELECT * FROM \"{}\" LIMIT 0", table_name_string.replace('"', "\"\"")),
         };
         let sql_for_query = sql.clone();
+        let is_view = registry_entry.as_ref().map(|e| e.kind == "view").unwrap_or(false);
         let blocking_fut = tokio::task::spawn_blocking(move || -> Result<(SqlResult, Option<String>, std::collections::HashMap<String, String>, Vec<String>), String> {
             let guard = conn.blocking_lock();
             let query_res = execute::run_query(&guard, &sql_for_query, None).map_err(|e| e.to_string())?;
 
-            // OKF：生成表骨架（幂等，已存在不覆盖）+ 解析业务释义/关联。
+            // OKF：表→生成 table 骨架（幂等）；视图→跳过（create_view 已建 view 骨架，
+            // 避免在 tables/ 下生成同名文件遮蔽 views/ 原件）。
             let okf_short_name = table_name_string.clone();
-            let columns: Vec<crate::okf::model::ColumnInfo> = query_res.columns.iter().enumerate().map(|(i, name)| {
-                let ty = query_res.column_types.get(i).cloned().unwrap_or_default();
-                (name.clone(), ty, true)
-            }).collect();
             let okf = crate::okf::Okf::production();
-            let _ = okf.ensure_table_skeleton(&ws_dir, &okf_short_name, &columns, None);
+            if !is_view {
+                let columns: Vec<crate::okf::model::ColumnInfo> = query_res.columns.iter().enumerate().map(|(i, name)| {
+                    let ty = query_res.column_types.get(i).cloned().unwrap_or_default();
+                    (name.clone(), ty, true)
+                }).collect();
+                let _ = okf.ensure_table_skeleton(&ws_dir, &okf_short_name, &columns, None);
+            }
             let (okf_title, col_comments, relations) = okf.column_semantics(&ws_dir, &okf_short_name);
             Ok((query_res, okf_title, col_comments, relations))
         });

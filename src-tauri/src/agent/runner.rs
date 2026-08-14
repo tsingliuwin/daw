@@ -470,7 +470,7 @@ pub(crate) async fn run_agent_task_stream(
     let combined_preamble = if memory_summary.is_empty() {
         format!("{}\n\n{}", base_preamble, now_line)
     } else {
-        format!("{}\n\n{}\n\n# 工作区数据记忆\n以下是你之前探索过的表和知识，直接继承使用，无需重复探索：\n\n{}", base_preamble, now_line, memory_summary)
+        format!("{}\n\n{}\n\n{}", base_preamble, now_line, memory_summary)
     };
     let preamble_raw = usage::estimate_tokens(&combined_preamble);
     let tools_raw = usage::estimate_tokens(&tools_json);

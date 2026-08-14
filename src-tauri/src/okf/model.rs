@@ -104,7 +104,103 @@ impl TableStatus {
 }
 
 /// 列语义（column_semantics 的返回）：(业务标题, 列名→释义, 关联关系)。
+/// 旧类型，step3 将替换为 TableSemantics。
 pub type ColumnSemantics = (Option<String>, HashMap<String, String>, Vec<String>);
+
+// ===========================================================================
+// 关联关系结构化模型（step3 parser 将使用）
+// ===========================================================================
+
+/// 关联方向。
+#[allow(dead_code)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Direction {
+    /// `→` 单向引用
+    OneWay,
+    /// `↔` 双向
+    TwoWay,
+}
+
+impl Direction {
+    #[allow(dead_code)]
+    pub fn from_arrow(s: &str) -> Option<Self> {
+        match s.trim() {
+            "→" | "->" => Some(Self::OneWay),
+            "↔" | "<->" => Some(Self::TwoWay),
+            _ => None,
+        }
+    }
+    #[allow(dead_code)]
+    pub fn to_arrow(self) -> &'static str {
+        match self {
+            Self::OneWay => "→",
+            Self::TwoWay => "↔",
+        }
+    }
+}
+
+/// 关联基数。
+#[allow(dead_code)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Cardinality {
+    OneToOne,
+    OneToMany,
+    ManyToOne,
+    ManyToMany,
+}
+
+impl Cardinality {
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s.trim() {
+            "1:1" => Some(Self::OneToOne),
+            "1:N" => Some(Self::OneToMany),
+            "N:1" => Some(Self::ManyToOne),
+            "N:M" => Some(Self::ManyToMany),
+            _ => None,
+        }
+    }
+    #[allow(dead_code)]
+    pub fn to_str(self) -> &'static str {
+        match self {
+            Self::OneToOne => "1:1",
+            Self::OneToMany => "1:N",
+            Self::ManyToOne => "N:1",
+            Self::ManyToMany => "N:M",
+        }
+    }
+}
+
+/// 一条结构化关联关系。
+/// 格式：`- \`local_col\` <方向> [[target_table]].\`target_col\` (<基数>) <描述>`
+#[allow(dead_code)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Relation {
+    pub local_col: String,
+    pub direction: Direction,
+    pub target_table: String,
+    pub target_col: String,
+    pub cardinality: Cardinality,
+    pub description: Option<String>,
+}
+
+/// 一列的语义（字段 Schema 表的一行）。
+#[allow(dead_code)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ColumnSemantic {
+    pub name: String,
+    pub ty: String,
+    pub comment: String,
+    pub constraint: String,
+}
+
+/// 表/视图语义解析结果（step3 替代 ColumnSemantics）。
+#[allow(dead_code)]
+#[derive(Debug, Clone, Default)]
+pub struct TableSemantics {
+    pub title: Option<String>,
+    pub columns: Vec<ColumnSemantic>,
+    pub relations: Vec<Relation>,
+}
 
 /// 读取结果。
 #[derive(Debug, Clone)]
@@ -132,6 +228,27 @@ pub struct SearchHit {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn direction_parse() {
+        assert_eq!(Direction::from_arrow("→"), Some(Direction::OneWay));
+        assert_eq!(Direction::from_arrow("->"), Some(Direction::OneWay));
+        assert_eq!(Direction::from_arrow("↔"), Some(Direction::TwoWay));
+        assert_eq!(Direction::from_arrow("<->"), Some(Direction::TwoWay));
+        assert_eq!(Direction::from_arrow("??"), None);
+        assert_eq!(Direction::OneWay.to_arrow(), "→");
+        assert_eq!(Direction::TwoWay.to_arrow(), "↔");
+    }
+
+    #[test]
+    fn cardinality_parse() {
+        assert_eq!(Cardinality::from_str("1:1"), Some(Cardinality::OneToOne));
+        assert_eq!(Cardinality::from_str("1:N"), Some(Cardinality::OneToMany));
+        assert_eq!(Cardinality::from_str("N:1"), Some(Cardinality::ManyToOne));
+        assert_eq!(Cardinality::from_str("N:M"), Some(Cardinality::ManyToMany));
+        assert_eq!(Cardinality::from_str("??"), None);
+        assert_eq!(Cardinality::ManyToOne.to_str(), "N:1");
+    }
 
     #[test]
     fn category_scope_and_paths() {

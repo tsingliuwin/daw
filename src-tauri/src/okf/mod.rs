@@ -202,6 +202,12 @@ impl Okf {
         store::column_semantics(&self.paths, ws, name)
     }
 
+    /// 结构化语义解析（含关联内链，step6 catalog 用）。
+    #[allow(dead_code)]
+    pub fn table_semantics(&self, ws: &str, name: &str) -> model::TableSemantics {
+        store::table_semantics(&self.paths, ws, name)
+    }
+
     /// 读取一个 OKF 文件的结构化元数据（frontmatter 字段）。
     pub fn read_metadata(
         &self,
@@ -234,6 +240,11 @@ impl Okf {
     /// 生成注入 preamble 的大纲（表清单由调用方从 table_registry 传入）。
     pub fn catalog_summary(&self, ws: &str, table_entries: &[crate::model::TableRegistryEntry]) -> String {
         catalog::summary(&self.paths, ws, table_entries)
+    }
+
+    /// 生成带完整元数据的大纲（list_okf_knowledge 工具用，比 summary 丰富）。
+    pub fn catalog_outline(&self, ws: &str, table_entries: &[crate::model::TableRegistryEntry]) -> String {
+        catalog::outline(&self.paths, ws, table_entries)
     }
 
     pub fn search(&self, ws: &str, query: &str) -> Vec<SearchHit> {

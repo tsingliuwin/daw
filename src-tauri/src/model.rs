@@ -73,6 +73,7 @@ pub struct TableRegistryEntry {
     pub status: String,         // "available" | "unavailable_permanent" | "unavailable_temporary"
     pub unavailable_reason: Option<String>,
     pub last_explored: Option<i64>,
+    pub kind: String,            // "table" | "view"
 }
 
 // ---------------------------------------------------------------------------

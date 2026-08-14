@@ -181,7 +181,7 @@ pub fn ensure_table_skeleton(
     }
     let row_count_str = row_count.map(|c| c.to_string()).unwrap_or_else(|| "未知".to_string());
     let body = format!(
-        "# 物理画像\n- 行数估算: {row_count_str}\n\n# 字段 Schema\n{schema_table}\n# 关联关系\n- 暂无关联表（请手动编辑，例如 `- customer_id 关联 customers 表的 customer_id`）。\n"
+        "# 物理画像\n- 行数估算: {row_count_str}\n\n# 字段 Schema\n{schema_table}\n# 关联关系\n（暂无。格式：`- \\`本地列\\` → \\`[[目标表]]\\`.\\`目标列\\` (N:1) 描述`）\n\n# 业务描述\n（待补充）\n"
     );
     let content = frontmatter::join_document(Some(&fm), &body);
     fs::write(&file, content).map_err(|e| format!("写入失败: {e}"))?;
@@ -214,7 +214,9 @@ pub fn ensure_view_skeleton(
     fm.set("title", &format!("{view} 逻辑视图"));
     fm.set("created_at", &ts);
     fm.set("updated_at", &ts);
-    let body = format!("# 视图 SQL 定义\n```sql\n{sql}\n```\n");
+    let body = format!(
+        "# 视图 SQL 定义\n```sql\n{sql}\n```\n\n# 字段释义\n| 字段名 | 业务释义 |\n|---|---|\n（待补充）\n\n# 依赖关系\n（暂无。格式：`- [[表/视图名]] (N:1) 描述`）\n\n# 业务描述\n（待补充）\n"
+    );
     let content = frontmatter::join_document(Some(&fm), &body);
     fs::write(&file, content).map_err(|e| format!("写入失败: {e}"))?;
     versioner.commit(
@@ -288,6 +290,26 @@ pub fn parse_semantics_from_content(content: &str) -> ColumnSemantics {
     (title, col_comments, relations)
 }
 
+/// 读取表/视图 OKF 并用新版 parser 解析（结构化 TableSemantics，含关联内链）。
+#[allow(dead_code)]
+pub fn table_semantics(paths: &OkfPaths, ws: &str, name: &str) -> crate::okf::model::TableSemantics {
+    let w = paths.workspace_okf_dir(ws);
+    let mut file = w.join("tables").join(format!("{name}.md"));
+    if !file.exists() {
+        file = w.join("views").join(format!("{name}.md"));
+    }
+    if !file.exists() {
+        file = w.join("sources").join(format!("{name}.md"));
+    }
+    if !file.exists() {
+        return crate::okf::model::TableSemantics::default();
+    }
+    match fs::read_to_string(&file) {
+        Ok(content) => parse_table_semantics(&content),
+        Err(_) => crate::okf::model::TableSemantics::default(),
+    }
+}
+
 // ---------- 元数据（frontmatter）读写 ----------
 
 /// 读取一个 OKF 文件的元数据（结构化 Frontmatter）。文件不存在则报错。
@@ -331,6 +353,216 @@ pub fn update_metadata(
         &format!("Update metadata: {}/{name}", category.dir()),
     );
     Ok(())
+}
+
+// ===========================================================================
+// 新版 parser（step3）：结构化关联内链 + 表头列定位 + 大小写不敏感
+// ===========================================================================
+
+#[allow(dead_code)]
+fn extract_backtick(s: &str) -> Option<String> {
+    let start = s.find('`')?;
+    let rest = &s[start + 1..];
+    let end = rest.find('`')?;
+    Some(rest[..end].to_string())
+}
+
+#[allow(dead_code)]
+fn extract_wiki_link(s: &str) -> Option<String> {
+    let start = s.find("[[")?;
+    let rest = &s[start + 2..];
+    let end = rest.find("]]")?;
+    Some(rest[..end].to_string())
+}
+
+/// 找方向箭头 (Direction, 起始 byte, 结束 byte)。优先 UTF-8 箭头。
+#[allow(dead_code)]
+fn find_arrow(s: &str) -> Option<(crate::okf::model::Direction, usize, usize)> {
+    use crate::okf::model::Direction;
+    for (arrow, dir) in [
+        ("→", Direction::OneWay),
+        ("↔", Direction::TwoWay),
+        ("<->", Direction::TwoWay),
+        ("->", Direction::OneWay),
+    ] {
+        if let Some(pos) = s.find(arrow) {
+            return Some((dir, pos, pos + arrow.len()));
+        }
+    }
+    None
+}
+
+#[allow(dead_code)]
+fn extract_paren_cardinality(s: &str) -> Option<(crate::okf::model::Cardinality, usize)> {
+    use crate::okf::model::Cardinality;
+    let start = s.find('(')?;
+    let rest = &s[start + 1..];
+    let end = rest.find(')')?;
+    let card = Cardinality::from_str(rest[..end].trim())?;
+    Some((card, start + 1 + end + 1))
+}
+
+/// 解析一行结构化关联/依赖关系。
+/// 表格式：`- \`local_col\` → [[target_table]].\`target_col\` (N:1) 描述`
+/// 视图依赖格式：`- [[target_table]] (N:1) 描述`
+#[allow(dead_code)]
+fn parse_relation_line(line: &str) -> Option<crate::okf::model::Relation> {
+    use crate::okf::model::{Direction, Relation};
+    let s = line.trim().trim_start_matches(['-', '*', ' ']).trim();
+    if s.is_empty() {
+        return None;
+    }
+    // 完整表格式：有方向箭头
+    if let Some((direction, arrow_start, arrow_end)) = find_arrow(s) {
+        let local_col = extract_backtick(&s[..arrow_start])?;
+        let right = s[arrow_end..].trim();
+        let target_table = extract_wiki_link(right)?;
+        let wiki_end = right.find("]]")? + 2;
+        let target_col = extract_backtick(&right[wiki_end..]).unwrap_or_default();
+        let (cardinality, paren_end) = extract_paren_cardinality(right)?;
+        let desc = right[paren_end..].trim();
+        return Some(Relation {
+            local_col,
+            direction,
+            target_table,
+            target_col,
+            cardinality,
+            description: if desc.is_empty() { None } else { Some(desc.to_string()) },
+        });
+    }
+    // 简单视图依赖格式：[[target]] (card) desc
+    if let Some(target_table) = extract_wiki_link(s) {
+        if let Some((cardinality, paren_end)) = extract_paren_cardinality(s) {
+            let desc = s[paren_end..].trim();
+            return Some(Relation {
+                local_col: String::new(),
+                direction: Direction::OneWay,
+                target_table,
+                target_col: String::new(),
+                cardinality,
+                description: if desc.is_empty() { None } else { Some(desc.to_string()) },
+            });
+        }
+    }
+    None
+}
+
+/// 从 markdown 表格行提取 cells（去首尾空管道产生的空串）。
+#[allow(dead_code)]
+fn table_cells(line: &str) -> Vec<String> {
+    line.split('|')
+        .map(|c| c.trim().to_string())
+        .collect::<Vec<_>>()
+}
+
+#[allow(dead_code)]
+fn is_separator_row(cells: &[String]) -> bool {
+    !cells.is_empty() && cells.iter().all(|c| c.is_empty() || c.chars().all(|ch| ch == '-'))
+}
+
+/// 解析表/视图 OKF：frontmatter title + 字段表（表头列定位）+ 关联关系（结构化内链）。
+/// 大小写不敏感匹配标题；列索引从表头行动态定位（不再硬编码 parts[1]/parts[3]）。
+#[allow(dead_code)]
+pub fn parse_table_semantics(content: &str) -> crate::okf::model::TableSemantics {
+    use crate::okf::model::{ColumnSemantic, TableSemantics};
+    let (fm, _body) = frontmatter::split_document(content);
+    let title = fm.and_then(|f| f.get("title").map(|s| s.to_string()));
+
+    let mut columns = Vec::new();
+    let mut relations = Vec::new();
+    let mut current = "";
+    let mut header_map: Option<std::collections::HashMap<&str, usize>> = None;
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('#') {
+            current = trimmed.trim_start_matches('#').trim();
+            header_map = None;
+            continue;
+        }
+        // 字段 Schema / 字段释义 板块（大小写不敏感）
+        if current.eq_ignore_ascii_case("字段 Schema")
+            || current.eq_ignore_ascii_case("Column Schema")
+            || current.eq_ignore_ascii_case("字段释义")
+        {
+            if !trimmed.starts_with('|') {
+                continue;
+            }
+            let cells = table_cells(trimmed);
+            // 去掉 split 在首尾 | 产生的空串
+            let cells: Vec<String> = cells
+                .iter()
+                .skip_while(|c| c.is_empty())
+                .cloned()
+                .collect::<Vec<_>>()
+                .iter()
+                .rev()
+                .skip_while(|c| c.is_empty())
+                .cloned()
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev()
+                .collect();
+            if is_separator_row(&cells) {
+                continue;
+            }
+            if header_map.is_none() {
+                let mut idx = std::collections::HashMap::new();
+                for (i, cell) in cells.iter().enumerate() {
+                    let lower = cell.to_lowercase();
+                    if lower.contains("字段名") || lower.contains("column") || lower.contains("field") || lower.contains("列名") {
+                        idx.insert("name", i);
+                    }
+                    if lower.contains("物理类型") || lower.contains("type") || lower.contains("类型") {
+                        idx.insert("ty", i);
+                    }
+                    if lower.contains("业务释义") || lower.contains("comment") || lower.contains("释义") {
+                        idx.insert("comment", i);
+                    }
+                    if lower.contains("数据约束") || lower.contains("constraint") || lower.contains("约束") {
+                        idx.insert("constraint", i);
+                    }
+                }
+                if !idx.contains_key("name") && !cells.is_empty() {
+                    idx.insert("name", 0);
+                }
+                if !idx.contains_key("comment") && cells.len() >= 2 {
+                    idx.insert("comment", 1);
+                }
+                header_map = Some(idx);
+                continue;
+            }
+            let idx = header_map.as_ref().unwrap();
+            let get = |key: &str| -> String {
+                idx.get(key)
+                    .and_then(|&i| cells.get(i))
+                    .map(|s| s.trim_matches('`').trim().to_string())
+                    .unwrap_or_default()
+            };
+            let name = get("name");
+            if !name.is_empty() {
+                columns.push(ColumnSemantic {
+                    name,
+                    ty: get("ty"),
+                    comment: get("comment"),
+                    constraint: get("constraint"),
+                });
+            }
+        }
+        // 关联关系 / 依赖关系 板块（大小写不敏感）
+        else if (current.eq_ignore_ascii_case("关联关系")
+            || current.eq_ignore_ascii_case("Relationships")
+            || current.eq_ignore_ascii_case("依赖关系")
+            || current.eq_ignore_ascii_case("Dependencies"))
+            && (trimmed.starts_with('-') || trimmed.starts_with('*'))
+        {
+            if let Some(rel) = parse_relation_line(trimmed) {
+                relations.push(rel);
+            }
+        }
+    }
+
+    TableSemantics { title, columns, relations }
 }
 
 #[cfg(test)]
@@ -462,6 +694,69 @@ mod tests {
         assert_eq!(title.as_deref(), Some("订单表"));
         assert_eq!(cols.get("order_id").map(|s| s.as_str()), Some("订单编号"));
         assert!(rels.iter().any(|r| r.contains("users.user_id")));
+    }
+
+    #[test]
+    fn parse_relation_structured_one_way() {
+        use crate::okf::model::{Cardinality, Direction};
+        let line = "- `customer_id` → [[customers]].`customer_id` (N:1) 客户关联";
+        let rel = parse_relation_line(line).unwrap();
+        assert_eq!(rel.local_col, "customer_id");
+        assert_eq!(rel.direction, Direction::OneWay);
+        assert_eq!(rel.target_table, "customers");
+        assert_eq!(rel.target_col, "customer_id");
+        assert_eq!(rel.cardinality, Cardinality::ManyToOne);
+        assert_eq!(rel.description.as_deref(), Some("客户关联"));
+    }
+
+    #[test]
+    fn parse_relation_structured_two_way_many_to_many() {
+        use crate::okf::model::{Cardinality, Direction};
+        let line = "- `tag_id` ↔ [[order_tags]].`order_id` (N:M) 多对多中间表";
+        let rel = parse_relation_line(line).unwrap();
+        assert_eq!(rel.direction, Direction::TwoWay);
+        assert_eq!(rel.cardinality, Cardinality::ManyToMany);
+        assert_eq!(rel.target_table, "order_tags");
+        assert_eq!(rel.description.as_deref(), Some("多对多中间表"));
+    }
+
+    #[test]
+    fn parse_relation_no_description() {
+        let line = "- `product_id` → [[products]].`product_id` (N:1)";
+        let rel = parse_relation_line(line).unwrap();
+        assert!(rel.description.is_none());
+    }
+
+    #[test]
+    fn parse_relation_non_structured_returns_none() {
+        let line = "- 暂无关联表";
+        assert!(parse_relation_line(line).is_none());
+    }
+
+    #[test]
+    fn parse_table_semantics_case_insensitive_and_header_located() {
+        let doc = "---\ntype: DuckDB Table\ntitle: 订单表\n---\n\n# 字段 schema\n| 列名 | 类型 | 释义 | 约束 |\n|---|---|---|---|\n| `amount` | DECIMAL | 金额 | NOT NULL |\n\n# relationships\n- `customer_id` → [[customers]].`customer_id` (N:1) 客户\n";
+        let ts = parse_table_semantics(doc);
+        assert_eq!(ts.title.as_deref(), Some("订单表"));
+        assert_eq!(ts.columns.len(), 1);
+        assert_eq!(ts.columns[0].name, "amount");
+        assert_eq!(ts.columns[0].ty, "DECIMAL");
+        assert_eq!(ts.columns[0].comment, "金额");
+        assert_eq!(ts.columns[0].constraint, "NOT NULL");
+        assert_eq!(ts.relations.len(), 1);
+        assert_eq!(ts.relations[0].target_table, "customers");
+    }
+
+    #[test]
+    fn parse_table_semantics_view_field_table() {
+        // 视图的字段释义表（两列：字段名|业务释义）
+        let doc = "---\ntype: DuckDB View\ntitle: v_summary\n---\n\n# 字段释义\n| 字段名 | 业务释义 |\n|---|---|\n| `total` | 总计 |\n\n# 依赖关系\n- [[orders]] (N:1) 订单主表\n";
+        let ts = parse_table_semantics(doc);
+        assert_eq!(ts.columns.len(), 1);
+        assert_eq!(ts.columns[0].name, "total");
+        assert_eq!(ts.columns[0].comment, "总计");
+        assert_eq!(ts.relations.len(), 1);
+        assert_eq!(ts.relations[0].target_table, "orders");
     }
 
     #[test]

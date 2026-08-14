@@ -26,7 +26,7 @@ impl Tool for ListOkfKnowledgeTool {
     async fn definition(&self, _prompt: String) -> ToolDefinition {
         ToolDefinition {
             name: "list_okf_knowledge".to_string(),
-            description: "查看知识库大纲：列出全局业务概念 + 当前工作区已注册的表(含探索状态/字段释义)/视图/数据源/排障记录。用户问'有哪些知识/表/概念'、或想确认已沉淀内容、或开场后新增了知识想刷新大纲时调用。".to_string(),
+            description: "查看知识库大纲（含元数据）：列出全局业务概念 + 当前工作区已注册的表(含探索状态/字段释义)/视图/数据源/排障记录，每条展示 type/描述/创建时间/更新时间。用户问'有哪些知识/表/概念'、或想确认已沉淀内容、或开场后新增了知识想刷新大纲时调用。".to_string(),
             parameters: json!({
                 "type": "object",
                 "properties": {}
@@ -42,7 +42,7 @@ impl Tool for ListOkfKnowledgeTool {
         let ws_path = self.ws.path.clone();
         let result = tokio::task::spawn_blocking(move || -> Result<String, String> {
             let entries = crate::db::list_table_registry(&ws_path).unwrap_or_default();
-            Ok(crate::okf::Okf::production().catalog_summary(&ws_path, &entries))
+            Ok(crate::okf::Okf::production().catalog_outline(&ws_path, &entries))
         }).await
         .map_err(|e| ToolError(format!("线程生成失败: {e}")))?;
 

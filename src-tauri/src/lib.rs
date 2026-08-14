@@ -104,6 +104,7 @@ pub fn run() {
             commands::list_workspace_connections,
             commands::check_data_analysis_env,
             commands::install_data_analysis_env,
+            commands::read_okf_file,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -61,15 +61,16 @@ impl Tool for ListTablesTool {
                 "unavailable_temporary" => "⚠️",
                 _ => "❓",
             };
+            let kind_label = if e.kind == "view" { "视图" } else { "表" };
             let mode = if e.access_mode == "pushdown" { " [pushdown]" } else { "" };
             let reason = if e.status != "available" && e.unavailable_reason.is_some() {
                 format!(" — {}", e.unavailable_reason.as_ref().unwrap())
             } else { String::new() };
-            lines.push(format!("{icon} {} ({}){}{}", e.local_name, e.connection_name, mode, reason));
+            lines.push(format!("{icon} [{kind_label}] {} ({}){}{}", e.local_name, e.connection_name, mode, reason));
         }
 
         let summary = if lines.is_empty() {
-            "当前没有已注册的表。请先调用 list_connections 和 list_remote_tables 发现并注册表。".to_string()
+            "当前没有已注册的表/视图。请先调用 list_connections 和 list_remote_tables 发现并注册表。".to_string()
         } else {
             format!("已注册 {} 个表/视图", entries.len())
         };

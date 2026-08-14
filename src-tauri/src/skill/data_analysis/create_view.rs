@@ -112,12 +112,32 @@ impl Tool for CreateViewTool {
         let elapsed = start.elapsed().as_millis() as u64;
         match result {
             Ok(()) => {
-                // 写 OKF 视图骨架（幂等，已存在不覆盖）。
+                // 写 table_registry（kind=view）+ OKF 视图骨架。
+                let ws_path = self.ws.path.clone();
                 let ws_dir = self.ws.dir.to_string_lossy().to_string();
                 let name_clone = name.clone();
                 let sql_clone = select_sql.clone();
-                let _ = tokio::task::spawn_blocking(move || {
-                    crate::okf::Okf::production().ensure_view_skeleton(&ws_dir, &name_clone, &sql_clone)
+                let _ = tokio::task::spawn_blocking(move || -> Result<(), String> {
+                    let entry = crate::model::TableRegistryEntry {
+                        id: format!("tr-{}-{}", crate::db::now_ms(), &name_clone),
+                        workspace_path: ws_path.clone(),
+                        connection_name: String::new(),
+                        local_name: name_clone.clone(),
+                        remote_schema: String::new(),
+                        remote_table: String::new(),
+                        db_type: "duckdb".to_string(),
+                        db_product: "duckdb".to_string(),
+                        db_mode: "standard".to_string(),
+                        table_type: "native".to_string(),
+                        access_mode: "catalog".to_string(),
+                        status: "available".to_string(),
+                        unavailable_reason: None,
+                        last_explored: Some(crate::db::now_ms()),
+                        kind: "view".to_string(),
+                    };
+                    let _ = crate::db::upsert_table_registry(&entry);
+                    let _ = crate::okf::Okf::production().ensure_view_skeleton(&ws_dir, &name_clone, &sql_clone);
+                    Ok(())
                 }).await;
 
                 let summary = format!("视图 {} 创建成功", name);

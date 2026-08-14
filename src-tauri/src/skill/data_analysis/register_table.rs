@@ -214,6 +214,7 @@ impl Tool for RegisterTableTool {
                 status: "available".to_string(),
                 unavailable_reason: None,
                 last_explored: Some(now_ms()),
+                kind: "table".to_string(),
             };
             let _ = crate::db::upsert_table_registry(&entry);
 

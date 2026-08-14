@@ -12,90 +12,129 @@ use crate::okf::model::{Scope, SearchHit, TableStatus};
 use crate::okf::paths::OkfPaths;
 use crate::okf::store;
 
-/// 生成注入 preamble 的大纲：表（状态+字段释义+关联）+ 全局概念 + 视图 + 数据源 + 排障。
+/// 生成知识库大纲（注入 preamble + list_okf_knowledge 工具共用）。
+/// 两级结构：全局知识 / 工作区知识 → 各类别带目录提示 + 计数 + 描述。
 pub fn summary(paths: &OkfPaths, ws: &str, table_entries: &[TableRegistryEntry]) -> String {
     let mut out = String::new();
 
-    // 1. 工作区数据记忆（表，来自 table_registry）。
-    if !table_entries.is_empty() {
-        let mut blocks = Vec::new();
-        for e in table_entries {
-            let icon = TableStatus::from_str(&e.status).icon();
-            let mode = if e.access_mode == "pushdown" { " [pushdown]" } else { "" };
-            let reason = if e.status != "available" {
-                e.unavailable_reason
-                    .as_ref()
-                    .map(|r| format!(" — 不可用: {r}"))
-                    .unwrap_or_default()
-            } else {
-                String::new()
-            };
-            let (_, col_comments, relations) = store::column_semantics(paths, ws, &e.local_name);
-            let mut block = format!("- {icon} `{}` ({}){}{}", e.local_name, e.connection_name, mode, reason);
-            if !col_comments.is_empty() {
-                let cols: Vec<String> = col_comments.iter().map(|(k, v)| format!("`{k}`: {v}")).collect();
-                block.push_str(&format!("\n  字段释义: {}", cols.join("; ")));
-            }
-            if !relations.is_empty() {
-                block.push_str(&format!(
-                    "\n  关联: {}",
-                    relations.iter().map(|r| format!("- {r}")).collect::<Vec<_>>().join(" ")
-                ));
-            }
-            blocks.push(block);
-        }
-        out.push_str("# 工作区数据记忆\n以下是你之前探索过的表和知识，直接继承使用，无需重复探索：\n\n");
-        out.push_str(&blocks.join("\n"));
-        out.push_str("\n\n");
-    }
-
-    // 2. 全局业务概念（名 + 二级标题索引）。
+    // ===== 全局知识 =====
     let concepts = list_with_headings(&paths.global_okf_dir().join("concepts"), 2);
-    if !concepts.is_empty() {
-        out.push_str(
-            "# 业务概念（全局）\n以下业务背景已沉淀，需要细节时用 load_okf_block(category=\"concepts\", name=\"<名>\", heading=\"<标题>\") 读取：\n",
-        );
-        for (name, headings) in &concepts {
-            if headings.is_empty() {
-                out.push_str(&format!("- {name}\n"));
-            } else {
-                out.push_str(&format!("- {name}（{}）\n", headings.join("、")));
+    let users = list_with_desc(&paths.global_okf_dir().join("users"));
+    if !concepts.is_empty() || !users.is_empty() {
+        out.push_str("# 知识库大纲\n\n## 全局知识（跨工作区共享）\n");
+        if !concepts.is_empty() {
+            out.push_str(&format!("### 业务概念 (concepts/) · {}\n", concepts.len()));
+            for (name, headings) in &concepts {
+                if headings.is_empty() {
+                    out.push_str(&format!("- {name}\n"));
+                } else {
+                    out.push_str(&format!("- {name}（{}）\n", headings.join("、")));
+                }
             }
         }
-        out.push('\n');
+        if !users.is_empty() {
+            out.push_str(&format!("### 用户背景 (users/) · {}\n", users.len()));
+            for (name, desc) in &users {
+                push_item(&mut out, name, desc.as_deref());
+            }
+        }
     }
 
-    // 3. 工作区视图。
-    let views = list_md_names(&paths.workspace_okf_dir(ws).join("views"));
-    if !views.is_empty() {
-        out.push_str("# 视图\n");
-        for n in &views {
-            out.push_str(&format!("- {n}\n"));
+    // ===== 工作区知识 =====
+    let views = list_with_desc(&paths.workspace_okf_dir(ws).join("views"));
+    let sources = list_with_desc(&paths.workspace_okf_dir(ws).join("sources"));
+    let recipes = list_with_desc(
+        &paths
+            .workspace_okf_dir(ws)
+            .join("pipelines")
+            .join("specific"),
+    );
+    if !table_entries.is_empty() || !views.is_empty() || !sources.is_empty() || !recipes.is_empty() {
+        if !out.is_empty() {
+            out.push('\n');
+        } else {
+            out.push_str("# 知识库大纲\n\n");
         }
-        out.push('\n');
-    }
-
-    // 4. 工作区数据源知识。
-    let sources = list_md_names(&paths.workspace_okf_dir(ws).join("sources"));
-    if !sources.is_empty() {
-        out.push_str("# 数据源知识\n");
-        for n in &sources {
-            out.push_str(&format!("- {n}\n"));
+        out.push_str("## 工作区知识\n");
+        if !table_entries.is_empty() {
+            out.push_str(&format!("### 已注册表 · {}\n", table_entries.len()));
+            for e in table_entries {
+                let icon = TableStatus::from_str(&e.status).icon();
+                let mode = if e.access_mode == "pushdown" { " [pushdown]" } else { "" };
+                let reason = if e.status != "available" {
+                    e.unavailable_reason
+                        .as_ref()
+                        .map(|r| format!(" — 不可用: {r}"))
+                        .unwrap_or_default()
+                } else {
+                    String::new()
+                };
+                let ts = store::table_semantics(paths, ws, &e.local_name);
+                out.push_str(&format!(
+                    "- {icon} `{}` ({}){}{}\n",
+                    e.local_name, e.connection_name, mode, reason
+                ));
+                out.push_str(&render_columns(&ts.columns));
+                out.push_str(&render_relations(&ts.relations));
+            }
         }
-        out.push('\n');
-    }
-
-    // 5. 排障记录（pipelines/specific）。
-    let recipes = list_md_names(&paths.workspace_okf_dir(ws).join("pipelines").join("specific"));
-    if !recipes.is_empty() {
-        out.push_str("# 排障记录\n");
-        for n in &recipes {
-            out.push_str(&format!("- {n}\n"));
+        if !views.is_empty() {
+            out.push_str(&format!("### 视图 (views/) · {}\n", views.len()));
+            for (name, desc) in &views {
+                push_item(&mut out, name, desc.as_deref());
+            }
         }
-        out.push('\n');
+        if !sources.is_empty() {
+            out.push_str(&format!("### 数据源知识 (sources/) · {}\n", sources.len()));
+            for (name, desc) in &sources {
+                push_item(&mut out, name, desc.as_deref());
+            }
+        }
+        if !recipes.is_empty() {
+            out.push_str(&format!("### 排障配方 (pipelines/specific/) · {}\n", recipes.len()));
+            for (name, desc) in &recipes {
+                push_item(&mut out, name, desc.as_deref());
+            }
+        }
     }
 
     out.trim().to_string()
+}
+
+/// `- name — description`（有描述）或 `- name`（无）。
+fn push_item(out: &mut String, name: &str, desc: Option<&str>) {
+    match desc {
+        Some(d) if !d.is_empty() => out.push_str(&format!("- {name} — {d}\n")),
+        _ => out.push_str(&format!("- {name}\n")),
+    }
+}
+
+/// 渲染字段释义行（`  字段释义: \`col\`: comment; ...`），空则空串。
+fn render_columns(cols: &[crate::okf::model::ColumnSemantic]) -> String {
+    let parts: Vec<String> = cols.iter()
+        .filter(|c| !c.comment.is_empty())
+        .map(|c| format!("`{}`: {}", c.name, c.comment))
+        .collect();
+    if parts.is_empty() {
+        String::new()
+    } else {
+        format!("  字段释义: {}\n", parts.join("; "))
+    }
+}
+
+/// 渲染关联关系行（`  关联: - \`col\` → [[target]].\`col\` (N:1) ...`），空则空串。
+fn render_relations(rels: &[crate::okf::model::Relation]) -> String {
+    if rels.is_empty() {
+        return String::new();
+    }
+    let parts: Vec<String> = rels.iter().map(|r| {
+        if r.local_col.is_empty() {
+            format!("- [[{}]] ({}) {}", r.target_table, r.cardinality.to_str(), r.description.as_deref().unwrap_or(""))
+        } else {
+            format!("- `{}` {} [[{}]].`{}` ({})", r.local_col, r.direction.to_arrow(), r.target_table, r.target_col, r.cardinality.to_str())
+        }
+    }).collect();
+    format!("  关联: {}\n", parts.join(" "))
 }
 
 /// 全文搜索全局 + 工作区 OKF（子串匹配，命中取前 6 行预览）。
@@ -109,24 +148,164 @@ pub fn search(paths: &OkfPaths, ws: &str, query: &str) -> Vec<SearchHit> {
 
 // ---------- 扫描辅助 ----------
 
-/// 列出目录下 .md 文件名（不含后缀），按名排序。
-fn list_md_names(dir: &Path) -> Vec<String> {
-    let mut names = Vec::new();
+/// 列出目录下 .md 文件名 + frontmatter description，按名排序。
+fn list_with_desc(dir: &Path) -> Vec<(String, Option<String>)> {
+    let mut items = Vec::new();
     if let Ok(rd) = fs::read_dir(dir) {
         for e in rd.flatten() {
             let p = e.path();
             if p.extension().and_then(|x| x.to_str()) != Some("md") {
                 continue;
             }
-            if let Some(stem) = p.file_stem().and_then(|s| s.to_str()) {
-                if !stem.is_empty() {
-                    names.push(stem.to_string());
-                }
+            let Some(stem) = p.file_stem().and_then(|s| s.to_str()) else {
+                continue;
+            };
+            if stem.is_empty() {
+                continue;
             }
+            let desc = fs::read_to_string(&p)
+                .ok()
+                .and_then(|c| crate::okf::frontmatter::split_document(&c).0)
+                .and_then(|fm| fm.get("description").filter(|s| !s.is_empty()).map(|s| s.to_string()));
+            items.push((stem.to_string(), desc));
         }
     }
-    names.sort();
-    names
+    items.sort_by(|a, b| a.0.cmp(&b.0));
+    items
+}
+
+/// 列出目录下 .md 文件名 + 完整 frontmatter + 标题索引，按名排序。
+fn list_with_metadata(dir: &Path, heading_level: Option<usize>) -> Vec<(String, crate::okf::frontmatter::Frontmatter, Vec<String>)> {
+    let mut items = Vec::new();
+    if let Ok(rd) = fs::read_dir(dir) {
+        for e in rd.flatten() {
+            let p = e.path();
+            if p.extension().and_then(|x| x.to_str()) != Some("md") {
+                continue;
+            }
+            let Some(stem) = p.file_stem().and_then(|s| s.to_str()) else {
+                continue;
+            };
+            if stem.is_empty() {
+                continue;
+            }
+            let content = match fs::read_to_string(&p) {
+                Ok(c) => c,
+                Err(_) => continue,
+            };
+            let (fm, _) = crate::okf::frontmatter::split_document(&content);
+            let fm = fm.unwrap_or_default();
+            let headings = heading_level
+                .map(|lvl| markdown::extract_headings(&content, lvl))
+                .unwrap_or_default();
+            items.push((stem.to_string(), fm, headings));
+        }
+    }
+    items.sort_by(|a, b| a.0.cmp(&b.0));
+    items
+}
+
+/// 取 frontmatter 字段的日期部分（ISO → YYYY-MM-DD），无则空。
+fn date_of(fm: &crate::okf::frontmatter::Frontmatter, key: &str) -> String {
+    fm.get(key).map(|s| s.get(..10).unwrap_or("").to_string()).unwrap_or_default()
+}
+
+/// 生成带完整元数据的大纲（list_okf_knowledge 工具用，比 summary 丰富）。
+/// 每条展示 type/description/created_at/updated_at +（concepts）标题索引。
+pub fn outline(paths: &OkfPaths, ws: &str, table_entries: &[TableRegistryEntry]) -> String {
+    let mut out = String::new();
+    let mut started = false;
+
+    // ===== 全局知识 =====
+    let concepts = list_with_metadata(&paths.global_okf_dir().join("concepts"), Some(2));
+    let users = list_with_metadata(&paths.global_okf_dir().join("users"), None);
+    if !concepts.is_empty() || !users.is_empty() {
+        out.push_str("# 知识库大纲\n\n## 全局知识（跨工作区共享）\n");
+        started = true;
+        if !concepts.is_empty() {
+            push_metadata_section(&mut out, "业务概念 (concepts/)", &concepts, true);
+        }
+        if !users.is_empty() {
+            push_metadata_section(&mut out, "用户背景 (users/)", &users, false);
+        }
+    }
+
+    // ===== 工作区知识 =====
+    let views = list_with_metadata(&paths.workspace_okf_dir(ws).join("views"), None);
+    let sources = list_with_metadata(&paths.workspace_okf_dir(ws).join("sources"), None);
+    let recipes = list_with_metadata(
+        &paths.workspace_okf_dir(ws).join("pipelines").join("specific"),
+        None,
+    );
+    if !table_entries.is_empty() || !views.is_empty() || !sources.is_empty() || !recipes.is_empty() {
+        if started {
+            out.push('\n');
+        } else {
+            out.push_str("# 知识库大纲\n\n");
+        }
+        out.push_str("## 工作区知识\n");
+        if !table_entries.is_empty() {
+            out.push_str(&format!("### 已注册表 · {}\n", table_entries.len()));
+            for e in table_entries {
+                let icon = TableStatus::from_str(&e.status).icon();
+                let mode = if e.access_mode == "pushdown" { " [pushdown]" } else { "" };
+                let reason = if e.status != "available" {
+                    e.unavailable_reason
+                        .as_ref()
+                        .map(|r| format!(" — 不可用: {r}"))
+                        .unwrap_or_default()
+                } else {
+                    String::new()
+                };
+                let ts = store::table_semantics(paths, ws, &e.local_name);
+                out.push_str(&format!(
+                    "- {icon} `{}` ({}){}{}\n",
+                    e.local_name, e.connection_name, mode, reason
+                ));
+                out.push_str(&render_columns(&ts.columns));
+                out.push_str(&render_relations(&ts.relations));
+            }
+        }
+        if !views.is_empty() {
+            push_metadata_section(&mut out, "视图 (views/)", &views, false);
+        }
+        if !sources.is_empty() {
+            push_metadata_section(&mut out, "数据源知识 (sources/)", &sources, false);
+        }
+        if !recipes.is_empty() {
+            push_metadata_section(&mut out, "排障配方 (pipelines/specific/)", &recipes, false);
+        }
+    }
+
+    out.trim().to_string()
+}
+
+/// 渲染一个元数据小节：每条 - name / type / desc / created / updated [+ headings]。
+fn push_metadata_section(
+    out: &mut String,
+    title: &str,
+    items: &[(String, crate::okf::frontmatter::Frontmatter, Vec<String>)],
+    show_headings: bool,
+) {
+    out.push_str(&format!("### {title} · {}\n", items.len()));
+    for (name, fm, headings) in items {
+        let ty = fm.get("type").unwrap_or("");
+        let desc = fm.get("description").unwrap_or("");
+        let created = date_of(fm, "created_at");
+        let updated = date_of(fm, "updated_at");
+        out.push_str(&format!("- **{name}**\n"));
+        out.push_str(&format!("  类型: {ty}"));
+        if !desc.is_empty() {
+            out.push_str(&format!(" | 描述: {desc}"));
+        }
+        if !created.is_empty() || !updated.is_empty() {
+            out.push_str(&format!(" | 创建: {created} 更新: {updated}"));
+        }
+        out.push('\n');
+        if show_headings && !headings.is_empty() {
+            out.push_str(&format!("  板块: {}\n", headings.join("、")));
+        }
+    }
 }
 
 /// 列出目录下 .md 文件名 + 指定级别标题索引，按名排序。
@@ -216,9 +395,12 @@ mod tests {
         store::write(&paths, ver.as_ref(), &FixedClock, "ws", Category::Recipe, "date_parse", "解决方案", "用 to_date 解析", None).unwrap();
 
         let s = summary(&paths, "ws", &[]);
-        assert!(s.contains("业务概念（全局）"));
+        assert!(s.contains("# 知识库大纲"));
+        assert!(s.contains("## 全局知识"));
+        assert!(s.contains("### 业务概念 (concepts/) · 1"));
         assert!(s.contains("company"));
-        assert!(s.contains("排障记录"));
+        assert!(s.contains("## 工作区知识"));
+        assert!(s.contains("### 排障配方 (pipelines/specific/) · 1"));
         assert!(s.contains("date_parse"));
     }
 
@@ -248,8 +430,10 @@ mod tests {
             status: "available".into(),
             unavailable_reason: None,
             last_explored: None,
+            kind: "table".into(),
         };
         let s = summary(&paths, "ws", &[entry]);
+        assert!(s.contains("### 已注册表 · 1"));
         assert!(s.contains("✅ `v_orders` (myshop)"));
         assert!(s.contains("订单编号"));
     }
@@ -272,5 +456,27 @@ mod tests {
         let paths = OkfPaths::new(tmp.path().to_path_buf());
         let hits = search(&paths, "ws", "不存在的东西");
         assert!(hits.is_empty());
+    }
+
+    #[test]
+    fn outline_shows_full_metadata_per_entry() {
+        let tmp = tempfile::tempdir().unwrap();
+        let paths = OkfPaths::new(tmp.path().to_path_buf());
+        let ver: Arc<dyn crate::okf::Versioner> = Arc::new(NoopVersioner);
+        store::write(&paths, ver.as_ref(), &FixedClock, "ws", Category::Concept, "co", "业务描述", "body", Some("一句话描述")).unwrap();
+        store::write(&paths, ver.as_ref(), &FixedClock, "ws", Category::Recipe, "fix", "解决方案", "用 to_date", Some("日期解析排障")).unwrap();
+
+        let s = outline(&paths, "ws", &[]);
+        // 概念条目带完整元数据
+        assert!(s.contains("**co**"));
+        assert!(s.contains("类型: Business Concept"));
+        assert!(s.contains("描述: 一句话描述"));
+        assert!(s.contains("创建: 2026-08-14"));
+        assert!(s.contains("更新: 2026-08-14"));
+        assert!(s.contains("板块: 业务描述"));
+        // 排障配方也带元数据
+        assert!(s.contains("**fix**"));
+        assert!(s.contains("类型: Recipe"));
+        assert!(s.contains("描述: 日期解析排障"));
     }
 }

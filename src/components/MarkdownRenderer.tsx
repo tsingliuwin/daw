@@ -97,25 +97,41 @@ marked.use({ renderer });
  * HTML (script, iframe, etc.). Re-renders when the active code theme or line-number
  * setting changes.
  */
-export default function MarkdownRenderer(props: { content: string }) {
+export default function MarkdownRenderer(props: {
+  content: string;
+  onWikiLink?: (table: string) => void;
+}) {
   const html = createMemo(() => {
     if (!props.content) return "";
-    // Read these signals so the memo re-runs on theme/lineNumber change. The
-    // highlighter() resource read also retriggers once it resolves.
     void activeCodeTheme();
     void codeLineNumbers();
     void highlighter.state;
     const raw = marked.parse(props.content) as string;
-    // Basic XSS sanitization: strip script/iframe/object/embed tags
     return raw
       .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, "")
       .replace(/<iframe\b[^>]*>.*?<\/iframe>/gi, "")
       .replace(/<object\b[^>]*>.*?<\/object>/gi, "")
       .replace(/<embed\b[^>]*\/?>/gi, "")
       .replace(/on\w+\s*=/gi, "data-blocked=")
-      // Residual chart-reference markers → 📊 badge (avoids leaking raw {{chart:...}}).
-      .replace(/\{\{\s*chart:[^}<]*\}?\}?/g, '<span class="chart-ref-badge">📊</span>');
+      .replace(/\{\{\s*chart:[^}<]*\}?\}?/g, '<span class="chart-ref-badge">📊</span>')
+      // OKF 内链 [[table_name]] → 可点击链接（点击加载目标表的知识库内容）。
+      .replace(/\[\[([^\]]+)\]\]/g, '<a class="okf-wikilink" data-okf-table="$1" href="#">$1</a>');
   });
 
-  return <div class="md-rendered" innerHTML={html()} />;
+  return (
+    <div
+      class="md-rendered"
+      innerHTML={html()}
+      onClick={(e) => {
+        const target = (e.target as HTMLElement).closest(".okf-wikilink");
+        if (target) {
+          e.preventDefault();
+          const table = target.getAttribute("data-okf-table");
+          if (table && props.onWikiLink) {
+            props.onWikiLink(table);
+          }
+        }
+      }}
+    />
+  );
 }

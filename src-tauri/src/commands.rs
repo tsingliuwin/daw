@@ -589,6 +589,26 @@ pub async fn check_data_analysis_env(state: tauri::State<'_, AppState>) -> Resul
     Ok(state.ext_installed.load(std::sync::atomic::Ordering::Relaxed))
 }
 
+/// 直接读取 OKF 知识库文件内容（不经过 agent，供前端内链点击跳转）。
+#[tauri::command]
+pub async fn read_okf_file(
+    ws_path: String,
+    category: String,
+    name: String,
+    heading: String,
+) -> Result<String, String> {
+    let cat = crate::okf::model::Category::from_str(&category)
+        .ok_or_else(|| format!("未知知识类别: {category}"))?;
+    let result = tokio::task::spawn_blocking(move || {
+        crate::okf::Okf::production().read(&ws_path, cat, &name, &heading)
+    }).await
+    .map_err(|e| format!("线程生成失败: {e}"))?;
+    match result {
+        Ok(o) => Ok(o.content),
+        Err(e) => Err(e),
+    }
+}
+
 /// 安装数据分析环境（DuckLake + sqlite 扩展 + ATTACH lake）。
 /// 逐步发 "ducklake-install" 事件给前端展示进度。
 #[tauri::command]

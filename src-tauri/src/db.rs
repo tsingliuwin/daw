@@ -259,7 +259,7 @@ pub fn init_global_db() -> Result<(), String> {
     )
     .map_err(|e| format!("Failed to create workspace_db_connections table: {e}"))?;
 
-    // table_registry: 已注册远程表的元数据（access_mode/table_type/status 等）。
+    // table_registry: 已注册表/视图的元数据（kind=table|view, access_mode/status 等）。
     conn.execute(
         "CREATE TABLE IF NOT EXISTS table_registry (
             id TEXT PRIMARY KEY,
@@ -276,11 +276,30 @@ pub fn init_global_db() -> Result<(), String> {
             status TEXT NOT NULL DEFAULT 'available',
             unavailable_reason TEXT,
             last_explored INTEGER,
+            kind TEXT NOT NULL DEFAULT 'table',
             FOREIGN KEY(workspace_path) REFERENCES workspaces(path) ON DELETE CASCADE
         )",
         [],
     )
     .map_err(|e| format!("Failed to create table_registry table: {e}"))?;
+
+    // Migration: 旧库补 kind 列（已存在则忽略）。
+    let _ = conn.execute(
+        "ALTER TABLE table_registry ADD COLUMN kind TEXT NOT NULL DEFAULT 'table'",
+        [],
+    );
+    // Migration: 去重（旧库可能因 INSERT OR REPLACE by-id 产生重复行）。
+    let _ = conn.execute(
+        "DELETE FROM table_registry WHERE id NOT IN \
+         (SELECT MIN(id) FROM table_registry GROUP BY workspace_path, local_name)",
+        [],
+    );
+    // Migration: 唯一索引（防重复注册）。
+    let _ = conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_registry_ws_local \
+         ON table_registry(workspace_path, local_name)",
+        [],
+    );
 
     // db_connections 加 db_product / db_mode 列（幂等迁移）。
     let _ = conn.execute("ALTER TABLE db_connections ADD COLUMN db_product TEXT NOT NULL DEFAULT 'unknown'", []);
@@ -684,10 +703,11 @@ fn row_to_registry(r: &rusqlite::Row) -> rusqlite::Result<TableRegistryEntry> {
         status: r.get(11)?,
         unavailable_reason: r.get::<_, Option<String>>(12)?,
         last_explored: r.get::<_, Option<i64>>(13)?,
+        kind: r.get::<_, Option<String>>(14)?.unwrap_or_else(|| "table".to_string()),
     })
 }
 
-const REGISTRY_COLS: &str = "id, workspace_path, connection_name, local_name, remote_schema, remote_table, db_type, db_product, db_mode, table_type, access_mode, status, unavailable_reason, last_explored";
+const REGISTRY_COLS: &str = "id, workspace_path, connection_name, local_name, remote_schema, remote_table, db_type, db_product, db_mode, table_type, access_mode, status, unavailable_reason, last_explored, kind";
 
 /// 列出工作区所有已注册的表。
 pub fn list_table_registry(ws_path: &str) -> Result<Vec<TableRegistryEntry>, String> {
@@ -712,16 +732,31 @@ pub fn get_table_registry_by_local_name(ws_path: &str, local_name: &str) -> Resu
     Ok(None)
 }
 
-/// 插入或更新 table_registry。
+/// 插入或更新 table_registry（按 workspace_path + local_name 去重 upsert）。
 pub fn upsert_table_registry(entry: &TableRegistryEntry) -> Result<(), String> {
     let conn = get_db_conn()?;
     conn.execute(
-        "INSERT OR REPLACE INTO table_registry (id, workspace_path, connection_name, local_name, remote_schema, remote_table, db_type, db_product, db_mode, table_type, access_mode, status, unavailable_reason, last_explored)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO table_registry (id, workspace_path, connection_name, local_name, remote_schema, remote_table, db_type, db_product, db_mode, table_type, access_mode, status, unavailable_reason, last_explored, kind)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(workspace_path, local_name) DO UPDATE SET
+            id = excluded.id,
+            connection_name = excluded.connection_name,
+            remote_schema = excluded.remote_schema,
+            remote_table = excluded.remote_table,
+            db_type = excluded.db_type,
+            db_product = excluded.db_product,
+            db_mode = excluded.db_mode,
+            table_type = excluded.table_type,
+            access_mode = excluded.access_mode,
+            status = excluded.status,
+            unavailable_reason = excluded.unavailable_reason,
+            last_explored = excluded.last_explored,
+            kind = excluded.kind",
         rusqlite::params![
             entry.id, entry.workspace_path, entry.connection_name, entry.local_name,
             entry.remote_schema, entry.remote_table, entry.db_type, entry.db_product, entry.db_mode,
-            entry.table_type, entry.access_mode, entry.status, entry.unavailable_reason, entry.last_explored
+            entry.table_type, entry.access_mode, entry.status, entry.unavailable_reason, entry.last_explored,
+            entry.kind
         ],
     ).map_err(|e| e.to_string())?;
     Ok(())
@@ -737,8 +772,7 @@ pub fn update_table_registry_status(ws_path: &str, local_name: &str, status: &st
     Ok(())
 }
 
-/// 删除 table_registry 记录。
-#[allow(dead_code)]
+/// 删除 table_registry 记录（drop_object 调用）。
 pub fn delete_table_registry(ws_path: &str, local_name: &str) -> Result<(), String> {
     let conn = get_db_conn()?;
     conn.execute(

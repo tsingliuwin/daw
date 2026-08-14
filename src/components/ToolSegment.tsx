@@ -1,6 +1,16 @@
 import { Show, For, createSignal } from "solid-js";
+import { invoke } from "@tauri-apps/api/core";
 import type { Segment, SqlResult } from "../lib/types";
 import ResultTable from "./ResultTable";
+import MarkdownRenderer from "./MarkdownRenderer";
+
+/** detail 是 markdown 正文（需要格式化渲染）的工具；其余走等宽 <pre>（如 SQL）。 */
+const MD_DETAIL_TOOLS = new Set([
+  "list_okf_knowledge",
+  "load_okf_block",
+  "write_okf_block",
+  "read_okf_metadata",
+]);
 
 /** 工具的人类可读标签。未知工具回退到原始 tool 名。 */
 const TOOL_LABELS: Record<string, string> = {
@@ -46,11 +56,36 @@ export default function ToolSegment(props: {
   seg: Segment;
   expanded: boolean;
   onToggle: (id: string) => void;
-  /** awaiting 状态下用户点击「确认执行」(true) 或「取消」(false)。 */
   onConfirm?: (approved: boolean) => void;
+  /** 当前工作区路径（内链点击读 OKF 文件用）。 */
+  wsPath?: string;
 }) {
   // ToolSegment 只在 `type === "tool"` 段渲染（父级已过滤）。窄化到本地变量。
   const t = () => (props.seg.type === "tool" ? props.seg : null);
+
+  // 内链点击模态：读目标 OKF 文件全文，弹窗展示。
+  const [wikiModal, setWikiModal] = createSignal<string | null>(null);
+  const [wikiLoading, setWikiLoading] = createSignal(false);
+
+  const handleWikiLink = async (table: string) => {
+    const wsPath = props.wsPath ?? "DefaultProject";
+    setWikiLoading(true);
+    setWikiModal(null);
+    try {
+      let content: string | null = null;
+      for (const cat of ["tables", "views", "sources"]) {
+        try {
+          content = await invoke("read_okf_file", {
+            wsPath, category: cat, name: table, heading: "all",
+          });
+          break;
+        } catch { /* not in this category, try next */ }
+      }
+      setWikiModal(content ?? `未找到 ${table} 的知识文件`);
+    } finally {
+      setWikiLoading(false);
+    }
+  };
 
   /** payload 解析为可遍历的 [key, value] 数组（仅当是对象时）。 */
   const payloadEntries = (): [string, unknown][] => {
@@ -181,9 +216,15 @@ export default function ToolSegment(props: {
             </div>
           </Show>
 
-          {/* 人类可读动作摘要（detail，非 awaiting 时也可展示，如已完成写操作的回执）。 */}
+          {/* detail：知识类工具渲染为格式化 markdown（## 标题/列表等），SQL 类用等宽 pre。 */}
           <Show when={t()?.detail && t()?.status !== "awaiting"}>
-            <pre class="tool-seg__detail-line">{t()!.detail}</pre>
+            {MD_DETAIL_TOOLS.has(t()?.tool ?? "") ? (
+              <div class="tool-seg__detail-md">
+                <MarkdownRenderer content={t()!.detail!} onWikiLink={handleWikiLink} />
+              </div>
+            ) : (
+              <pre class="tool-seg__detail-line">{t()!.detail}</pre>
+            )}
           </Show>
 
           {/* 结构化 payload：
@@ -234,6 +275,21 @@ export default function ToolSegment(props: {
           <Show when={t()?.result}>
             <pre class="tool-seg__result-text">{t()!.result}</pre>
           </Show>
+        </div>
+      </Show>
+
+      {/* 内链点击模态：展示目标表/视图的 OKF 全文。 */}
+      <Show when={wikiModal() !== null || wikiLoading()}>
+        <div class="okf-wiki-modal" onClick={() => setWikiModal(null)}>
+          <div class="okf-wiki-modal-content" onClick={(e) => e.stopPropagation()}>
+            <Show when={wikiLoading()}>
+              <p>加载中…</p>
+            </Show>
+            <Show when={wikiModal()}>
+              <MarkdownRenderer content={wikiModal()!} onWikiLink={handleWikiLink} />
+            </Show>
+            <button class="okf-wiki-modal-close" onClick={() => setWikiModal(null)}>关闭</button>
+          </div>
         </div>
       </Show>
     </div>
