@@ -31,18 +31,67 @@ use crate::usage::{self, DATA_ANALYSIS_PREAMBLE, PREAMBLE};
 /// Legacy messages carry a flat `content` string; new messages carry `segments`.
 /// Only visible text reaches the model — reasoning and tool steps are managed
 /// by rig within the turn and are not replayed as history.
+/// Rewrite `{{chart:<token>}}` markers in conclusion text to a readable
+/// `[图表:<title>]` before the text is replayed into the LLM history.
+///
+/// The marker's token is a `call_id` that only resolves against the *current*
+/// message's segments. If the literal marker is written back into history, the
+/// next turn's model tends to echo the stale token instead of calling
+/// `render_chart` again, so the frontend can't find a matching chart in the
+/// *new* message and shows "图表引用未找到". Rewriting to the title removes the
+/// id from the model's view, preventing cross-turn references at the source.
+fn rewrite_chart_markers(
+    text: &str,
+    chart_titles: &std::collections::HashMap<&str, Option<&str>>,
+) -> String {
+    const PREFIX: &str = "{{chart:";
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(start) = rest.find(PREFIX) {
+        out.push_str(&rest[..start]);
+        let after = &rest[start + PREFIX.len()..];
+        match after.find("}}") {
+            Some(end) => {
+                let token = after[..end].trim();
+                out.push_str("[图表");
+                if let Some(title) = chart_titles.get(token).and_then(|t| *t) {
+                    out.push(':');
+                    out.push_str(title);
+                }
+                out.push(']');
+                rest = &after[end + 2..];
+            }
+            None => {
+                // Unclosed marker (a streaming mid-state): keep the rest verbatim.
+                out.push_str(&rest[start..]);
+                return out;
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
 fn get_message_text(msg: &ChatMessageDto) -> String {
     if let Some(c) = &msg.content {
-        return c.clone();
+        let empty: std::collections::HashMap<&str, Option<&str>> = Default::default();
+        return rewrite_chart_markers(c, &empty);
     }
     if let Some(segs) = &msg.segments {
+        let chart_titles: std::collections::HashMap<&str, Option<&str>> = segs
+            .iter()
+            .filter_map(|s| match s {
+                Segment::Chart { id, title, .. } => Some((id.as_str(), title.as_deref())),
+                _ => None,
+            })
+            .collect();
         let mut out = String::new();
         for s in segs {
             if let Segment::Text { text, .. } = s {
                 if !out.is_empty() {
                     out.push('\n');
                 }
-                out.push_str(text);
+                out.push_str(&rewrite_chart_markers(text, &chart_titles));
             }
         }
         return out;

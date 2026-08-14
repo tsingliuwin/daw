@@ -22,15 +22,18 @@ type ResolvedChunk =
  * SolidJS <For> (reference-keyed) doesn't dispose+recreate echarts instances
  * on every token. See lakemind's original for the full rationale.
  */
-export default function MessageText(props: { text: string; segments?: Segment[] }) {
+export default function MessageText(props: { text: string; segments?: Segment[]; charts?: Segment[] }) {
   let chartChunkCache = new Map<string, ResolvedChunk>();
 
   const chunks = createMemo<ResolvedChunk[]>(() => {
     const segs = props.segments ?? [];
+    // Prefer the cross-conversation chart index so a marker that references a
+    // chart emitted in a previous message still resolves inline.
+    const searchSource = props.charts ?? segs;
     const nextCache = new Map<string, ResolvedChunk>();
     const out: ResolvedChunk[] = splitTextByChartRefs(props.text).map((p) => {
       if (p.kind === "chartRef") {
-        const chart = findChartSegment(segs, p.ref);
+        const chart = findChartSegment(searchSource, p.ref);
         const cached = chartChunkCache.get(p.ref);
         if (cached && cached.kind === "chartRef" && cached.chart === chart) {
           nextCache.set(p.ref, cached);

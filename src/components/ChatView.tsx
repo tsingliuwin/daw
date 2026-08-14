@@ -49,6 +49,15 @@ export default function ChatView(props: {
   /** 该任务是否正在流式输出（由父级 streamingTaskId 派生）。 */
   streaming: boolean;
 }) {
+  /** All chart segments across the conversation — a `{{chart:<id>}}` marker in
+   *  the current message may reference a chart emitted in a previous assistant
+   *  message, so MessageText searches the whole transcript, not just this msg. */
+  const allCharts = createMemo<Segment[]>(() =>
+    props.messages.flatMap((m) => m.segments).filter(
+      (s): s is Extract<Segment, { type: "chart" }> => s.type === "chart",
+    )
+  );
+
   const [chatWidth, setChatWidth] = createSignal<number>(
     parseInt(localStorage.getItem("chat_width") || "800")
   );
@@ -509,7 +518,7 @@ export default function ChatView(props: {
                             <Match when={seg().type === "text" && ts()}>
                               <div class="chat-msg__text">
                                 <Show when={msg().role === "assistant"} fallback={ts()!.text}>
-                                  <MessageText text={ts()!.text} segments={msg().segments} />
+                                  <MessageText text={ts()!.text} segments={msg().segments} charts={allCharts()} />
                                 </Show>
                               </div>
                             </Match>
