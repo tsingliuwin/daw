@@ -20,7 +20,7 @@ use super::events::{
 };
 use super::wire::{ChatMessageDto, Segment};
 use crate::skill::builtin::GetCurrentTimeTool;
-use crate::skill::data_analysis::{create_view::CreateViewTool, describe_table::DescribeTableTool, drop_object::DropObjectTool, execute_query::ExecuteQueryTool, list_connections::ListConnectionsTool, list_okf_knowledge::ListOkfKnowledgeTool, list_remote_tables::ListRemoteTablesTool, list_tables::ListTablesTool, load_okf_block::LoadOkfBlockTool, read_okf_metadata::ReadOkfMetadataTool, register_table::RegisterTableTool, render_chart::RenderChartTool, sample_data::SampleDataTool, search_okf_knowledge::SearchOkfKnowledgeTool, update_okf_metadata::UpdateOkfMetadataTool, write_okf_block::WriteOkfBlockTool};
+use crate::skill::data_analysis::{create_view::CreateViewTool, describe_table::DescribeTableTool, delete_okf_knowledge::DeleteOkfKnowledgeTool, drop_object::DropObjectTool, execute_query::ExecuteQueryTool, list_connections::ListConnectionsTool, list_okf_knowledge::ListOkfKnowledgeTool, list_remote_tables::ListRemoteTablesTool, list_tables::ListTablesTool, load_okf_block::LoadOkfBlockTool, read_okf_metadata::ReadOkfMetadataTool, register_table::RegisterTableTool, rename_okf_knowledge::RenameOkfKnowledgeTool, render_chart::RenderChartTool, sample_data::SampleDataTool, search_okf_knowledge::SearchOkfKnowledgeTool, update_okf_metadata::UpdateOkfMetadataTool, write_okf_block::WriteOkfBlockTool};
 use crate::skill::search::SearchTool;
 use crate::skill::Scenario;
 use crate::state::AppState;
@@ -440,7 +440,7 @@ pub(crate) async fn run_agent_task_stream(
             },
         )
     };
-    let build_data_tools = || -> (GetCurrentTimeTool, ExecuteQueryTool, ListTablesTool, DescribeTableTool, SampleDataTool, RenderChartTool, LoadOkfBlockTool, WriteOkfBlockTool, SearchOkfKnowledgeTool, CreateViewTool, DropObjectTool, ListConnectionsTool, ListRemoteTablesTool, RegisterTableTool, ReadOkfMetadataTool, UpdateOkfMetadataTool, ListOkfKnowledgeTool) {
+    let build_data_tools = || -> (GetCurrentTimeTool, ExecuteQueryTool, ListTablesTool, DescribeTableTool, SampleDataTool, RenderChartTool, LoadOkfBlockTool, WriteOkfBlockTool, SearchOkfKnowledgeTool, CreateViewTool, DropObjectTool, ListConnectionsTool, ListRemoteTablesTool, RegisterTableTool, ReadOkfMetadataTool, UpdateOkfMetadataTool, ListOkfKnowledgeTool, DeleteOkfKnowledgeTool, RenameOkfKnowledgeTool) {
         (
             GetCurrentTimeTool { app_state: app_state.clone(), task_id: task_id.clone(), window: window.clone() },
             ExecuteQueryTool { app_state: app_state.clone(), task_id: task_id.clone(), window: window.clone(), ws: ws_ref.clone() },
@@ -459,6 +459,8 @@ pub(crate) async fn run_agent_task_stream(
             ReadOkfMetadataTool { app_state: app_state.clone(), task_id: task_id.clone(), window: window.clone(), ws: ws_ref.clone() },
             UpdateOkfMetadataTool { app_state: app_state.clone(), task_id: task_id.clone(), window: window.clone(), ws: ws_ref.clone() },
             ListOkfKnowledgeTool { app_state: app_state.clone(), task_id: task_id.clone(), window: window.clone(), ws: ws_ref.clone() },
+            DeleteOkfKnowledgeTool { app_state: app_state.clone(), task_id: task_id.clone(), window: window.clone(), ws: ws_ref.clone() },
+            RenameOkfKnowledgeTool { app_state: app_state.clone(), task_id: task_id.clone(), window: window.clone(), ws: ws_ref.clone() },
         )
     };
 
@@ -470,7 +472,7 @@ pub(crate) async fn run_agent_task_stream(
             vec![t.definition(String::new()).await, s.definition(String::new()).await]
         }
         Scenario::DataAnalysis => {
-            let (t, e, l, d, sd, rc, ol, ow, os, cv, doi, lc, lrt, rt, rm, um, lk) = build_data_tools();
+            let (t, e, l, d, sd, rc, ol, ow, os, cv, doi, lc, lrt, rt, rm, um, lk, dk, rk) = build_data_tools();
             vec![
                 t.definition(String::new()).await,
                 e.definition(String::new()).await,
@@ -489,6 +491,8 @@ pub(crate) async fn run_agent_task_stream(
                 rm.definition(String::new()).await,
                 um.definition(String::new()).await,
                 lk.definition(String::new()).await,
+                dk.definition(String::new()).await,
+                rk.definition(String::new()).await,
             ]
         }
     };
@@ -613,7 +617,7 @@ pub(crate) async fn run_agent_task_stream(
                 }
             }
             Scenario::DataAnalysis => {
-                let (time_tool, exec_tool, list_tool, desc_tool, sample_tool, chart_tool, okf_load_tool, okf_write_tool, okf_search_tool, cv_tool, drop_tool, lc_tool, lrt_tool, rt_tool, okf_meta_read_tool, okf_meta_update_tool, okf_list_tool) = build_data_tools();
+                let (time_tool, exec_tool, list_tool, desc_tool, sample_tool, chart_tool, okf_load_tool, okf_write_tool, okf_search_tool, cv_tool, drop_tool, lc_tool, lrt_tool, rt_tool, okf_meta_read_tool, okf_meta_update_tool, okf_list_tool, okf_delete_tool, okf_rename_tool) = build_data_tools();
                 if format == "openai" {
                     let base_url = sanitize_endpoint(&provider.endpoint);
                     let client: rig_core::providers::openai::Client = rig_core::providers::openai::Client::builder()
@@ -642,7 +646,9 @@ pub(crate) async fn run_agent_task_stream(
                         .tool(rt_tool)
                         .tool(okf_meta_read_tool)
                         .tool(okf_meta_update_tool)
-                        .tool(okf_list_tool);
+                        .tool(okf_list_tool)
+                        .tool(okf_delete_tool)
+                        .tool(okf_rename_tool);
                     agent_builder = agent_builder.additional_params(json!({"reasoning_effort": effort}));
                     let agent = agent_builder.build();
                     let stream = agent
@@ -677,7 +683,9 @@ pub(crate) async fn run_agent_task_stream(
                         .tool(rt_tool)
                         .tool(okf_meta_read_tool)
                         .tool(okf_meta_update_tool)
-                        .tool(okf_list_tool);
+                        .tool(okf_list_tool)
+                        .tool(okf_delete_tool)
+                        .tool(okf_rename_tool);
                     agent_builder = agent_builder.additional_params(json!({"reasoning_effort": effort}));
                     let agent = agent_builder.build();
                     let stream = agent
@@ -713,7 +721,9 @@ pub(crate) async fn run_agent_task_stream(
                         .tool(rt_tool)
                         .tool(okf_meta_read_tool)
                         .tool(okf_meta_update_tool)
-                        .tool(okf_list_tool);
+                        .tool(okf_list_tool)
+                        .tool(okf_delete_tool)
+                        .tool(okf_rename_tool);
                     if thinking_budget > 0 {
                         agent_builder = agent_builder.additional_params(json!({"thinking": {"type": "enabled", "budget_tokens": thinking_budget}}));
                     }

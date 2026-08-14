@@ -11,6 +11,7 @@ use crate::model::TableRegistryEntry;
 use crate::okf::markdown;
 use crate::okf::model::{Scope, SearchHit, TableStatus};
 use crate::okf::paths::OkfPaths;
+use crate::okf::similarity;
 use crate::okf::store;
 
 /// 生成知识库大纲（注入 preamble + list_okf_knowledge 工具共用）。
@@ -97,6 +98,14 @@ pub fn summary(paths: &OkfPaths, ws: &str, table_entries: &[TableRegistryEntry])
                 push_item(&mut out, name, desc.as_deref());
             }
         }
+    }
+
+    let dup = duplicate_section(paths, ws);
+    if !dup.is_empty() {
+        if !out.is_empty() {
+            out.push('\n');
+        }
+        out.push_str(&dup);
     }
 
     out.trim().to_string()
@@ -278,7 +287,50 @@ pub fn outline(paths: &OkfPaths, ws: &str, table_entries: &[TableRegistryEntry])
         }
     }
 
+    let dup = duplicate_section(paths, ws);
+    if !dup.is_empty() {
+        if !out.is_empty() {
+            out.push('\n');
+        }
+        out.push_str(&dup);
+    }
+
     out.trim().to_string()
+}
+
+/// 疑似重复知识小节：全局 concepts/users + 工作区 views/sources/recipes 分组检测。
+/// 无重复返回空串。组内按名排序，组间按大小降序，最多展示 6 组（控制 preamble 体积）。
+fn duplicate_section(paths: &OkfPaths, ws: &str) -> String {
+    let global = paths.global_okf_dir();
+    let wksp = paths.workspace_okf_dir(ws);
+    let mut sections: Vec<(&str, Vec<Vec<String>>)> = Vec::new();
+    for (label, dir) in [
+        ("concepts", global.join("concepts")),
+        ("users", global.join("users")),
+        ("views", wksp.join("views")),
+        ("sources", wksp.join("sources")),
+        ("recipes", wksp.join("pipelines").join("specific")),
+    ] {
+        let groups = similarity::duplicate_groups(&dir);
+        if !groups.is_empty() {
+            sections.push((label, groups));
+        }
+    }
+    if sections.is_empty() {
+        return String::new();
+    }
+    let mut flat: Vec<(&str, Vec<String>)> = sections
+        .into_iter()
+        .flat_map(|(label, groups)| groups.into_iter().map(move |g| (label, g)))
+        .collect();
+    flat.sort_by(|a, b| b.1.len().cmp(&a.1.len()));
+    flat.truncate(6);
+
+    let mut out = String::from("## ⚠️ 疑似重复知识（同一主题应合并为一个文件）\n");
+    for (label, g) in flat {
+        out.push_str(&format!("- {label}: {}\n", g.join(" ≈ ")));
+    }
+    out
 }
 
 /// 渲染一个元数据小节：每条 - name / type / desc / created / updated [+ headings]。
@@ -479,5 +531,31 @@ mod tests {
         assert!(s.contains("**fix**"));
         assert!(s.contains("类型: Recipe"));
         assert!(s.contains("描述: 日期解析排障"));
+    }
+
+    #[test]
+    fn summary_and_outline_flag_duplicate_concepts() {
+        let tmp = tempfile::tempdir().unwrap();
+        let paths = OkfPaths::new(tmp.path().to_path_buf());
+        let ver: Arc<dyn crate::okf::Versioner> = Arc::new(NoopVersioner);
+        store::write(&paths, ver.as_ref(), &FixedClock, "ws", Category::Concept, "org_consult_center", "业务描述", "a", Some("咨询中心组织架构权威版本")).unwrap();
+        store::write(&paths, ver.as_ref(), &FixedClock, "ws", Category::Concept, "consult_center_org", "业务描述", "b", Some("咨询中心组织架构旧快照")).unwrap();
+
+        for s in [summary(&paths, "ws", &[]), outline(&paths, "ws", &[])] {
+            assert!(s.contains("疑似重复知识"), "missing dup section in: {s}");
+            assert!(s.contains("concepts: consult_center_org ≈ org_consult_center"));
+        }
+    }
+
+    #[test]
+    fn no_duplicates_no_section() {
+        let tmp = tempfile::tempdir().unwrap();
+        let paths = OkfPaths::new(tmp.path().to_path_buf());
+        let ver: Arc<dyn crate::okf::Versioner> = Arc::new(NoopVersioner);
+        store::write(&paths, ver.as_ref(), &FixedClock, "ws", Category::Concept, "company_profile", "业务描述", "公司背景", Some("公司主营业务背景")).unwrap();
+        store::write(&paths, ver.as_ref(), &FixedClock, "ws", Category::Recipe, "date_parse", "解决方案", "用 to_date", Some("日期解析排障配方")).unwrap();
+
+        let s = summary(&paths, "ws", &[]);
+        assert!(!s.contains("疑似重复知识"));
     }
 }

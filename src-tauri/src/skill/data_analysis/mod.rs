@@ -5,6 +5,7 @@
 //! 和 OKF 知识库工具留待后续阶段。
 
 pub mod create_view;
+pub mod delete_okf_knowledge;
 pub mod describe_table;
 pub mod drop_object;
 pub mod execute_query;
@@ -14,6 +15,7 @@ pub mod list_remote_tables;
 pub mod list_tables;
 pub mod load_okf_block;
 pub mod register_table;
+pub mod rename_okf_knowledge;
 pub mod render_chart;
 pub mod read_okf_metadata;
 pub mod sample_data;

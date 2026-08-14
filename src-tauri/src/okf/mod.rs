@@ -18,6 +18,7 @@ pub mod frontmatter;
 pub mod markdown;
 pub mod model;
 pub mod paths;
+pub mod similarity;
 pub mod store;
 
 use std::fs;
@@ -163,6 +164,54 @@ impl Okf {
 
     pub fn delete(&self, ws: &str, name: &str) -> Result<bool, String> {
         store::delete(&self.paths, self.versioner.as_ref(), ws, name)
+    }
+
+    // ---- 知识整理（防重 / 合并 / 重命名） ----
+
+    /// 指定知识文件是否已存在（写入防重守卫的第一道闸）。
+    pub fn knowledge_exists(&self, ws: &str, category: Category, name: &str) -> bool {
+        self.paths
+            .category_dir(category.scope(), ws, category)
+            .join(format!("{name}.md"))
+            .exists()
+    }
+
+    /// 新建防重：同类目下与 (name, description) 疑似相似的既有条目，按分数降序。
+    pub fn find_similar(
+        &self,
+        ws: &str,
+        category: Category,
+        name: &str,
+        description: Option<&str>,
+    ) -> Vec<similarity::SimilarCandidate> {
+        similarity::find_similar_in_dir(
+            &self.paths.category_dir(category.scope(), ws, category),
+            name,
+            description,
+        )
+    }
+
+    /// 删除一条知识（任意类别，含全局 concepts/users）。
+    /// `merge_into=Some(保留文件)` 时全库 `[[被删名]]` 内链改写指向保留文件。
+    pub fn delete_knowledge(
+        &self,
+        ws: &str,
+        category: Category,
+        name: &str,
+        merge_into: Option<&str>,
+    ) -> Result<bool, String> {
+        store::delete_doc(&self.paths, self.versioner.as_ref(), ws, category, name, merge_into)
+    }
+
+    /// 重命名知识文件 + 改 frontmatter title + 全库内链同步改写。返回新路径。
+    pub fn rename_knowledge(
+        &self,
+        ws: &str,
+        category: Category,
+        old: &str,
+        new: &str,
+    ) -> Result<std::path::PathBuf, String> {
+        store::rename_doc(&self.paths, self.versioner.as_ref(), self.clock.as_ref(), ws, category, old, new)
     }
 
     // ---- 骨架 ----

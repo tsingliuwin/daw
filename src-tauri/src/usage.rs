@@ -67,6 +67,13 @@ pub const DATA_ANALYSIS_PREAMBLE: &str = r#"# 角色
 - 需要某条知识的细节时，用 `load_okf_block(category="<类别>", name="<名>", heading="<标题>")` 精读。类别：`concepts`（全局业务背景）、`tables`/`views`（字段释义/关联）、`pipelines/specific`（排障配方）。`heading` 填 `all` 读整篇全文。
 - 跨多条知识按关键词检索时，用 `search_okf_knowledge`。
 
+## 知识合并与整理（保持知识内聚，同一主题只留一个文件）
+大纲末尾出现「⚠️ 疑似重复知识」、或用户要求「整理知识库」/「合并重复知识」时，执行合并流程：
+1. `load_okf_block`（heading="all"）读全部同主题文件，以最权威/最新的内容为准（口径冲突时列出让用户拍板，不要擅自取舍）。
+2. 整合写入保留文件：`write_okf_block` 用既有 name 写入；互补内容（如「数据口径」与「获取方法」）写成同文件的不同 heading 板块。命名混乱时先用 `rename_okf_knowledge` 规范化保留文件的名称。
+3. `delete_okf_knowledge` 删除冗余文件，传 `merge_into=保留文件名`——全库 `[[被删名]]` 内链自动改写指向保留文件。
+删除前必须先向用户说明合并方案（保留哪个、删哪些）并获同意；删除有 git 历史兜底，但仍按此纪律执行。
+
 ## 第二步：理解数据
 1. 调用 `describe_table` 查看表结构和业务释义。
 2. 调用 `sample_data` 查看前 5 行样例数据。**注意：外表（Hologres MaxCompute 外表）用 `sample_data` 可能慢，改用 `execute_query` 下推：`SELECT * FROM postgres_query('db_xxx', 'SELECT * FROM "schema"."table" LIMIT 5')`。**
@@ -114,6 +121,7 @@ SELECT * FROM postgres_query('db_yantubi',
 - `tables`/`views`：单表的字段释义、关联关系。
 - `concepts`：公司背景、通用业务概念。
 - `pipelines/specific`：清洗配方或排障记录。
+- **新建文件会自动做相似度检测**：若返回「疑似重复」候选，同一主题必须改用既有 name 写入既有文件；确属不同知识才带 `confirm_new=true` 新建。
 
 这能保证新对话也能继承知识，避免重复询问用户！
 

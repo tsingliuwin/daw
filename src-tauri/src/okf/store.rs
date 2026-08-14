@@ -355,6 +355,103 @@ pub fn update_metadata(
     Ok(())
 }
 
+// ---------- 删除 / 重命名（知识整理原语） ----------
+
+/// 删除一条知识文件（任意类别：concepts/users 全局，其余工作区）。
+/// `merge_into=Some(target)` 时先把全库 `[[name]]` 内链改写为 `[[target]]`
+/// （合并去重场景：内容已写入保留文件后再删冗余）。返回是否删到。
+pub fn delete_doc(
+    paths: &OkfPaths,
+    versioner: &dyn Versioner,
+    ws: &str,
+    category: Category,
+    name: &str,
+    merge_into: Option<&str>,
+) -> Result<bool, String> {
+    let file = doc_file(paths, ws, category, name);
+    if !file.exists() {
+        return Ok(false);
+    }
+    if let Some(target) = merge_into {
+        rewrite_wikilinks(paths, versioner, ws, name, target);
+    }
+    fs::remove_file(&file).map_err(|e| format!("删除失败: {e}"))?;
+    versioner.commit(
+        &repo_root(paths, ws, category.scope()),
+        &file,
+        &format!("Delete OKF: {}/{}", category.dir(), name),
+    );
+    Ok(true)
+}
+
+/// 重命名知识文件：移动 + 改 frontmatter title + 刷 updated_at +
+/// 全库内链 `[[old]]`→`[[new]]`。返回新路径。
+pub fn rename_doc(
+    paths: &OkfPaths,
+    versioner: &dyn Versioner,
+    clock: &dyn crate::okf::Clock,
+    ws: &str,
+    category: Category,
+    old: &str,
+    new: &str,
+) -> Result<PathBuf, String> {
+    if old == new {
+        return Err("新旧名称相同".to_string());
+    }
+    let src = doc_file(paths, ws, category, old);
+    if !src.exists() {
+        return Err(format!("文件不存在: {}", src.display()));
+    }
+    let dst = doc_file(paths, ws, category, new);
+    if dst.exists() {
+        return Err(format!("目标已存在: {}", dst.display()));
+    }
+    fs::rename(&src, &dst).map_err(|e| format!("重命名失败: {e}"))?;
+    let content = fs::read_to_string(&dst).map_err(|e| format!("读取文件失败: {e}"))?;
+    let (fm_opt, body) = frontmatter::split_document(&content);
+    let mut fm = fm_opt.unwrap_or_default();
+    fm.set("title", new);
+    fm.set("updated_at", &clock.now_ts());
+    fs::write(&dst, frontmatter::join_document(Some(&fm), &body))
+        .map_err(|e| format!("写入失败: {e}"))?;
+    rewrite_wikilinks(paths, versioner, ws, old, new);
+    versioner.commit(
+        &repo_root(paths, ws, category.scope()),
+        &dst,
+        &format!("Rename OKF: {}/{} -> {}", category.dir(), old, new),
+    );
+    Ok(dst)
+}
+
+/// 全库（全局 + 当前工作区）把 `[[old]]` 内链改写为 `[[new]]` 并提交。
+/// 只处理精确 `[[old]]` 形态（本库内链语法）。返回改写的文件数。
+fn rewrite_wikilinks(paths: &OkfPaths, versioner: &dyn Versioner, ws: &str, old: &str, new: &str) -> usize {
+    let from = format!("[[{old}]]");
+    let to = format!("[[{new}]]");
+    let mut changed = 0;
+    for root in [paths.global_okf_dir(), paths.workspace_okf_dir(ws)] {
+        for entry in walkdir::WalkDir::new(&root)
+            .into_iter()
+            .filter_entry(|e| e.file_name().to_string_lossy() != ".git")
+            .flatten()
+        {
+            let p = entry.path();
+            if !p.is_file() || p.extension().and_then(|e| e.to_str()) != Some("md") {
+                continue;
+            }
+            let Ok(content) = fs::read_to_string(p) else { continue };
+            if !content.contains(&from) {
+                continue;
+            }
+            if fs::write(p, content.replace(&from, &to)).is_ok() {
+                versioner.commit(&root, p, &format!("Rewrite links: {old} -> {new}"));
+                changed += 1;
+            }
+        }
+    }
+    changed
+}
+
 // ===========================================================================
 // 新版 parser（step3）：结构化关联内链 + 表头列定位 + 大小写不敏感
 // ===========================================================================
@@ -807,5 +904,71 @@ mod tests {
         assert_eq!(after.get("created_at"), created.as_deref());
         // updated_at 字段存在（FixedClock 固定值，只需确认字段在）
         assert!(after.get("updated_at").is_some());
+    }
+
+    #[test]
+    fn delete_doc_concepts_and_missing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (paths, ver, clock) = okf(tmp.path());
+        write(&paths, ver.as_ref(), clock.as_ref(), "ws", Category::Concept, "co", "业务描述", "body", None).unwrap();
+        // 删除全局 concept
+        assert!(delete_doc(&paths, ver.as_ref(), "ws", Category::Concept, "co", None).unwrap());
+        assert!(!doc_file(&paths, "ws", Category::Concept, "co").exists());
+        // 不存在的文件返回 false 而非报错
+        assert!(!delete_doc(&paths, ver.as_ref(), "ws", Category::Concept, "co", None).unwrap());
+    }
+
+    #[test]
+    fn delete_doc_with_merge_rewrites_links() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (paths, ver, clock) = okf(tmp.path());
+        // 保留文件 + 冗余文件 + 引用冗余文件的表知识（内链）
+        write(&paths, ver.as_ref(), clock.as_ref(), "ws", Category::Concept, "org_consult_center", "组织架构", "权威内容", None).unwrap();
+        write(&paths, ver.as_ref(), clock.as_ref(), "ws", Category::Concept, "consult_center_org", "组织架构", "旧内容", None).unwrap();
+        let cols = vec![("dept_id".to_string(), "BIGINT".to_string(), false)];
+        ensure_table_skeleton(&paths, ver.as_ref(), clock.as_ref(), "ws", "v_dept", &cols, None).unwrap();
+        write(&paths, ver.as_ref(), clock.as_ref(), "ws", Category::Table, "v_dept", "关联关系",
+            "- `dept_id` → [[consult_center_org]].`dept_id` (N:1) 部门维度", None).unwrap();
+
+        // 删除冗余并指向保留文件
+        assert!(delete_doc(&paths, ver.as_ref(), "ws", Category::Concept, "consult_center_org", Some("org_consult_center")).unwrap());
+        // 内链已改写
+        let table_raw = fs::read_to_string(doc_file(&paths, "ws", Category::Table, "v_dept")).unwrap();
+        assert!(table_raw.contains("[[org_consult_center]]"));
+        assert!(!table_raw.contains("[[consult_center_org]]"));
+        // 冗余文件已删
+        assert!(!doc_file(&paths, "ws", Category::Concept, "consult_center_org").exists());
+    }
+
+    #[test]
+    fn rename_doc_moves_retitles_and_rewrites_links() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (paths, ver, clock) = okf(tmp.path());
+        write(&paths, ver.as_ref(), clock.as_ref(), "ws", Category::Concept, "old_name", "业务描述", "内容保留", Some("desc")).unwrap();
+        let cols = vec![("x".to_string(), "BIGINT".to_string(), true)];
+        ensure_table_skeleton(&paths, ver.as_ref(), clock.as_ref(), "ws", "t", &cols, None).unwrap();
+        write(&paths, ver.as_ref(), clock.as_ref(), "ws", Category::Table, "t", "关联关系", "- [[old_name]] (N:1) 概念引用", None).unwrap();
+
+        let dst = rename_doc(&paths, ver.as_ref(), clock.as_ref(), "ws", Category::Concept, "old_name", "new_name").unwrap();
+        // 文件已移动，frontmatter title 已改，正文保留
+        let raw = fs::read_to_string(&dst).unwrap();
+        assert!(raw.contains("title: new_name"));
+        assert!(raw.contains("内容保留"));
+        assert!(!doc_file(&paths, "ws", Category::Concept, "old_name").exists());
+        // 引用方内链已同步改写
+        let table_raw = fs::read_to_string(doc_file(&paths, "ws", Category::Table, "t")).unwrap();
+        assert!(table_raw.contains("[[new_name]]"));
+        assert!(!table_raw.contains("[[old_name]]"));
+    }
+
+    #[test]
+    fn rename_doc_rejects_same_and_missing_and_conflict() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (paths, ver, clock) = okf(tmp.path());
+        write(&paths, ver.as_ref(), clock.as_ref(), "ws", Category::Concept, "a", "h", "b", None).unwrap();
+        write(&paths, ver.as_ref(), clock.as_ref(), "ws", Category::Concept, "b", "h", "b", None).unwrap();
+        assert!(rename_doc(&paths, ver.as_ref(), clock.as_ref(), "ws", Category::Concept, "a", "a").is_err());
+        assert!(rename_doc(&paths, ver.as_ref(), clock.as_ref(), "ws", Category::Concept, "nope", "x").is_err());
+        assert!(rename_doc(&paths, ver.as_ref(), clock.as_ref(), "ws", Category::Concept, "a", "b").is_err());
     }
 }
