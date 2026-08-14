@@ -5,6 +5,7 @@ use rig_core::{completion::ToolDefinition, tool::Tool};
 use super::super::super::agent::error::ToolError;
 use super::super::super::agent::events::{emit_tool_call, emit_tool_result, next_tool_id};
 use super::super::super::duckdb::{execute, QUERY_HARD_TIMEOUT_SECS};
+use super::super::super::duckdb::attach::workspace_attach_alias;
 use super::super::super::model::SqlResult;
 use super::super::super::state::AppState;
 
@@ -73,6 +74,30 @@ impl Tool for ExecuteQueryTool {
         let ih = wsc.interrupt_handle.lock().ok().map(|g| g.clone());
 
         let sql_string = sql.to_string();
+
+        // 别名归一化兜底：LLM 常把 postgres_query 的 catalog 别名写成原始连接名
+        // （如 `yantubi` 而非 `db_yantubi`），导致 binder 报
+        // "Failed to find attached database"。执行前据已注册连接自动改写。
+        // 多数查询不含 postgres_query，先快速过滤避免无谓的 DB 加载。
+        let sql_string = if sql.to_ascii_lowercase().contains("postgres_query") {
+            let ws_path = self.ws.path.clone();
+            let raw = sql_string.clone();
+            match tokio::task::spawn_blocking(move || -> Result<Option<String>, String> {
+                let conns = crate::db::list_workspace_db_connections(&ws_path).map_err(|e| e.to_string())?;
+                let norm = normalize_pg_query_aliases(&raw, &conns);
+                if norm != raw { Ok(Some(norm)) } else { Ok(None) }
+            }).await {
+                Ok(Ok(Some(norm))) => {
+                    tracing::info!(category = "agent", "postgres_query 别名已自动归一化（原始连接名 → db_ 别名）");
+                    norm
+                }
+                // 未变化或加载失败，都用原 SQL（不阻断查询）。
+                _ => sql_string,
+            }
+        } else {
+            sql_string
+        };
+
         let hard_secs = QUERY_HARD_TIMEOUT_SECS;
 
         // 执行前检查：解析 SQL 里的表名，查 table_registry access_mode。
@@ -262,4 +287,164 @@ fn extract_table_names(sql: &str) -> Vec<String> {
         search_from = pos + keyword_len;
     }
     result
+}
+
+/// 归一化 SQL 里 `postgres_query` 第一个参数（catalog 别名）。
+///
+/// LLM 常把 catalog 别名写成原始连接名（如 `yantubi` 而非 `db_yantubi`），
+/// 导致 DuckDB binder 报 "Failed to find attached database"。这里扫描每个
+/// `postgres_query('xxx', ...)`，若 `xxx` 是已注册连接的原始名，就改写成
+/// `db_<xxx>`，在执行前兜底纠偏。连接名恒为 ASCII，切片边界均为字符边界。
+fn normalize_pg_query_aliases(sql: &str, conns: &[crate::model::DataSourceConfig]) -> String {
+    // 原始连接名 -> catalog 别名（别名恒为 db_<safe>，与原始名不同才需改写）。
+    let map: std::collections::HashMap<&str, String> = conns
+        .iter()
+        .map(|c| (c.name.as_str(), workspace_attach_alias(&c.name)))
+        .filter(|(raw, alias)| *raw != alias.as_str())
+        .collect();
+    if map.is_empty() {
+        return sql.to_string();
+    }
+
+    let lower = sql.to_ascii_lowercase(); // 逐字节小写，字节偏移与原串对齐
+    let needle = "postgres_query";
+    let nlen = needle.len();
+    let bytes = sql.as_bytes();
+    let mut out = String::with_capacity(sql.len() + 32);
+    let mut cursor = 0usize;
+
+    while let Some(rel) = lower[cursor..].find(needle) {
+        let hit = cursor + rel; // 'postgres_query' 起始字节
+        let after_kw = hit + nlen;
+
+        // 跳过空白找 '('；否则当作普通词继续扫。
+        let mut p = after_kw;
+        while p < bytes.len() && bytes[p].is_ascii_whitespace() {
+            p += 1;
+        }
+        if p >= bytes.len() || bytes[p] != b'(' {
+            out.push_str(&sql[cursor..after_kw]);
+            cursor = after_kw;
+            continue;
+        }
+        let open_paren = p;
+        // 跳过空白找开引号 '。
+        let mut q = open_paren + 1;
+        while q < bytes.len() && bytes[q].is_ascii_whitespace() {
+            q += 1;
+        }
+        if q >= bytes.len() || bytes[q] != b'\'' {
+            // 第一个参数不是单引号字符串字面量，原样输出到 '(' 后并继续扫。
+            out.push_str(&sql[cursor..=open_paren]);
+            cursor = open_paren + 1;
+            continue;
+        }
+        let quote_open = q;
+        // 读到下一个单引号（连接名为 ASCII，不含 '，无需处理 '' 转义）。
+        let mut r = quote_open + 1;
+        while r < bytes.len() && bytes[r] != b'\'' {
+            r += 1;
+        }
+        if r >= bytes.len() {
+            // 未闭合的引号，原样输出剩余。
+            out.push_str(&sql[cursor..]);
+            cursor = bytes.len();
+            break;
+        }
+        let quote_close = r;
+        let name = &sql[quote_open + 1..quote_close];
+        if let Some(alias) = map.get(name) {
+            out.push_str(&sql[cursor..quote_open]); // 含 'postgres_query(...' 到开引号前
+            out.push('\'');
+            out.push_str(alias);
+            out.push('\'');
+            cursor = quote_close + 1;
+        } else {
+            // 不是已知原始名（可能已是别名或无关内容），原样输出整个字面量。
+            out.push_str(&sql[cursor..=quote_close]);
+            cursor = quote_close + 1;
+        }
+    }
+    if cursor < bytes.len() {
+        out.push_str(&sql[cursor..]);
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::DataSourceConfig;
+
+    fn conn(name: &str) -> DataSourceConfig {
+        DataSourceConfig {
+            id: name.into(),
+            name: name.into(),
+            db_type: "postgres".into(),
+            host: "h".into(),
+            port: 5432,
+            database_name: "db".into(),
+            username: "u".into(),
+            password: "p".into(),
+            ssl_mode: "disable".into(),
+            created_at: 0,
+            db_product: "hologres".into(),
+            db_mode: "standard".into(),
+        }
+    }
+
+    #[test]
+    fn rewrites_raw_name_to_alias() {
+        let sql = "SELECT * FROM postgres_query('yantubi', 'SELECT 1')";
+        let out = normalize_pg_query_aliases(sql, &[conn("yantubi")]);
+        assert_eq!(out, "SELECT * FROM postgres_query('db_yantubi', 'SELECT 1')");
+    }
+
+    #[test]
+    fn leaves_correct_alias_untouched() {
+        let sql = "SELECT * FROM postgres_query('db_yantubi', 'SELECT 1')";
+        let out = normalize_pg_query_aliases(sql, &[conn("yantubi")]);
+        assert_eq!(out, sql);
+    }
+
+    #[test]
+    fn no_postgres_query_untouched() {
+        let sql = "SELECT * FROM v_orders WHERE ds='20260811'";
+        let out = normalize_pg_query_aliases(sql, &[conn("yantubi")]);
+        assert_eq!(out, sql);
+    }
+
+    #[test]
+    fn handles_whitespace_and_case() {
+        let sql = "select * from POSTGRES_QUERY ( 'yantubi' , 'SELECT 1' )";
+        let out = normalize_pg_query_aliases(sql, &[conn("yantubi")]);
+        assert_eq!(out, "select * from POSTGRES_QUERY ( 'db_yantubi' , 'SELECT 1' )");
+    }
+
+    #[test]
+    fn preserves_inner_query_with_chinese_and_quotes() {
+        let sql = "SELECT * FROM postgres_query('yantubi', 'SELECT * FROM \"default\".\"t\" WHERE report_module = ''5_咨询团队'' ORDER BY 1')";
+        let out = normalize_pg_query_aliases(sql, &[conn("yantubi")]);
+        assert_eq!(
+            out,
+            "SELECT * FROM postgres_query('db_yantubi', 'SELECT * FROM \"default\".\"t\" WHERE report_module = ''5_咨询团队'' ORDER BY 1')"
+        );
+    }
+
+    #[test]
+    fn rewrites_multiple_occurrences() {
+        let sql = "SELECT * FROM postgres_query('yantubi', 'SELECT 1') JOIN postgres_query('yantubi', 'SELECT 2')";
+        let out = normalize_pg_query_aliases(sql, &[conn("yantubi")]);
+        assert_eq!(
+            out,
+            "SELECT * FROM postgres_query('db_yantubi', 'SELECT 1') JOIN postgres_query('db_yantubi', 'SELECT 2')"
+        );
+    }
+
+    #[test]
+    fn ignores_unknown_name() {
+        let sql = "SELECT * FROM postgres_query('other', 'SELECT 1')";
+        let out = normalize_pg_query_aliases(sql, &[conn("yantubi")]);
+        assert_eq!(out, sql);
+    }
 }

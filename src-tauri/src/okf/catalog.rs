@@ -6,6 +6,7 @@
 use std::fs;
 use std::path::Path;
 
+use crate::duckdb::attach::workspace_attach_alias;
 use crate::model::TableRegistryEntry;
 use crate::okf::markdown;
 use crate::okf::model::{Scope, SearchHit, TableStatus};
@@ -71,8 +72,8 @@ pub fn summary(paths: &OkfPaths, ws: &str, table_entries: &[TableRegistryEntry])
                 };
                 let ts = store::table_semantics(paths, ws, &e.local_name);
                 out.push_str(&format!(
-                    "- {icon} `{}` ({}){}{}\n",
-                    e.local_name, e.connection_name, mode, reason
+                    "- {icon} `{}` (别名 {}){}{}\n",
+                    e.local_name, workspace_attach_alias(&e.connection_name), mode, reason
                 ));
                 out.push_str(&render_columns(&ts.columns));
                 out.push_str(&render_relations(&ts.relations));
@@ -259,8 +260,8 @@ pub fn outline(paths: &OkfPaths, ws: &str, table_entries: &[TableRegistryEntry])
                 };
                 let ts = store::table_semantics(paths, ws, &e.local_name);
                 out.push_str(&format!(
-                    "- {icon} `{}` ({}){}{}\n",
-                    e.local_name, e.connection_name, mode, reason
+                    "- {icon} `{}` (别名 {}){}{}\n",
+                    e.local_name, workspace_attach_alias(&e.connection_name), mode, reason
                 ));
                 out.push_str(&render_columns(&ts.columns));
                 out.push_str(&render_relations(&ts.relations));
@@ -434,7 +435,7 @@ mod tests {
         };
         let s = summary(&paths, "ws", &[entry]);
         assert!(s.contains("### 已注册表 · 1"));
-        assert!(s.contains("✅ `v_orders` (myshop)"));
+        assert!(s.contains("✅ `v_orders` (别名 db_myshop)"));
         assert!(s.contains("订单编号"));
     }
 

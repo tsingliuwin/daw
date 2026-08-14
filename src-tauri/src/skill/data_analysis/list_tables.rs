@@ -4,6 +4,7 @@ use rig_core::{completion::ToolDefinition, tool::Tool};
 
 use super::super::super::agent::error::ToolError;
 use super::super::super::agent::events::{emit_tool_call, emit_tool_result, next_tool_id};
+use super::super::super::duckdb::attach::workspace_attach_alias;
 use super::super::super::state::AppState;
 
 #[derive(Deserialize, Serialize)]
@@ -66,7 +67,7 @@ impl Tool for ListTablesTool {
             let reason = if e.status != "available" && e.unavailable_reason.is_some() {
                 format!(" — {}", e.unavailable_reason.as_ref().unwrap())
             } else { String::new() };
-            lines.push(format!("{icon} [{kind_label}] {} ({}){}{}", e.local_name, e.connection_name, mode, reason));
+            lines.push(format!("{icon} [{kind_label}] {} (别名 {}){}{}", e.local_name, workspace_attach_alias(&e.connection_name), mode, reason));
         }
 
         let summary = if lines.is_empty() {

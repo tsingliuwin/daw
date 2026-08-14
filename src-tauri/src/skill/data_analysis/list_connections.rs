@@ -4,6 +4,7 @@ use rig_core::{completion::ToolDefinition, tool::Tool};
 
 use super::super::super::agent::error::ToolError;
 use super::super::super::agent::events::{emit_tool_call, emit_tool_result, next_tool_id};
+use super::super::super::duckdb::attach::workspace_attach_alias;
 use super::super::super::state::AppState;
 
 #[derive(Deserialize, Serialize)]
@@ -57,7 +58,7 @@ impl Tool for ListConnectionsTool {
                     } else {
                         format!("{}:{}/{}", c.host, c.port, c.database_name)
                     };
-                    format!("{}. {} ({}) — {}", i + 1, c.name, c.db_type, summary)
+                    format!("{}. {} ({}, 别名 {}) — {}", i + 1, c.name, c.db_type, workspace_attach_alias(&c.name), summary)
                 }).collect();
                 let summary = if conns.is_empty() {
                     "当前工作区没有连接任何数据源。请在设置中配置并启用数据源。".to_string()

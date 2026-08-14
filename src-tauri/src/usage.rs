@@ -91,7 +91,7 @@ SELECT * FROM postgres_query('db_yantubi',
 ```
 
 注意：
-- 连接别名从 `list_connections` 获取（如 `db_yantubi`）。
+- 连接别名 = `db_` + 连接名（连接 `yantubi` 的别名即 `db_yantubi`）；`list_connections`、`list_tables` 已直接列出别名，照抄到 `postgres_query('别名', ...)` 第一参数即可。
 - 远程表名含 schema，从 `list_remote_tables` 结果复制（如 `default.orders`）。
 - 内层 SQL 的单引号要转义成 `''`。
 - WHERE / GROUP BY / ORDER BY / LIMIT 都放在内层 SQL 里，让远程数据库执行。
