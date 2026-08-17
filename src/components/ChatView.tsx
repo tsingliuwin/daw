@@ -196,75 +196,68 @@ export default function ChatView(props: {
   // ── 贴底滚动 ──
   const [stickToBottom, setStickToBottom] = createSignal(true);
   const [showScrollDown, setShowScrollDown] = createSignal(false);
-  let isProgrammaticScroll = false;
+  // 程序化滚动（贴底吸附 / 「回到底部」平滑滚动）会触发 scroll 事件，必须在滚动
+  // 结束前忽略它们，避免把自己的动作误读成用户行为。用户滚轮可随时提前取消抑制。
+  let ignoreScrollUntil = 0;
+  // 上一条用户 scroll 事件的位置，用于判断滚动方向（拖动滚动条不触发 wheel 事件，
+  // 只能靠 scroll 事件检测方向）。
+  let lastUserScrollTop = -1;
+
+  const atBottomOf = (el: HTMLDivElement) =>
+    el.scrollHeight - el.scrollTop - el.clientHeight <= 30;
 
   const handleScroll = (e: Event) => {
-    if (isProgrammaticScroll) return;
+    if (Date.now() < ignoreScrollUntil) return;
     const el = e.currentTarget as HTMLDivElement;
-    const diff = el.scrollHeight - el.scrollTop - el.clientHeight;
-    const nearBottom = diff <= 30;
-    if (!nearBottom) {
+    const scrolledUp = lastUserScrollTop >= 0 && el.scrollTop < lastUserScrollTop;
+    lastUserScrollTop = el.scrollTop;
+    if (scrolledUp) {
+      // 任意距离的向上滚动都解除贴底（哪怕 30px 以内），尊重用户回看的意图。
       setStickToBottom(false);
-    } else if (!isStreaming()) {
+    } else if (atBottomOf(el)) {
+      // 滚到底部即恢复贴底，流式输出中同样生效。拖滚动条到底不触发 wheel，
+      // 只能在这里按滚动后的位置收尾。
       setStickToBottom(true);
-      stopScrollLock();
     }
-    setShowScrollDown(!nearBottom);
+    setShowScrollDown(!atBottomOf(el));
   };
 
   const handleWheel = (e: WheelEvent) => {
+    // 滚轮 = 明确的用户意图：立即结束程序化滚动的事件抑制（如打断「回到底部」
+    // 的平滑滚动），之后贴底与否交给 handleScroll 按滚动后的位置判定。
+    ignoreScrollUntil = 0;
     if (e.deltaY < 0) {
       setStickToBottom(false);
-      startScrollLock();
-    } else if (e.deltaY > 0 && scrollEl) {
-      const diff = scrollEl.scrollHeight - scrollEl.scrollTop - scrollEl.clientHeight;
-      if (diff <= 30) {
-        setStickToBottom(true);
-        stopScrollLock();
-      }
     }
   };
 
   function stickScrollToBottom() {
-    if (!scrollEl) return;
-    isProgrammaticScroll = true;
-    scrollEl.scrollTop = scrollEl.scrollHeight;
-    requestAnimationFrame(() => { isProgrammaticScroll = false; });
+    const el = scrollEl;
+    if (!el) return;
+    ignoreScrollUntil = Date.now() + 100;
+    el.scrollTop = el.scrollHeight;
   }
 
   function smoothStickToBottom() {
-    if (!scrollEl) return;
     const el = scrollEl;
-    isProgrammaticScroll = true;
+    if (!el) return;
+    ignoreScrollUntil = Date.now() + 600;
     el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
-    let t: ReturnType<typeof setTimeout>;
-    const clear = () => {
-      isProgrammaticScroll = false;
-      el.removeEventListener("scrollend", clear);
-      clearTimeout(t);
-    };
-    el.addEventListener("scrollend", clear);
-    t = setTimeout(clear, 600);
   }
 
   createEffect(() => {
     props.messages;
     isStreaming();
-    if (scrollEl && untrack(stickToBottom)) stickScrollToBottom();
+    const el = scrollEl;
+    if (!el) return;
+    if (untrack(stickToBottom)) {
+      stickScrollToBottom();
+    } else {
+      // 内容在视口下方生长不改变 scrollTop、不触发 scroll 事件，按钮状态必须在
+      // 此主动刷新——保证解除贴底后永远有"回到底部"这个恢复入口。
+      setShowScrollDown(el.scrollHeight - el.scrollTop - el.clientHeight > 30);
+    }
   });
-
-  // 滚动锚定已由 .chat-stream { overflow-anchor: none } 禁用。
-  // 此前的 rAF 锁会每帧把 scrollTop 强制拉回 userScrollTop，但拖动滚动条不触发
-  // wheel 事件、userScrollTop 不更新，导致滚动条"拖不动、只有图表在动"——已停用。
-  function startScrollLock() {}
-  function stopScrollLock() {
-    isProgrammaticScroll = false;
-  }
-  createEffect(() => {
-    isStreaming();
-    if (!untrack(isStreaming)) stopScrollLock();
-  });
-  onCleanup(() => stopScrollLock());
 
   // 切换任务时重置折叠状态。
   let prevTaskId: string | undefined;
@@ -272,7 +265,6 @@ export default function ChatView(props: {
     const currentId = props.taskId;
     if (currentId === prevTaskId) return;
     prevTaskId = currentId;
-    stopScrollLock();
     setOpenReasoningIds(new Set<string>());
     setExpandedToolIds(new Set<string>());
     setManualReasoningIds(new Set<string>());
