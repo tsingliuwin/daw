@@ -45,6 +45,9 @@ pub(crate) fn emit_event(
             kind: kind.to_string(),
             text,
             segment,
+            attempt: None,
+            max_attempts: None,
+            delay_secs: None,
         },
     );
 }
@@ -53,6 +56,30 @@ pub(crate) fn emit_event(
 /// that type on the frontend.
 pub(crate) fn emit_delta(window: &tauri::Window, task_id: &str, kind: &str, text: &str) {
     emit_event(window, task_id, kind, Some(text.to_string()), None);
+}
+
+/// Emit a rate-limit retry notice (kind = "retry"). Ephemeral by design: the
+/// frontend renders it as a transient status banner and it never becomes a
+/// transcript text segment——重试提示不能混进最终答复与 LLM 历史回放。
+pub(crate) fn emit_retry_notice(
+    window: &tauri::Window,
+    task_id: &str,
+    attempt: u32,
+    max_attempts: u32,
+    delay_secs: u64,
+) {
+    let _ = window.emit(
+        "agent-event",
+        AgentStreamEvent {
+            task_id: task_id.to_string(),
+            kind: "retry".to_string(),
+            text: None,
+            segment: None,
+            attempt: Some(attempt),
+            max_attempts: Some(max_attempts),
+            delay_secs: Some(delay_secs),
+        },
+    );
 }
 
 /// Emit a `tool_call` segment (status: running) — opens a new tool step in the
@@ -203,6 +230,9 @@ pub(crate) fn emit_usage_estimate(
                 .unwrap_or_default(),
             ),
             segment: None,
+            attempt: None,
+            max_attempts: None,
+            delay_secs: None,
         },
     );
 }
@@ -239,6 +269,9 @@ pub(crate) fn emit_usage_real(
             kind: "usage".to_string(),
             text: Some(serde_json::to_string(&payload).unwrap_or_default()),
             segment: None,
+            attempt: None,
+            max_attempts: None,
+            delay_secs: None,
         },
     );
 }
@@ -272,6 +305,9 @@ pub(crate) fn emit_usage_run_summary(
                 .unwrap_or_default(),
             ),
             segment: None,
+            attempt: None,
+            max_attempts: None,
+            delay_secs: None,
         },
     );
 }

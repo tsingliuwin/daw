@@ -2,7 +2,7 @@ import { createSignal, Show, For, onMount, onCleanup, createMemo } from "solid-j
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import type { Workspace, Task, ChatMessage, ModelOption } from "./lib/types";
+import type { Workspace, Task, ChatMessage, ModelOption, RetryNotice } from "./lib/types";
 import { modelKeyOf, modelIdOfKey, providerIdOfKey } from "./lib/types";
 import { appendDelta, pushToolCall, mergeToolResult, normalizeMessage, newSegmentId } from "./lib/chat";
 import { mergeUsage } from "./lib/metrics";
@@ -45,6 +45,9 @@ export default function App() {
   // （tokio::spawn 后立即返回），真正的流式通过 agent-event 异步回来，
   // streamingTaskId 用于在流式期间锁定输入、显示 Stop 按钮。
   const [streamingTaskId, setStreamingTaskId] = createSignal<string | null>(null);
+  // 速率限制重试提示（瞬时状态，按任务 id 键控）：kind="retry" 事件写入，
+  // 后续任何内容事件（text/reasoning/tool/done 等）到达时清除。
+  const [retryNotices, setRetryNotices] = createSignal<Record<string, RetryNotice>>({});
   // ── 模型与选择器 ──
   const [availableModels, setAvailableModels] = createSignal<ModelOption[]>([]);
   const [modelCtxWindows, setModelCtxWindows] = createSignal<Record<string, number>>({});
@@ -276,6 +279,27 @@ export default function App() {
     const unlistenAgent = await listen<any>("agent-event", (event) => {
       const payload = event.payload;
       const targetId = payload.taskId;
+
+      // 速率限制重试提示：瞬时横幅，不进入消息段（避免把提示文字混进答复与
+      // 历史回放）。后续任何实质内容事件到达即清除，表示重试已结束。
+      if (payload.kind === "retry") {
+        setRetryNotices((prev) => ({
+          ...prev,
+          [targetId]: {
+            attempt: payload.attempt ?? 1,
+            maxAttempts: payload.maxAttempts ?? 4,
+            delaySecs: payload.delaySecs ?? 5,
+            at: Date.now(),
+          },
+        }));
+      } else if (payload.kind !== "usage") {
+        setRetryNotices((prev) => {
+          if (!(targetId in prev)) return prev;
+          const next = { ...prev };
+          delete next[targetId];
+          return next;
+        });
+      }
 
       setTasksByWorkspace((prev) => {
         // 找到 targetId 所在的工作区，找不到则 no-op。
@@ -722,6 +746,7 @@ export default function App() {
                 selectedConfirm={selectedConfirm()}
                 onSelectConfirm={setSelectedConfirm}
                 onConfirmTool={(toolCallId, approved) => resolveToolConfirmation(task().id, toolCallId, approved)}
+                retryNotice={retryNotices()[task().id] ?? null}
                 streaming={activeStreaming()}
               />
             )}

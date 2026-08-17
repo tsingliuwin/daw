@@ -479,6 +479,9 @@ pub async fn start_agent_task(
                     kind: "error".to_string(),
                     text: Some(e),
                     segment: None,
+                    attempt: None,
+                    max_attempts: None,
+                    delay_secs: None,
                 },
             );
         }

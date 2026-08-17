@@ -4690,6 +4690,37 @@ button.lm-select-trigger:hover:not(:disabled) {
   font-size: 12px;
   color: var(--text-secondary);
 }
+/* 速率限制自动重试横幅：琥珀色提示条，倒计时期间图标呼吸闪烁。 */
+.chat-retry {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  padding: 7px 12px;
+  border: 1px solid var(--accent-amber);
+  border-radius: 8px;
+  background: var(--accent-amber-bg);
+  color: var(--accent-amber);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.chat-retry__icon {
+  font-size: 13px;
+  animation: chat-retry-pulse 1.1s ease-in-out infinite;
+}
+.chat-retry__text {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+}
+@keyframes chat-retry-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
 .agent-status__timer {
   color: var(--text-dim);
   font-family: var(--font-mono);

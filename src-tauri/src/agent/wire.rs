@@ -81,12 +81,19 @@ pub enum Segment {
 #[serde(rename_all = "camelCase")]
 pub struct AgentStreamEvent {
     pub task_id: String,
-    // "reasoning" | "text" | "tool_call" | "tool_result" | "done" | "error" | "usage"
+    // "reasoning" | "text" | "tool_call" | "tool_result" | "retry" | "done" | "error" | "usage"
     pub kind: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub text: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub segment: Option<Segment>,
+    // ---- kind = "retry"（速率限制自动重试提示，瞬时事件、不落消息段）----
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attempt: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_attempts: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delay_secs: Option<u64>,
 }
 
 /// Minimal view of a stored message for rebuilding the LLM history.

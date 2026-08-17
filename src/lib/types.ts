@@ -99,6 +99,21 @@ export interface ChatMessage {
   ts: number;
 }
 
+/**
+ * 速率限制自动重试的瞬时提示（对应后端 kind="retry" 事件）。
+ * 不在消息 segment 里，不进历史回放——只是流式输出期间的临时状态横幅。
+ */
+export interface RetryNotice {
+  /** 当前第几次尝试。 */
+  attempt: number;
+  /** 最大重试次数。 */
+  maxAttempts: number;
+  /** 本轮等待秒数（重试间隔）。 */
+  delaySecs: number;
+  /** 前端收到该事件的时间戳（ms），驱动倒计时。 */
+  at: number;
+}
+
 export interface TokenUsage {
   // ── Legacy fields (kept for backward-compat with persisted data written
   //    before the metrics refactor). `derivePanelMetrics` falls back to these

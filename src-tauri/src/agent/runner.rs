@@ -16,7 +16,8 @@ use rig_core::{
 
 use super::config::{get_provider_for_model, sanitize_endpoint};
 use super::events::{
-    emit_delta, emit_event, emit_usage_estimate, emit_usage_real, emit_usage_run_summary,
+    emit_delta, emit_event, emit_retry_notice, emit_usage_estimate, emit_usage_real,
+    emit_usage_run_summary,
 };
 use super::wire::{ChatMessageDto, Segment};
 use crate::skill::builtin::GetCurrentTimeTool;
@@ -743,15 +744,12 @@ pub(crate) async fn run_agent_task_stream(
             RunOutcome::Done => break,
             RunOutcome::RateLimited(_) if attempt <= MAX_RETRIES => {
                 let delay = BASE_DELAY_SECS * (1 << (attempt - 1));
-                emit_event(
+                emit_retry_notice(
                     &window,
                     &task_id,
-                    "text",
-                    Some(format!(
-                        "（遇到速率限制，{} 秒后自动重试…第 {}/{} 次）",
-                        delay, attempt, MAX_RETRIES
-                    )),
-                    None,
+                    attempt as u32,
+                    MAX_RETRIES as u32,
+                    delay,
                 );
                 tokio::time::sleep(std::time::Duration::from_secs(delay)).await;
                 continue;

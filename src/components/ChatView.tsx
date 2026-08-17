@@ -1,5 +1,5 @@
 import { Index, Show, Switch, Match, createSignal, createEffect, createMemo, onMount, onCleanup, untrack } from "solid-js";
-import type { ChatMessage, Segment, TokenUsage, ModelOption } from "../lib/types";
+import type { ChatMessage, Segment, TokenUsage, ModelOption, RetryNotice } from "../lib/types";
 import { derivePanelMetrics, fmtCap, fmtPct } from "../lib/metrics";
 import ToolSegment from "./ToolSegment";
 import ChartSegment from "./ChartSegment";
@@ -46,6 +46,8 @@ export default function ChatView(props: {
   onSelectConfirm: (mode: string) => void;
   /** 用户对 awaiting 状态的工具做出确认/取消决定。 */
   onConfirmTool: (toolCallId: string, approved: boolean) => void;
+  /** 速率限制自动重试的瞬时提示（null 表示当前无重试）。 */
+  retryNotice?: RetryNotice | null;
   /** 该任务是否正在流式输出（由父级 streamingTaskId 派生）。 */
   streaming: boolean;
 }) {
@@ -556,6 +558,16 @@ export default function ChatView(props: {
                   </div>
                 </div>
               </div>
+              {/* 速率限制重试横幅：倒计时 + 尝试次数。内容恢复后由父级清除。 */}
+              <Show when={props.retryNotice}>
+                {(notice) => (
+                  <div class="chat-msg chat-msg--assistant">
+                    <div class="chat-msg__body">
+                      <RetryBanner notice={notice()} nowMs={now()} />
+                    </div>
+                  </div>
+                )}
+              </Show>
             </Show>
           </Show>
         </div>
@@ -745,6 +757,27 @@ function ReasoningBody(props: { text: string }) {
 function fmtMs(ms: number): string {
   if (ms < 1000) return `${ms}ms`;
   return `${(ms / 1000).toFixed(1)}s`;
+}
+
+/**
+ * 速率限制重试横幅：琥珀色提示 + 倒计时（nowMs 由父级 100ms 时钟驱动，
+ * 无需额外 interval）。倒计时归零后显示"重试中…"，直到内容恢复被父级清除。
+ */
+function RetryBanner(props: { notice: RetryNotice; nowMs: number }) {
+  const remainingMs = () => {
+    const left = props.notice.at + props.notice.delaySecs * 1000 - props.nowMs;
+    return Math.max(0, left);
+  };
+  return (
+    <div class="chat-retry">
+      <span class="chat-retry__icon">⏳</span>
+      <span class="chat-retry__text">
+        {remainingMs() > 0
+          ? `遇到速率限制，${Math.ceil(remainingMs() / 1000)} 秒后自动重试（第 ${props.notice.attempt}/${props.notice.maxAttempts} 次）`
+          : `正在重试…（第 ${props.notice.attempt}/${props.notice.maxAttempts} 次）`}
+      </span>
+    </div>
+  );
 }
 
 function formatTime(ts: number): string {
