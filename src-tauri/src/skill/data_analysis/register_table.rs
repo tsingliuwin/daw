@@ -16,6 +16,21 @@ pub struct RegisterTableArgs {
     local_name: Option<String>,
 }
 
+/// 注册结果：新建视图+registry 行，或防重复用已有别名。
+enum RegisterOutcome {
+    Created {
+        remote_ref: String,
+        table_type: String,
+        access_mode: String,
+    },
+    Reused {
+        local_name: String,
+        access_mode: String,
+        remote_schema: String,
+        remote_table: String,
+    },
+}
+
 pub struct RegisterTableTool {
     pub app_state: AppState,
     pub task_id: String,
@@ -110,7 +125,7 @@ impl Tool for RegisterTableTool {
         let ws_path_clone = ws_path.clone();
         let conn_name_for_registry = conn_name.clone();
 
-        let result = tokio::task::spawn_blocking(move || -> Result<(String, String, String), String> {
+        let result = tokio::task::spawn_blocking(move || -> Result<RegisterOutcome, String> {
             let guard = duckdb_conn.blocking_lock();
 
             // 解析 schema.table
@@ -119,6 +134,42 @@ impl Tool for RegisterTableTool {
                 return Err(format!("table_name 必须包含 schema，格式为 schema.table（如 default.orders）。"));
             }
             let (schema, tbl) = (parts[0], parts[1]);
+
+            // 防重：同一远程表只保留一个别名。已注册过时直接复用已有别名，
+            // 不新建视图/新行——避免每轮对话堆出新别名，让"注册到哪去了"找不到。
+            match crate::db::get_table_registry_by_remote(&ws_path_clone, &conn_name_for_registry, schema, tbl) {
+                Ok(Some(existing)) => {
+                    if existing.local_name != local_name_clone {
+                        // 刷新状态与 last_explored（清除早前的不可用标记）。
+                        let _ = crate::db::update_table_registry_status(
+                            &ws_path_clone, &existing.local_name, "available", None,
+                        );
+                        return Ok(RegisterOutcome::Reused {
+                            local_name: existing.local_name,
+                            access_mode: existing.access_mode,
+                            remote_schema: existing.remote_schema,
+                            remote_table: existing.remote_table,
+                        });
+                    }
+                    // 同名同远程表：走下面的 CREATE OR REPLACE + upsert 刷新流程。
+                }
+                Ok(None) => {}
+                Err(e) => return Err(format!("查询注册表失败: {e}")),
+            }
+            // 本地名占用检查：请求的 local_name 若已被另一张远程表占用，禁止静默覆盖。
+            if let Ok(Some(existing)) =
+                crate::db::get_table_registry_by_local_name(&ws_path_clone, &local_name_clone)
+            {
+                let same_remote = existing.connection_name == conn_name_for_registry
+                    && existing.remote_schema == schema
+                    && existing.remote_table == tbl;
+                if !same_remote {
+                    return Err(format!(
+                        "本地名 `{}` 已被占用（指向 {}.{}）。请换一个 local_name 再注册。",
+                        local_name_clone, existing.remote_schema, existing.remote_table
+                    ));
+                }
+            }
 
             // 检测 table_type（native vs foreign）
             let table_type = if db_type == "postgres" {
@@ -176,7 +227,11 @@ impl Tool for RegisterTableTool {
                                 let cast_sql = build_cast_sql(&catalog_clone, schema, tbl, &cast_cols);
                                 let test2 = format!("SELECT * FROM {} LIMIT 0", cast_sql);
                                 match guard.prepare(&test2) {
-                                    Ok(_) => return Ok((cast_sql, table_type.to_string(), access_mode.to_string())),
+                                    Ok(_) => return Ok(RegisterOutcome::Created {
+                                        remote_ref: cast_sql,
+                                        table_type: table_type.to_string(),
+                                        access_mode: access_mode.to_string(),
+                                    }),
                                     Err(e2) => { remaining_err = e2.to_string(); }
                                 }
                             } else { break; }
@@ -198,7 +253,8 @@ impl Tool for RegisterTableTool {
                 }
             })?;
 
-            // 写入 table_registry
+            // 写入 table_registry。失败必须显式报错——此前静默吞错会出现在工具
+            // 回复"已注册"但库里根本没有记录的情况。
             let entry = TableRegistryEntry {
                 id: format!("tr-{}-{}", now_ms(), local_name_clone),
                 workspace_path: ws_path_clone,
@@ -216,9 +272,14 @@ impl Tool for RegisterTableTool {
                 last_explored: Some(now_ms()),
                 kind: "table".to_string(),
             };
-            let _ = crate::db::upsert_table_registry(&entry);
+            crate::db::upsert_table_registry(&entry)
+                .map_err(|e| format!("注册写库失败（table_registry 写入异常）: {e}"))?;
 
-            Ok((remote_ref, table_type.to_string(), access_mode.to_string()))
+            Ok(RegisterOutcome::Created {
+                remote_ref,
+                table_type: table_type.to_string(),
+                access_mode: access_mode.to_string(),
+            })
         })
         .await
         .map_err(|e| ToolError(format!("线程生成失败: {e}")))?
@@ -226,7 +287,7 @@ impl Tool for RegisterTableTool {
 
         let elapsed = start.elapsed().as_millis() as u64;
         match result {
-            Ok((remote_ref, table_type, access_mode)) => {
+            Ok(RegisterOutcome::Created { remote_ref, table_type, access_mode }) => {
                 let summary = format!("已注册 {} ({}={}，{}={})", local_name, "access", access_mode, "type", table_type);
                 let detail = format!("CREATE OR REPLACE VIEW \"{}\" AS SELECT * FROM {};", local_name, remote_ref);
                 emit_tool_result(&self.window, &self.task_id, &call_id, "ok", summary.clone(), Some(detail), None, Some(elapsed), None);
@@ -234,6 +295,15 @@ impl Tool for RegisterTableTool {
                     Ok(format!("{summary}。此表为 pushdown 模式，查询时请用 SELECT * FROM postgres_query('db_{}', 'SELECT ... FROM \"{}\" ...') 下推。", conn_name, table_name))
                 } else {
                     Ok(format!("{summary}。后续可用 {} 作为表名查询。", local_name))
+                }
+            }
+            Ok(RegisterOutcome::Reused { local_name: reused, access_mode, remote_schema, remote_table }) => {
+                let summary = format!("已复用注册 {}（同一远程表此前已注册，未新建别名）", reused);
+                emit_tool_result(&self.window, &self.task_id, &call_id, "ok", summary.clone(), None, None, Some(elapsed), None);
+                if access_mode == "pushdown" {
+                    Ok(format!("{summary}。这张表就是 {}.{}，pushdown 模式；查询请用 SELECT * FROM postgres_query('db_{}', 'SELECT ... FROM \"{}\".\"{}\" ...') 下推。", remote_schema, remote_table, conn_name, remote_schema, remote_table))
+                } else {
+                    Ok(format!("{summary}。这张表就是 {}.{}，后续用 `{}` 作为表名查询。", remote_schema, remote_table, reused))
                 }
             }
             Err(err) => {

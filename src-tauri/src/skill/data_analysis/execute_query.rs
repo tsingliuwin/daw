@@ -142,6 +142,10 @@ impl Tool for ExecuteQueryTool {
                 let lower = msg.to_lowercase();
                 if lower.contains("permission denied") || lower.contains("access denied") {
                     format!("查询失败：当前用户没有查询权限。错误: {msg}\n建议：检查数据源连接的用户是否有该表的查询权限，或换一张表。")
+                } else if (lower.contains("does not exist") || lower.contains("not found")) && lower.contains("column") {
+                    // 远端列名写错（如 pay_time 应为 payment_time）：不要包装成
+                    // "表或视图不存在"，否则会诱导 agent 重新注册已存在的表。
+                    format!("查询失败：SQL 中引用的列不存在。错误: {msg}\n建议：用 describe_table 查看该表的真实列名，修正 SQL 后重试。")
                 } else if lower.contains("does not exist") || lower.contains("not found") {
                     format!("查询失败：表或视图不存在。错误: {msg}\n建议：用 list_tables 确认表名是否正确，或用 list_remote_tables 重新探查。")
                 } else {

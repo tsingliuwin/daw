@@ -732,6 +732,28 @@ pub fn get_table_registry_by_local_name(ws_path: &str, local_name: &str) -> Resu
     Ok(None)
 }
 
+/// 按远程表三元组查单条（register_table 防重用：同一远程表复用同一别名）。
+pub fn get_table_registry_by_remote(
+    ws_path: &str,
+    connection_name: &str,
+    remote_schema: &str,
+    remote_table: &str,
+) -> Result<Option<TableRegistryEntry>, String> {
+    let conn = get_db_conn()?;
+    let mut stmt = conn
+        .prepare(&format!(
+            "SELECT {REGISTRY_COLS} FROM table_registry \
+             WHERE workspace_path = ? AND connection_name = ? AND remote_schema = ? AND remote_table = ? \
+             ORDER BY last_explored DESC LIMIT 1"
+        ))
+        .map_err(|e| e.to_string())?;
+    let mut rows = stmt
+        .query_map(rusqlite::params![ws_path, connection_name, remote_schema, remote_table], row_to_registry)
+        .map_err(|e| e.to_string())?;
+    if let Some(r) = rows.next() { return Ok(Some(r.map_err(|e| e.to_string())?)); }
+    Ok(None)
+}
+
 /// 插入或更新 table_registry（按 workspace_path + local_name 去重 upsert）。
 pub fn upsert_table_registry(entry: &TableRegistryEntry) -> Result<(), String> {
     let conn = get_db_conn()?;

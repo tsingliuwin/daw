@@ -147,13 +147,23 @@ fn render_relations(rels: &[crate::okf::model::Relation]) -> String {
     format!("  关联: {}\n", parts.join(" "))
 }
 
-/// 全文搜索全局 + 工作区 OKF（子串匹配，命中取前 6 行预览）。
+/// 全文搜索全局 + 工作区 OKF。query 按空白分词：任一 token 命中即视为命中，
+/// 按命中 token 数降序排列——多关键词查询不再因"整句子串不匹配"而恒为 0 条。
 pub fn search(paths: &OkfPaths, ws: &str, query: &str) -> Vec<SearchHit> {
-    let query_lower = query.to_lowercase();
-    let mut hits = Vec::new();
-    search_dir(&paths.global_okf_dir(), &query_lower, Scope::Global, &mut hits);
-    search_dir(&paths.workspace_okf_dir(ws), &query_lower, Scope::Workspace, &mut hits);
-    hits
+    let tokens: Vec<String> = query
+        .split_whitespace()
+        .map(|t| t.to_lowercase())
+        .filter(|t| !t.is_empty())
+        .collect();
+    if tokens.is_empty() {
+        return Vec::new();
+    }
+    let mut scored: Vec<(usize, SearchHit)> = Vec::new();
+    search_dir(&paths.global_okf_dir(), &tokens, Scope::Global, &mut scored);
+    search_dir(&paths.workspace_okf_dir(ws), &tokens, Scope::Workspace, &mut scored);
+    // 稳定排序：命中 token 多的文件排前面（降序），同分保持扫描顺序。
+    scored.sort_by(|a, b| b.0.cmp(&a.0));
+    scored.into_iter().map(|(_, h)| h).collect()
 }
 
 // ---------- 扫描辅助 ----------
@@ -385,7 +395,7 @@ fn list_with_headings(dir: &Path, level: usize) -> Vec<(String, Vec<String>)> {
     items
 }
 
-fn search_dir(root: &Path, query_lower: &str, scope: Scope, hits: &mut Vec<SearchHit>) {
+fn search_dir(root: &Path, tokens: &[String], scope: Scope, out: &mut Vec<(usize, SearchHit)>) {
     if !root.exists() {
         return;
     }
@@ -403,21 +413,33 @@ fn search_dir(root: &Path, query_lower: &str, scope: Scope, hits: &mut Vec<Searc
             .to_string_lossy()
             .to_string();
         let Ok(content) = fs::read_to_string(entry.path()) else { continue };
-        // 找到首个匹配行，取其上下文作预览（比固定前 6 行更有用）。
-        let matched_line = content
-            .lines()
-            .enumerate()
-            .find(|(_, l)| l.to_lowercase().contains(query_lower))
-            .map(|(i, _)| i);
-        let Some(ml) = matched_line else { continue };
+        // 文件级评分 = 命中的 token 数；预览取命中 token 最多的那一行。
+        let mut best_line: Option<(usize, usize)> = None;
+        for (i, l) in content.lines().enumerate() {
+            let line_lower = l.to_lowercase();
+            let score = tokens.iter().filter(|t| line_lower.contains(t.as_str())).count();
+            if score == 0 {
+                continue;
+            }
+            let better = match best_line {
+                Some((c, _)) => score > c,
+                None => true,
+            };
+            if better {
+                best_line = Some((score, i));
+            }
+        }
+        let Some((score, matched_line)) = best_line else { continue };
         let lines: Vec<&str> = content.lines().collect();
-        let from = ml.saturating_sub(1);
-        let to = (ml + 4).min(lines.len());
-        let preview = lines[from..to].join("\n");
-        hits.push(SearchHit {
-            rel_path: format!("[{}] {}", scope.label(), rel),
-            preview,
-        });
+        let from = matched_line.saturating_sub(1);
+        let to = (matched_line + 4).min(lines.len());
+        out.push((
+            score,
+            SearchHit {
+                rel_path: format!("[{}] {}", scope.label(), rel),
+                preview: lines[from..to].join("\n"),
+            },
+        ));
     }
 }
 
