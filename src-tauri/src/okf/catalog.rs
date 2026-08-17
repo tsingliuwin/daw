@@ -59,26 +59,7 @@ pub fn summary(paths: &OkfPaths, ws: &str, table_entries: &[TableRegistryEntry])
         }
         out.push_str("## 工作区知识\n");
         if !table_entries.is_empty() {
-            out.push_str(&format!("### 已注册表 · {}\n", table_entries.len()));
-            for e in table_entries {
-                let icon = TableStatus::from_str(&e.status).icon();
-                let mode = if e.access_mode == "pushdown" { " [pushdown]" } else { "" };
-                let reason = if e.status != "available" {
-                    e.unavailable_reason
-                        .as_ref()
-                        .map(|r| format!(" — 不可用: {r}"))
-                        .unwrap_or_default()
-                } else {
-                    String::new()
-                };
-                let ts = store::table_semantics(paths, ws, &e.local_name);
-                out.push_str(&format!(
-                    "- {icon} `{}` (别名 {}){}{}\n",
-                    e.local_name, workspace_attach_alias(&e.connection_name), mode, reason
-                ));
-                out.push_str(&render_columns(&ts.columns));
-                out.push_str(&render_relations(&ts.relations));
-            }
+            out.push_str(&render_registered_tables(paths, ws, table_entries, SUMMARY_TABLES_BUDGET));
         }
         if !views.is_empty() {
             out.push_str(&format!("### 视图 (views/) · {}\n", views.len()));
@@ -109,6 +90,92 @@ pub fn summary(paths: &OkfPaths, ws: &str, table_entries: &[TableRegistryEntry])
     }
 
     out.trim().to_string()
+}
+
+/// 注入 preamble 的"已注册表"小节的 token 预算。
+///
+/// 大纲随注册表数量无上限膨胀（每张表的字段释义都进 preamble，而 preamble
+/// 在每个 LLM 请求上全量重发）。预算内的表保留完整信息，之外的降级为名称
+/// 清单，超出 6 张时折叠成一行提示（用 list_tables 按需查看）。
+/// 当前 31 张注册表的完整大纲约 900 tokens，预算 1000 留有余量且封顶增长。
+const SUMMARY_TABLES_BUDGET: u64 = 1000;
+
+/// 单张表的状态行：`- ✅ \`v_xxx\` (别名 db_xxx) [pushdown] — 不可用原因`。
+fn entry_status_line(e: &TableRegistryEntry) -> String {
+    let icon = TableStatus::from_str(&e.status).icon();
+    let mode = if e.access_mode == "pushdown" { " [pushdown]" } else { "" };
+    let reason = if e.status != "available" {
+        e.unavailable_reason
+            .as_ref()
+            .map(|r| format!(" — 不可用: {r}"))
+            .unwrap_or_default()
+    } else {
+        String::new()
+    };
+    format!(
+        "- {icon} `{}` (别名 {}){}{}\n",
+        e.local_name,
+        workspace_attach_alias(&e.connection_name),
+        mode,
+        reason
+    )
+}
+
+/// 渲染带预算的"已注册表"小节。按 `last_explored` 降序近似"最近使用"：
+/// 预算内输出完整条目（状态行 + 字段释义 + 关联关系），预算外仅名称行，
+/// 积压超过 6 张时折叠为一行提示。至少保证第一张表完整输出。
+fn render_registered_tables(
+    paths: &OkfPaths,
+    ws: &str,
+    table_entries: &[TableRegistryEntry],
+    budget: u64,
+) -> String {
+    let mut out = format!("### 已注册表 · {}\n", table_entries.len());
+    let mut entries: Vec<&TableRegistryEntry> = table_entries.iter().collect();
+    entries.sort_by(|a, b| {
+        b.last_explored
+            .unwrap_or(0)
+            .cmp(&a.last_explored.unwrap_or(0))
+            .then_with(|| a.local_name.cmp(&b.local_name))
+    });
+
+    let mut used = crate::usage::estimate_tokens(&out);
+    let mut emitted_full = false;
+    let mut name_only: Vec<&TableRegistryEntry> = Vec::new();
+    for e in entries {
+        let mut block = entry_status_line(e);
+        let ts = store::table_semantics(paths, ws, &e.local_name);
+        block.push_str(&render_columns(&ts.columns));
+        block.push_str(&render_relations(&ts.relations));
+        let cost = crate::usage::estimate_tokens(&block);
+        if emitted_full && used + cost > budget {
+            name_only.push(e);
+        } else {
+            out.push_str(&block);
+            used += cost;
+            emitted_full = true;
+        }
+    }
+    if name_only.is_empty() {
+        return out;
+    }
+    if name_only.len() <= 6 {
+        for e in &name_only {
+            out.push_str(&entry_status_line(e));
+        }
+    } else {
+        let preview: Vec<&str> = name_only
+            .iter()
+            .take(4)
+            .map(|e| e.local_name.as_str())
+            .collect();
+        out.push_str(&format!(
+            "- （另有 {} 张表：{}…，需要时用 list_tables / list_okf_knowledge 查看）\n",
+            name_only.len(),
+            preview.join("、")
+        ));
+    }
+    out
 }
 
 /// `- name — description`（有描述）或 `- name`（无）。
@@ -569,15 +636,51 @@ mod tests {
         }
     }
 
-    #[test]
+#[test]
     fn no_duplicates_no_section() {
         let tmp = tempfile::tempdir().unwrap();
         let paths = OkfPaths::new(tmp.path().to_path_buf());
         let ver: Arc<dyn crate::okf::Versioner> = Arc::new(NoopVersioner);
         store::write(&paths, ver.as_ref(), &FixedClock, "ws", Category::Concept, "company_profile", "业务描述", "公司背景", Some("公司主营业务背景")).unwrap();
-        store::write(&paths, ver.as_ref(), &FixedClock, "ws", Category::Recipe, "date_parse", "解决方案", "用 to_date", Some("日期解析排障配方")).unwrap();
+        store::write(&paths, ver.as_ref(), &FixedClock, "ws", Category::Recipe, "date_parse", "解决方案", "用 to_date 解析", Some("日期解析排障配方")).unwrap();
 
         let s = summary(&paths, "ws", &[]);
         assert!(!s.contains("疑似重复知识"));
+    }
+
+    #[test]
+    fn registered_tables_respect_token_budget() {
+        let tmp = tempfile::tempdir().unwrap();
+        let paths = OkfPaths::new(tmp.path().to_path_buf());
+        let mk = |n: usize, last: i64| TableRegistryEntry {
+            id: format!("t{n}"),
+            workspace_path: "ws".into(),
+            connection_name: "db".into(),
+            local_name: format!("v_t{n}"),
+            remote_schema: "public".into(),
+            remote_table: format!("t{n}"),
+            db_type: "postgres".into(),
+            db_product: "pg".into(),
+            db_mode: "standard".into(),
+            table_type: "native".into(),
+            access_mode: "catalog".into(),
+            status: "available".into(),
+            unavailable_reason: None,
+            last_explored: Some(last),
+            kind: "table".into(),
+        };
+        // 1 张热表（last_explored 最大）+ 20 张冷表。
+        let mut entries: Vec<TableRegistryEntry> = vec![mk(0, 100)];
+        for n in 1..21 {
+            entries.push(mk(n, 1));
+        }
+        let out = render_registered_tables(&paths, "ws", &entries, 20);
+        // 热表完整输出；预算耗尽后其余 20 张折叠为一行，预览前 4 个冷名。
+        assert!(out.contains("`v_t0` (别名 db_db)"));          // 热表状态行在
+        assert!(out.contains("另有 20 张表"));                   // 折叠提示在
+        assert!(out.contains("v_t1、v_t10、v_t11、v_t12"));    // 预览列冷表名（按名排序）
+        assert!(!out.contains("v_t13"));                       // 超出预览的不再逐个列出
+        // 折叠行体积有上限：总输出远小于 21 × 完整条目。
+        assert!(crate::usage::estimate_tokens(&out) < 150);
     }
 }
