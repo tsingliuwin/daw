@@ -1,4 +1,5 @@
 import { Index, Show, Switch, Match, createSignal, createEffect, createMemo, onMount, onCleanup, untrack } from "solid-js";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { ChatMessage, Segment, TokenUsage, ModelOption, RetryNotice } from "../lib/types";
 import { derivePanelMetrics, fmtCap, fmtPct } from "../lib/metrics";
 import ToolSegment from "./ToolSegment";
@@ -169,28 +170,55 @@ export default function ChatView(props: {
   );
   const capPct = createMemo(() => metrics()?.capacity.pct ?? 0);
 
+  // 事件驱动的时钟补血：每条消息变化（推理/正文 delta）时把时钟刷新到当前时刻。
+  // 100ms 泵在窗口被遮挡/切后台时会被浏览器节流甚至停摆——那时 delta 仍然在
+  // 到达（文字照常增长），但计时显示需要靠这里每次事件把时间推进，否则两个
+  // 计时（思考耗时/已工作）都会钉在旧值上，出现"输出在走、计时不动"。
+  createEffect(() => {
+    props.messages;
+    setNow(Date.now());
+  });
+
   onMount(() => {
+    // 时钟刷新泵：前台每 100ms tick 一次。窗口被最小化/完全遮挡/切到后台时，
+    // Chromium 会节流 JS 定时器（后台页降频甚至暂停），两个计时（思考耗时/
+    // 已工作）都会冻住；回到前台瞬间强制刷新一次时钟，计时立即跳到正确值，
+    // 不会一直钉在旧值上。
+    const refreshClock = () => setNow(Date.now());
     const handle = setInterval(() => {
       const t = Date.now();
       setNow(t);
-      if (isStreaming() && streamStart > 0) {
-        const bt = document.getElementById("chat-bottom-timer");
-        if (bt) bt.textContent = String(Math.floor((t - streamStart) / 1000));
-      }
+      // 思考耗时/已工作已改为纯响应式绑定（单一写入者），不再直改 DOM；
+      // 工具运行计时没有响应式绑定（占位符为"…"），保留直改补表——该 span
+      // 无竞争写入者，textContent 直改是安全的单写入者路径。
       const lm = props.messages[props.messages.length - 1];
       if (lm && lm.role === "assistant" && isStreaming()) {
         const s = lm.segments[lm.segments.length - 1];
-        if (s && s.type === "reasoning" && s.startTime != null) {
-          const el = document.getElementById(`rs-timer-${s.id}`);
-          if (el) el.textContent = fmtMs(t - s.startTime);
-        }
         if (s && s.type === "tool" && s.status === "running" && s.startTime != null) {
           const el = document.getElementById(`tool-timer-${s.id}`);
           if (el) el.textContent = fmtMs(t - s.startTime);
         }
       }
     }, 100);
-    onCleanup(() => clearInterval(handle));
+
+    // 回到前台的两个信号都补一发刷新：页面可见性变化 + 原生窗口焦点恢复
+    // （被别的窗口完全遮住时 Chromium 也会把定时器节流掉，焦点事件兜底）。
+    let unlistenFocus: (() => void) | undefined;
+    document.addEventListener("visibilitychange", refreshClock);
+    void getCurrentWindow()
+      .onFocusChanged((ev) => {
+        if (ev.payload) refreshClock();
+      })
+      .then((unlisten) => {
+        unlistenFocus = unlisten;
+      })
+      .catch(() => {});
+
+    onCleanup(() => {
+      clearInterval(handle);
+      document.removeEventListener("visibilitychange", refreshClock);
+      unlistenFocus?.();
+    });
   });
 
   let scrollEl: HTMLDivElement | undefined;
