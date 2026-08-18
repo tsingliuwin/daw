@@ -245,8 +245,11 @@ jobs:
           }
 
           if (Object.keys(platforms).length === 0) {
-            console.error("::warning::No updater signatures collected; latest.json NOT updated");
-            process.exit(0);
+            const found = fs.existsSync("updater-sigs")
+              ? fs.readdirSync("updater-sigs").join(", ") || "(none)"
+              : "(updater-sigs 目录不存在)";
+            console.error(`::error::No updater signatures mapped. updater-sigs 内容: ${found}。大概率是 build 任务未产出 .sig（签名失败/打包失败），检查上方 build 任务的日志。`);
+            process.exit(1);
           }
 
           const manifest = {
@@ -262,6 +265,10 @@ jobs:
 
       - name: Commit and push latest.json
         run: |
+          if [ ! -f updates/latest.json ]; then
+            echo "::error::updates/latest.json 未生成（上游任务失败），跳过提交。"
+            exit 1
+          fi
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add updates/latest.json
