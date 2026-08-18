@@ -73,18 +73,11 @@ jobs:
           echo "Release $TAG_NAME (level: $RELEASE_LEVEL)"
 
           # small/medium：Windows + macOS arm64；large 追加 macOS x64 与 Linux。
+          # 注意：matrix 必须是单行 JSON——$GITHUB_OUTPUT 的文件命令不支持多行值。
           if [ "$RELEASE_LEVEL" = "large" ]; then
-            MATRIX='{"level":"large","include":[
-              {"os":"windows-latest","target":"","args":""},
-              {"os":"macos-latest","target":"aarch64-apple-darwin","args":"--target aarch64-apple-darwin"},
-              {"os":"macos-latest","target":"x86_64-apple-darwin","args":"--target x86_64-apple-darwin"},
-              {"os":"ubuntu-22.04","target":"","args":""}
-            ]}'
+            MATRIX="{\"level\":\"$RELEASE_LEVEL\",\"include\":[{\"os\":\"windows-latest\",\"target\":\"\",\"args\":\"\"},{\"os\":\"macos-latest\",\"target\":\"aarch64-apple-darwin\",\"args\":\"--target aarch64-apple-darwin\"},{\"os\":\"macos-latest\",\"target\":\"x86_64-apple-darwin\",\"args\":\"--target x86_64-apple-darwin\"},{\"os\":\"ubuntu-22.04\",\"target\":\"\",\"args\":\"\"}]}"
           else
-            MATRIX='{"level":"small","include":[
-              {"os":"windows-latest","target":"","args":""},
-              {"os":"macos-latest","target":"aarch64-apple-darwin","args":"--target aarch64-apple-darwin"}
-            ]}'
+            MATRIX="{\"level\":\"$RELEASE_LEVEL\",\"include\":[{\"os\":\"windows-latest\",\"target\":\"\",\"args\":\"\"},{\"os\":\"macos-latest\",\"target\":\"aarch64-apple-darwin\",\"args\":\"--target aarch64-apple-darwin\"}]}"
           fi
           echo "matrix=$MATRIX" >> $GITHUB_OUTPUT
           echo "tag_name=$TAG_NAME" >> $GITHUB_OUTPUT
