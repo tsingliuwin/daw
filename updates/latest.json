@@ -3,6 +3,14 @@
   "notes": "### 修复\n\n- 窗口关闭按钮在存在流式任务时偶发失效：补齐 `core:window:allow-destroy` 权限、关闭拦截器加异常兜底（任何异常不再卡死关闭）、✕/菜单关闭自动降级 destroy。\n- macOS 更新 manifest 生成：按构建架构精确选择签名文件，拒绝无架构后缀的中间产物（0.1.0 首发时 macOS 条目曾指向不存在的资产，已手工修正；0.1.1 起由流水线正确生成）。",
   "pubdate": "2026-08-18T09:58:32.361Z",
   "platforms": {
+    "darwin-aarch64": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTSGFaT3VTLzhlcUFoOW9aSUFWc1JoZlpxaW5XN3BtU0xPdEhEQWx2R0lXc0hzVzNPcVFpV0gxalBTeFdlNmV4NmVuZ3R6Q1NBZTZySmRqUHZZdXB6aFF3QS9WYWJ4YXdrPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg3MDQ2ODk3CWZpbGU6RGF3LmFwcC50YXIuZ3oKT1lHekpySi92WjlHTTEzN1h4WWVGd2xGY2hqVjJBWnQ2cmY1YVZRMEJwNk43SUwyOG5Id3lQU1MzbWpaYkRCVDlIL2tVTlhsZGtxWVlZcjhPSGRkQmc9PQo=",
+      "url": "https://github.com/tsingliuwin/daw/releases/download/v0.1.1/Daw_aarch64.app.tar.gz"
+    },
+    "darwin-x86_64": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTSGFaT3VTLzhlcUorM3kzUkZrRGtCU084RFRORDduNy9VVFJ3cTVVWDhJck5RREc1NTNqaWJKOW12UTNhRkhYZGN6dDlOL1A5SVF1VXlZUEpyUFBETmhrdnRvTGQ1dkEwPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg3MDQ3MDg2CWZpbGU6RGF3LmFwcC50YXIuZ3oKRGd3TStiakJzOVZKVEVFTXJjVlNqajJ2bTYxOStUUmptTXAzbEp0Z1UyRjdzZ1g3dDJDdVJwZExWU29ZQ0t6MmxDZnFIVVptV1NIRmpnREJMOUdqRFE9PQo=",
+      "url": "https://github.com/tsingliuwin/daw/releases/download/v0.1.1/Daw_x64.app.tar.gz"
+    },
     "linux-x86_64": {
       "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTSGFaT3VTLzhlcU1CWGs4aVJXdklyK05udWFIY2NNOS8zblpZRHpjdzlwOTJQWHdCVStFZkVTWTFBREduMUhGME95Y3NERURwQXUrYWNVazBwai9jQkplOE9xZnhBM3dRPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg3MDQ2NzI2CWZpbGU6RGF3XzAuMS4xX2FtZDY0LkFwcEltYWdlCnFTaFBiOVlwM1MvRnIwcTVQVTBJejBIbU9xczZxOTVqMHUyd2k2eTJWQkNsYURiWWUzS0VEelNXQmxaRkV3YjEyb0NibVJOQ1M4MldITkpxK2xHZ0NRPT0K",
       "url": "https://github.com/tsingliuwin/daw/releases/download/v0.1.1/Daw_0.1.1_amd64.AppImage"

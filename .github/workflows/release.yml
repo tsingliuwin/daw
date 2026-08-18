@@ -127,19 +127,21 @@ jobs:
           if [ "${{ matrix.os }}" = "windows-latest" ]; then
             SIG=$(find "$BASE/nsis" -maxdepth 1 -name "*-setup.exe.sig" | head -n 1)
           elif [ "${{ matrix.os }}" = "macos-latest" ]; then
-            # macOS 每个 bundle 目录同时存在带/不带 target 后缀的 .app.tar.gz，必须按
-            # 本 job 的目标架构精确挑选——不带后缀的名字跨架构会合并覆盖且 URL 会
-            # 指向不存在的资产（见 0.1.0 首发事故）。
-            if [ "${{ matrix.target }}" = "aarch64-apple-darwin" ]; then
-              SIG=$(find "$BASE/macos" -maxdepth 1 -name "*_aarch64.app.tar.gz.sig" | head -n 1)
-            elif [ "${{ matrix.target }}" = "x86_64-apple-darwin" ]; then
-              SIG=$(find "$BASE/macos" -maxdepth 1 -name "*_x64.app.tar.gz.sig" | head -n 1)
-            else
-              SIG=$(find "$BASE/macos" -maxdepth 1 -name "*.app.tar.gz.sig" | head -n 1)
-            fi
+            # 坑(bundle 目录只有无后缀的 Daw.app.tar.gz.sig,`*_aarch64.` 等后缀模式永远找不到;
+            # tauri-action 上传到 Release 时才会按架构改名)。因此改为从刚发布的
+            # Release 资产精确下载本架构的签名——资产名可预测。
+            if [ "${{ matrix.target }}" = "aarch64-apple-darwin" ]; then MAC_ARCH=aarch64; else MAC_ARCH=x64; fi
+            TAG="${{ needs.prepare.outputs.tag_name }}"
+            SIG_NAME="Daw_${MAC_ARCH}.app.tar.gz.sig"
+            mkdir -p updater-sigs
+            curl -fsSL --retry 4 --retry-delay 5 --max-time 120 \
+              "https://github.com/tsingliuwin/daw/releases/download/${TAG}/${SIG_NAME}" \
+              -o "updater-sigs/${SIG_NAME}" \
+            && SIG="updater-sigs/${SIG_NAME}" || SIG=""
             if [ -z "$SIG" ]; then
-              # 兜底：找不到带后缀的签名时退回任意一个（宁可有也比全无强）。
+              # 兜底:退化为任意 .app.tar.gz.sig(不推荐,mac 必需按架构精确)。
               SIG=$(find "$BASE/macos" -maxdepth 1 -name "*.app.tar.gz.sig" | head -n 1)
+              if [ -n "$SIG" ]; then cp "$SIG" updater-sigs/; SIG="updater-sigs/$(basename "$SIG")"; fi
             fi
           else
             SIG=$(find "$BASE/appimage" -maxdepth 1 -name "*.AppImage.sig" | head -n 1)
@@ -149,7 +151,8 @@ jobs:
             exit 1
           fi
           mkdir -p updater-sigs
-          cp "$SIG" updater-sigs/
+          # SIG 可能已在 updater-sigs 内（mac 从 Release 下载路径），避免同文件 cp 报错。
+          [ -f "updater-sigs/$(basename "$SIG")" ] || cp "$SIG" updater-sigs/
           echo "Collected: $(basename "$SIG")"
 
       - name: Upload updater signature
@@ -162,7 +165,9 @@ jobs:
 
   update-manifest:
     needs: [prepare, build]
-    if: always() && needs.prepare.result == 'success'
+    # 只有全部平台构建成功才回写 manifest——任一平台失败时保留旧 manifest，
+    # 避免出现部分平台缺失的“塌方”发布（0.1.1 教训）。
+    if: needs.prepare.result == 'success' && needs.build.result == 'success'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
