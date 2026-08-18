@@ -3,9 +3,13 @@
   "notes": "首个公开发行版本。\n\n### 新增\n\n- 对话式任务助手：联网搜索、知识问答、文案撰写，多 LLM 服务商接入（OpenAI / Anthropic / OpenAI 兼容）。\n- 对话式数据分析：接入 PostgreSQL / Hologres / MySQL 等数据源，自动发现表、注册视图、执行 SQL、生成图表（趋势/对比/占比）。\n- 工作区知识库（OKF）：git 版本化的表释义、业务概念与排障记录，新会话自动继承，支持跨知识内链。\n- brand.json 品牌定制：应用名、logo、首页文案、助手身份改一份配置文件即可定制成自己的专属工作台。\n- 应用内自动更新：启动后静默检查、后台下载新版本、就绪后一键重启安装（minisign 签名校验）。\n- 数据分析环境自动探测：DuckLake 扩展已安装时启动即就绪，无需每次点击「启用」。\n\n### 变更\n\n- 品牌更名 Daw（中文名「寒鸦数据工作台」），全新寒鸦 logo。\n- 数据目录由 `~/.aioa` 迁移至 `~/.daw`，首次启动自动迁移、历史数据完整保留。\n- 系统提示词去除业务专属表述，助手身份随 brand.json 注入。\n\n### 移除\n\n- 内部业务系统示例与专有名词（连接名示例、机构名等）全部替换为通用示例。",
   "pubdate": "2026-08-18T08:44:26.342Z",
   "platforms": {
+    "darwin-aarch64": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTSGFaT3VTLzhlcU12M3N3bGxHOVBhc2syWk5mY2hYTEdmTjU2RWt5UzE0Z05BUjVzNnA0UWppRUpPV2RhejZLcldwSXZGZW9tckNHZCtidjJLVXpHTmFNUkFhdUZsOEE4PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg3MDQyNjM5CWZpbGU6RGF3LmFwcC50YXIuZ3oKUXhURFVmNDRXZVBxbGxMeEdxQXdiMDVnZVkwN0pMZUJ3Y1ZoTkRDdFZ0bE91SWdzQnZsa3piNnFBY0Y4S0FxOUQrS1pwK1k0QjROT1ExOFNSWGErQlE9PQo=",
+      "url": "https://github.com/tsingliuwin/daw/releases/download/v0.1.0/Daw_aarch64.app.tar.gz"
+    },
     "darwin-x86_64": {
       "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTSGFaT3VTLzhlcUZIVU9pTjZYY3BZYkY3SnYwMTBJS3MxaEUvYUdyeitGZjlZWVk0V05HbENIZ2pCclBQaWlreVlnSTFsMXNEd1JESXdzZFZWcWdoWnhkWUE0U0xiQ2dBPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg3MDQyNDE2CWZpbGU6RGF3LmFwcC50YXIuZ3oKR0hvZU1zSXhGSnZFOEhLL2tsRitDL1p6czY2dzREL0o2bSt6ek11MGoxKzhuQzk2VEl4VDk1UXFBRzhDK0xQOUprZm5Sc2ZyelNEdUVLVlJsVmUrQnc9PQo=",
-      "url": "https://github.com/tsingliuwin/daw/releases/download/v0.1.0/Daw.app.tar.gz"
+      "url": "https://github.com/tsingliuwin/daw/releases/download/v0.1.0/Daw_x64.app.tar.gz"
     },
     "linux-x86_64": {
       "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTSGFaT3VTLzhlcUlvODE1M2s4SnZHeTVkcEFVMGduM3N4Nll3anA1STFqYkRWYnQySHJRYTM1Vm9iSFB5YWhCU2JjcWxISk16SWtZbG00cUNId29EMVBUZzNodXdud0FzPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg3MDQyMjQ4CWZpbGU6RGF3XzAuMS4wX2FtZDY0LkFwcEltYWdlCi91aDdWMEJZMVQvY3p1eFA5OWRvYzZyRzdPN25rSGxYdjZXaDZaYzllY2VXd0cxSzIvVm0xeHZQV09NTHBrdkhrN1Z0dWpWRTBhZWNhc0w4NXVxTkNnPT0K",

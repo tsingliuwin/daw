@@ -127,7 +127,20 @@ jobs:
           if [ "${{ matrix.os }}" = "windows-latest" ]; then
             SIG=$(find "$BASE/nsis" -maxdepth 1 -name "*-setup.exe.sig" | head -n 1)
           elif [ "${{ matrix.os }}" = "macos-latest" ]; then
-            SIG=$(find "$BASE/macos" -maxdepth 1 -name "*.app.tar.gz.sig" | head -n 1)
+            # macOS 每个 bundle 目录同时存在带/不带 target 后缀的 .app.tar.gz，必须按
+            # 本 job 的目标架构精确挑选——不带后缀的名字跨架构会合并覆盖且 URL 会
+            # 指向不存在的资产（见 0.1.0 首发事故）。
+            if [ "${{ matrix.target }}" = "aarch64-apple-darwin" ]; then
+              SIG=$(find "$BASE/macos" -maxdepth 1 -name "*_aarch64.app.tar.gz.sig" | head -n 1)
+            elif [ "${{ matrix.target }}" = "x86_64-apple-darwin" ]; then
+              SIG=$(find "$BASE/macos" -maxdepth 1 -name "*_x64.app.tar.gz.sig" | head -n 1)
+            else
+              SIG=$(find "$BASE/macos" -maxdepth 1 -name "*.app.tar.gz.sig" | head -n 1)
+            fi
+            if [ -z "$SIG" ]; then
+              # 兜底：找不到带后缀的签名时退回任意一个（宁可有也比全无强）。
+              SIG=$(find "$BASE/macos" -maxdepth 1 -name "*.app.tar.gz.sig" | head -n 1)
+            fi
           else
             SIG=$(find "$BASE/appimage" -maxdepth 1 -name "*.AppImage.sig" | head -n 1)
           fi
@@ -195,12 +208,15 @@ jobs:
             const signature = fs.readFileSync(path.join("updater-sigs", sig), "utf8").trim();
             if (/aarch64.*\.app\.tar\.gz$/.test(asset)) {
               platforms["darwin-aarch64"] = { signature, url: `${downloadBase}/${asset}` };
-            } else if (/\.app\.tar\.gz$/.test(asset)) {
+            } else if (/(x64|x86_64).*\.app\.tar\.gz$/.test(asset)) {
               platforms["darwin-x86_64"] = { signature, url: `${downloadBase}/${asset}` };
             } else if (/-setup\.exe$/.test(asset)) {
               platforms["windows-x86_64"] = { signature, url: `${downloadBase}/${asset}` };
             } else if (/\.AppImage$/.test(asset)) {
               platforms["linux-x86_64"] = { signature, url: `${downloadBase}/${asset}` };
+            } else {
+              // 无架构后缀的 .app.tar.gz 等无法区分平台的中间产物直接跳过。
+              console.warn(`Skipping unrecognized sig: ${sig}`);
             }
           }
 
