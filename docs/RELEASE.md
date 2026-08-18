@@ -30,12 +30,9 @@ Daw 的发版流程与 lakemind 同构：**GitHub Actions 构建并发布 GitHub
 4. **等 CI 完成**：GitHub Release 出现安装包资产；`updates/latest.json` 由机器人 commit（`chore: release vX.Y.Z [skip ci]`）推回 main。
 5. **验证**：把 `updates/latest.json` 的 URL 在浏览器打开确认平台齐全；本地跑旧版本应用看能否收到更新提示。
 
-## 发布级别
+## 构建范围
 
-- **small**（默认）：Windows NSIS + macOS arm64。patch 版本（如 v0.1.1）自动走 small。
-- **medium**：与 small 同矩阵。minor/首个大版本（v0.1.0、v1.0.0）自动走 medium。
-- **large**：追加 macOS x64 与 Linux AppImage。
-- 手动想发全量：`workflow_dispatch` 选 large；想只发个别平台：在 release.yml 的 prepare 矩阵里临时注释即可（不建议长期改）。
+每次发布全平台构建：Windows（NSIS 安装包）、macOS arm64 与 x64（dmg + `.app.tar.gz` 更新包）、Linux（AppImage）。构建矩阵在 `release.yml` 里**静态写死**——历史教训：不要改回「prepare 输出 JSON 矩阵 → fromJson」的动态方案，`GITHUB_OUTPUT` 传复杂 JSON 曾导致 build 任务整体被跳过且不报错。
 
 ## 缓存机制
 

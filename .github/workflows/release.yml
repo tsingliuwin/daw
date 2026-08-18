@@ -1,18 +1,17 @@
 name: Release
 
-# 发版工作流（参考 lakemind 的同名流程，产物托管改为 GitHub Releases 直链）：
-#   prepare          解析 tag → 版本/级别 → 构建矩阵
-#   build            各平台构建 + 签名 + tauri-action 发布 GitHub Release
+# 发版工作流：push 标签 v* 触发。
+#   prepare          解析 tag → 版本号用于 manifest
+#   build            静态矩阵全平台构建(Windows / macOS arm64+x64 / Linux)
+#                     + tauri-action 发布 GitHub Release 资产
 #   update-manifest  汇总 .sig → 生成 updates/latest.json → 提交回 main
 #
 # 二进制托管：GitHub Release 资产（稳定直链）；
 # 更新 manifest：仓库内 updates/latest.json，经 raw.githubusercontent.com 提供给
 # 应用内更新器（见 src-tauri/tauri.conf.json plugins.updater.endpoints）。
 #
-# 触发：
-#   - push 标签 v*（级别由语义化版本号自动推导：patch 非 0 = small；
-#     minor 非 0 或 major = 0 => medium；其余 large）
-#   - 手动 dispatch（指定 level 与 tag）
+# 注意：构建矩阵直接静态写死——不要改回「prepare 输出 JSON → fromJson」的动态
+# 方案，GITHUB_OUTPUT 对复杂 JSON 的传递极易静默失效导致 build 整个被跳过。
 
 on:
   push:
@@ -20,12 +19,6 @@ on:
       - "v*"
   workflow_dispatch:
     inputs:
-      release_level:
-        description: 'Release level (small, medium, large)'
-        required: true
-        default: 'small'
-        type: choice
-        options: [small, medium, large]
       tag_name:
         description: 'Release tag name (e.g. v0.1.0)'
         required: true
@@ -38,7 +31,6 @@ jobs:
   prepare:
     runs-on: ubuntu-latest
     outputs:
-      matrix: ${{ steps.determine.outputs.matrix }}
       tag_name: ${{ steps.determine.outputs.tag_name }}
     steps:
       - uses: actions/checkout@v4
@@ -49,44 +41,30 @@ jobs:
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             TAG_NAME="${{ github.event.inputs.tag_name }}"
-            RELEASE_LEVEL="${{ github.event.inputs.release_level }}"
           else
             TAG_NAME="${GITHUB_REF_NAME}"
-            VERSION="${TAG_NAME#v}"
-            if echo "$VERSION" | grep -qE '^([0-9]+)\.([0-9]+)\.([0-9]+)$'; then
-              MAJOR=$(echo "$VERSION" | cut -d. -f1)
-              MINOR=$(echo "$VERSION" | cut -d. -f2)
-              PATCH=$(echo "$VERSION" | cut -d. -f3)
-              if [ "$PATCH" != "0" ]; then
-                RELEASE_LEVEL="small"
-              elif [ "$MINOR" != "0" ] || [ "$MAJOR" = "0" ]; then
-                RELEASE_LEVEL="medium"
-              else
-                RELEASE_LEVEL="large"
-              fi
-            else
-              echo "::error::Tag $TAG_NAME is not a valid semver; defaulting to small"
-              RELEASE_LEVEL="small"
-            fi
           fi
-
-          echo "Release $TAG_NAME (level: $RELEASE_LEVEL)"
-
-          # small/medium：Windows + macOS arm64；large 追加 macOS x64 与 Linux。
-          # 注意：matrix 必须是单行 JSON——$GITHUB_OUTPUT 的文件命令不支持多行值。
-          if [ "$RELEASE_LEVEL" = "large" ]; then
-            MATRIX="{\"level\":\"$RELEASE_LEVEL\",\"include\":[{\"os\":\"windows-latest\",\"target\":\"\",\"args\":\"\"},{\"os\":\"macos-latest\",\"target\":\"aarch64-apple-darwin\",\"args\":\"--target aarch64-apple-darwin\"},{\"os\":\"macos-latest\",\"target\":\"x86_64-apple-darwin\",\"args\":\"--target x86_64-apple-darwin\"},{\"os\":\"ubuntu-22.04\",\"target\":\"\",\"args\":\"\"}]}"
-          else
-            MATRIX="{\"level\":\"$RELEASE_LEVEL\",\"include\":[{\"os\":\"windows-latest\",\"target\":\"\",\"args\":\"\"},{\"os\":\"macos-latest\",\"target\":\"aarch64-apple-darwin\",\"args\":\"--target aarch64-apple-darwin\"}]}"
-          fi
-          echo "matrix=$MATRIX" >> $GITHUB_OUTPUT
+          echo "Release $TAG_NAME"
           echo "tag_name=$TAG_NAME" >> $GITHUB_OUTPUT
 
   build:
     needs: prepare
     strategy:
       fail-fast: false
-      matrix: ${{ fromJson(needs.prepare.outputs.matrix) }}
+      matrix:
+        include:
+          - os: windows-latest
+            target: ""
+            args: ""
+          - os: macos-latest
+            target: "aarch64-apple-darwin"
+            args: "--target aarch64-apple-darwin"
+          - os: macos-latest
+            target: "x86_64-apple-darwin"
+            args: "--target x86_64-apple-darwin"
+          - os: ubuntu-22.04
+            target: ""
+            args: ""
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -109,24 +87,6 @@ jobs:
         with:
           node-version: 20
           cache: npm
-
-      # small 级只打必要包（跳过全量 targets，省构建时间）。
-      - name: Optimize Tauri config for small release
-        if: matrix.level == 'small'
-        shell: bash
-        run: |
-          node -e "
-          const fs = require('fs');
-          const configPath = 'src-tauri/tauri.conf.json';
-          const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-          if (process.platform === 'win32') {
-            config.bundle.targets = ['nsis'];
-          } else if (process.platform === 'darwin') {
-            config.bundle.targets = ['app', 'dmg'];
-          }
-          fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
-          console.log('bundle.targets ->', config.bundle.targets);
-          "
 
       - name: Install Linux dependencies
         if: matrix.os == 'ubuntu-22.04'
@@ -182,7 +142,7 @@ jobs:
       - name: Upload updater signature
         uses: actions/upload-artifact@v4
         with:
-          name: updater-sig-${{ matrix.os }}${{ matrix.target != '' && format('-{0}', matrix.target) || '' }}
+          name: updater-sig-${{ matrix.os }}-${{ matrix.target }}
           path: updater-sigs/*.sig
           if-no-files-found: error
           retention-days: 7
