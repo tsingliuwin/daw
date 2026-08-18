@@ -2,7 +2,7 @@
 //! backend event into the SQLite `logs` table and (for info+) pushes it to the
 //! frontend console via the `app-log` channel.
 //!
-//! (Migrated verbatim from lakemind — the tracing layer, SQLite emit, and
+//! (Ported from the earlier data-lake prototype — the tracing layer, SQLite emit, and
 //! frontend broadcast are entirely domain-agnostic.)
 //!
 //! ## Call convention

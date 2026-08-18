@@ -25,8 +25,8 @@ export default defineConfig(async () => ({
         }
       : undefined,
     watch: {
-      // 3. tell Vite to ignore watching `src-tauri` and `.aioa`
-      ignored: ["**/src-tauri/**", "**/.aioa/**"],
+      // 3. tell Vite to ignore watching `src-tauri` and `.daw`
+      ignored: ["**/src-tauri/**", "**/.daw/**"],
     },
   },
 }));

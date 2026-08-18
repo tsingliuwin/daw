@@ -122,8 +122,8 @@ impl LogLevel {
     }
 }
 
-/// Normalized log category. The OA app keeps the same fixed taxonomy as
-/// lakemind minus the data-lake-only buckets; `agent` / `system` / `ui` /
+/// Normalized log category. Same fixed taxonomy as the earlier data-lake
+/// prototype minus the data-lake-only buckets; `agent` / `system` / `ui` /
 /// `link` stay relevant. New buckets can be appended freely — old rows still
 /// parse, and the frontend filters on whatever category strings it sees.
 #[allow(dead_code)]

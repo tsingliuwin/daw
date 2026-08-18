@@ -1,15 +1,18 @@
-//! AI OA — drive your enterprise workflows through conversation.
+//! Daw — Data Agent Workstation: a customizable conversational workbench
+//! for data and tasks.
 //!
 //! Entry point: wires the [`state::AppState`] singleton and the command surface
 //! into the Tauri runtime. Business-level mappings (workspaces / tasks / config
-//! / logs) live in the global SQLite DB (`~/.aioa/aioa.db`); OA demo data lives
-//! in `~/.aioa/oa.db`.
+//! / logs) live in the global SQLite DB (`~/.daw/daw.db`); the brand surface
+//! (app name, tagline, logos, welcome copy, assistant identity) is driven by
+//! the user-editable `~/.daw/brand.json` (see [`brand`]).
 //!
-//! (Migrated from lakemind's `lib.rs`. The DuckDB workspace-attach on startup
-//! and the tenets bundle seeding were removed — neither exists in the OA app.
+//! (The DuckDB workspace-attach on startup and the tenets bundle seeding were
+//! removed from the earlier data-lake prototype — neither exists in this app.
 //! The tracing-subscriber setup and the logging-layer wiring are unchanged.)
 
 mod agent;
+mod brand;
 mod commands;
 mod db;
 mod duckdb;
@@ -58,14 +61,18 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .manage(AppState::default())
         .setup(|_app| {
+            use tauri::Manager;
             // Hand the AppHandle to the logging layer so it can emit to the
             // frontend `app-log` channel.
             logging::set_handle(_app.handle().clone());
 
-            #[cfg(not(target_os = "macos"))]
-            {
-                use tauri::Manager;
-                if let Some(window) = _app.get_webview_window("main") {
+            if let Some(window) = _app.get_webview_window("main") {
+                // Window title follows the brand config (~/.daw/brand.json);
+                // the value in tauri.conf.json is only the startup fallback.
+                let _ = window.set_title(&brand::load_brand().app_name);
+
+                #[cfg(not(target_os = "macos"))]
+                {
                     let _ = window.set_decorations(false);
                 }
             }
@@ -77,6 +84,8 @@ pub fn run() {
             commands::load_settings_json,
             commands::save_settings_json,
             commands::get_system_preamble,
+            commands::get_brand_config,
+            commands::get_brand_logo,
             commands::read_directory,
             commands::select_directory,
             commands::load_workspaces,

@@ -2,20 +2,21 @@
 //!
 //! Pure functions — no tauri / rig dependency — so they unit-test in isolation.
 //!
-//! (Migrated from lakemind verbatim: the provider-aware normalization and the
-//! Unicode-char-aware estimator are domain-agnostic. Only `PREAMBLE` was
-//! rewritten — the OA role + discipline rules replace the data-analysis
-//! preamble. See the trait docs on `normalize` for the provider quirks it
-//! handles.)
+//! (The provider-aware normalization and the Unicode-char-aware estimator are
+//! domain-agnostic. `PREAMBLE` was rewritten — the general-assistant role +
+//! discipline rules replace the old data-analysis preamble. See the trait docs
+//! on `normalize` for the provider quirks it handles.)
 
 // The fixed system prompt sent to the model on every call. Lives here (not in
 // agent.rs) so [`raw_preamble_tokens`] can tokenize the exact text the model
 // actually receives, keeping the estimate faithful.
 //
-// This is the 通用基座 preamble of the 研途工作台（日常办公场景）。
-// 数据分析场景有自己的 DATA_ANALYSIS_PREAMBLE。
+// `{app_name}` is the brand placeholder — `general_preamble` / `data_analysis_preamble`
+// substitute the name from `~/.daw/brand.json` before the text reaches the model.
+// This is the 通用基座 preamble（日常办公场景）；数据分析场景有自己的
+// DATA_ANALYSIS_PREAMBLE。
 pub const PREAMBLE: &str = r#"# 角色
-你是研途工作台助手——一个可靠、高效的通用 AI 助手。你擅长信息检索、院校分析、知识问答、文案撰写和信息整理，用对话帮用户完成各项任务。
+你是{app_name}助手——一个可靠、高效的通用 AI 助手。你擅长信息检索、数据分析、知识问答、文案撰写和信息整理，用对话帮用户完成各项任务。
 
 # 核心能力
 你有两个工具：
@@ -39,12 +40,12 @@ pub const PREAMBLE: &str = r#"# 角色
 你的思考过程（reasoning）也必须用中文进行。不要用英文思考，即使问题用英文提出。"#;
 
 // ---------------------------------------------------------------------------
-// 数据分析场景 preamble（从 lakemind 迁移，裁剪为本企业版）
+// 数据分析场景 preamble（内置模板，品牌名经 {app_name} 占位符注入）
 // ---------------------------------------------------------------------------
 
 /// 数据分析场景的系统提示词。
 pub const DATA_ANALYSIS_PREAMBLE: &str = r#"# 角色
-你是研途工作台的数据分析助手。你通过连接企业数据库、查询数据、生成图表来帮用户完成数据分析任务。用数据说话，不猜测、不编造。
+你是{app_name}的数据分析助手。你通过连接用户配置的数据库、查询数据、生成图表来帮用户完成数据分析任务。用数据说话，不猜测、不编造。
 
 # 工作流程
 
@@ -92,13 +93,13 @@ pub const DATA_ANALYSIS_PREAMBLE: &str = r#"# 角色
 SELECT dept, COUNT(*) FROM v_orders WHERE ds='20260811' GROUP BY dept
 
 -- 正确（远程执行聚合，只返回几行结果，快）：
-SELECT * FROM postgres_query('db_yantubi', 
+SELECT * FROM postgres_query('db_demo', 
   'SELECT dept, COUNT(*) FROM "default"."orders" 
    WHERE ds = ''20260811'' GROUP BY dept')
 ```
 
 注意：
-- 连接别名 = `db_` + 连接名（连接 `yantubi` 的别名即 `db_yantubi`）；`list_connections`、`list_tables` 已直接列出别名，照抄到 `postgres_query('别名', ...)` 第一参数即可。
+- 连接别名 = `db_` + 连接名（连接 `demo` 的别名即 `db_demo`）；`list_connections`、`list_tables` 已直接列出别名，照抄到 `postgres_query('别名', ...)` 第一参数即可。
 - 远程表名含 schema，从 `list_remote_tables` 结果复制（如 `default.orders`）。
 - 内层 SQL 的单引号要转义成 `''`。
 - WHERE / GROUP BY / ORDER BY / LIMIT 都放在内层 SQL 里，让远程数据库执行。
@@ -141,6 +142,16 @@ SELECT * FROM postgres_query('db_yantubi',
    - 其他 -> 如实告知错误，询问用户怎么处理。
 # 思考语言
 你的思考过程（reasoning）也必须用中文进行。"#;
+
+/// 注入品牌名后的通用基座 preamble（模型实际收到的文本）。
+pub fn general_preamble(app_name: &str) -> String {
+    PREAMBLE.replace("{app_name}", app_name)
+}
+
+/// 注入品牌名后的数据分析场景 preamble（模型实际收到的文本）。
+pub fn data_analysis_preamble(app_name: &str) -> String {
+    DATA_ANALYSIS_PREAMBLE.replace("{app_name}", app_name)
+}
 
 // The tool-definition token cost is estimated at runtime in the runner by
 // serializing rig's *actual* `ToolDefinition`s (name + full description + JSON

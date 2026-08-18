@@ -1,8 +1,8 @@
 //! Settings.json reading, model/provider lookup, and endpoint sanitization.
 //!
-//! (Migrated from lakemind verbatim except: the `~/.lakemind` path became
-//! `~/.aioa`; the `query_timeout`/`query_hard_timeout` fields were removed —
-//! those gated DuckDB SQL execution and have no OA equivalent. Provider/model
+//! (Ported from the earlier data-lake prototype: the settings path moved under
+//! `~/.daw`; the `query_timeout`/`query_hard_timeout` fields were removed —
+//! those gated DuckDB SQL execution and have no equivalent here. Provider/model
 //! lookup and endpoint sanitization are unchanged.)
 
 use serde::Deserialize;
@@ -23,7 +23,7 @@ fn read_saved_settings() -> SavedSettings {
     let fallback = SavedSettings {
         providers: Vec::new(),
     };
-    let mut path = match crate::db::get_aioa_dir() {
+    let mut path = match crate::db::get_app_dir() {
         Ok(p) => p,
         Err(_) => return fallback,
     };
@@ -72,7 +72,7 @@ pub(crate) fn get_provider_for_model(
     model_id: &str,
     provider_id: Option<&str>,
 ) -> Result<ModelProvider, String> {
-    let mut path = crate::db::get_aioa_dir()?;
+    let mut path = crate::db::get_app_dir()?;
     path.push("settings.json");
     if !path.exists() {
         return Err("配置文件 settings.json 不存在，请先在设置中配置模型。".to_string());

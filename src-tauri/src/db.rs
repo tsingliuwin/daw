@@ -1,16 +1,16 @@
-//! Global metadata store: `~/.aioa/aioa.db` (SQLite via `rusqlite`).
+//! Global metadata store: `~/.daw/daw.db` (SQLite via `rusqlite`).
 //!
 //! Holds the registries that are *not* business data themselves:
 //!   * `workspaces` — registered workspace directories (an isolated project:
-//!     its own task list, its own linked OA systems).
+//!     its own task list, its own linked external systems).
 //!   * `tasks`      — per-workspace chat task index (content lives in files).
 //!   * `config`     — key/value user settings.
 //!   * `logs`       — the unified, queryable log store.
 //!
-//! (Migrated from lakemind's `db.rs` with all data-lake tables removed:
+//! (All data-lake tables were dropped when ported from the earlier prototype:
 //! `sources`, `object_defs`, `db_connection_tables` are gone. The
 //! `db_connections` + `workspace_connections` tables are kept as a generic
-//! "linked external system" registry — future OA integrations store their
+//! "linked external system" registry — future integrations store their
 //! connection config there.)
 
 use std::fs;
@@ -27,29 +27,47 @@ pub fn get_home_dir() -> Option<PathBuf> {
         .ok()
 }
 
-/// Get the global config path ~/.aioa/
-pub fn get_aioa_dir() -> Result<PathBuf, String> {
-    let mut path = get_home_dir().ok_or("Could not resolve home directory".to_string())?;
-    path.push(".aioa");
+/// Get the global app data dir `~/.daw/`, lazily migrating a legacy `~/.aioa`
+/// dir (pre-open-source builds) on first run with a one-time rename. The
+/// migration preserves all workspaces, chats, settings and registries.
+pub fn get_app_dir() -> Result<PathBuf, String> {
+    let home = get_home_dir().ok_or("Could not resolve home directory".to_string())?;
+    let path = home.join(".daw");
+    let legacy = home.join(".aioa");
+    if !path.exists() && legacy.exists() {
+        fs::rename(&legacy, &path).map_err(|e| {
+            format!("Failed to migrate legacy data dir ~/.aioa to ~/.daw: {e}")
+        })?;
+    }
+    fs::create_dir_all(&path)
+        .map_err(|e| format!("Failed to create app data directory: {e}"))?;
     Ok(path)
 }
 
-/// Get the global sqlite database file path ~/.aioa/aioa.db
+/// Get the global sqlite database file path ~/.daw/daw.db. Adopts a legacy
+/// `aioa.db` that arrived via the `~/.aioa` dir migration (one-time rename), so
+/// pre-open-source installs keep their workspaces, tasks, config and logs.
 pub fn get_db_path() -> Result<PathBuf, String> {
-    let mut path = get_aioa_dir()?;
-    path.push("aioa.db");
+    let dir = get_app_dir()?;
+    let path = dir.join("daw.db");
+    if !path.exists() {
+        let legacy_db = dir.join("aioa.db");
+        if legacy_db.exists() {
+            let _ = fs::rename(&legacy_db, &path);
+        }
+    }
     Ok(path)
 }
 
 /// Get the per-space, per-user chat content directory
-/// `~/.aioa/<space_id>/<user_id>/chats/`.
+/// `~/.daw/<space_id>/<user_id>/chats/`.
 ///
 /// The "personal" space (`space_id = "personal"`) always uses
 /// `user_id = "default"`; each joined enterprise uses its UUID as `space_id`
 /// and the enterprise user's `username` as `user_id`. The directory is created
 /// (idempotent) so any caller - read or write - can rely on it existing.
 pub fn get_chats_dir(space_id: &str, user_id: &str) -> Result<PathBuf, String> {
-    let mut path = get_aioa_dir()?;
+    let mut path = get_app_dir()?;
     path.push(space_id);
     path.push(user_id);
     path.push("chats");
@@ -486,20 +504,20 @@ pub fn now_ms() -> i64 {
 }
 
 /// Best-effort one-time migration: legacy personal-mode stored chat files in
-/// `~/.aioa/chats/` (pre-multispace) and later in `~/.aioa/personal/chats/`
+/// `~/.daw/chats/` (pre-multispace) and later in `~/.daw/personal/chats/`
 /// (multispace, pre-userId). The per-user layout moves them under the personal
-/// space for the default user at `~/.aioa/personal/default/chats/`. Move any
+/// space for the default user at `~/.daw/personal/default/chats/`. Move any
 /// leftover `.json` files so existing users keep their history on upgrade.
 /// Failures are swallowed - this must never block startup.
 fn migrate_legacy_chats() {
-    let Ok(aioa_dir) = get_aioa_dir() else {
+    let Ok(app_dir) = get_app_dir() else {
         return;
     };
     let Ok(target) = get_chats_dir("personal", "default") else {
         return;
     };
     // Two legacy locations, both now consolidated under personal/default/chats.
-    let legacy_dirs = [aioa_dir.join("chats"), aioa_dir.join("personal").join("chats")];
+    let legacy_dirs = [app_dir.join("chats"), app_dir.join("personal").join("chats")];
     for legacy in legacy_dirs {
         if !legacy.is_dir() {
             continue;

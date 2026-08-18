@@ -1,6 +1,6 @@
 //! Tauri command handlers.
 //!
-//! (Migrated from lakemind's `commands.rs` — the data-lake query/import/source
+//! (The data-lake query/import/source
 //! commands and the DuckDB-backed DB-connection commands were removed; the
 //! domain-agnostic commands are kept: config / settings / workspaces / tasks /
 //! logs / agent / human-confirmation / LLM-connection test.)
@@ -36,10 +36,10 @@ pub async fn set_app_config(key: String, value: String) -> Result<(), String> {
     db::set_config(&conn, &key, &value)
 }
 
-/// Read configurations from ~/.aioa/settings.json
+/// Read configurations from ~/.daw/settings.json
 #[tauri::command]
 pub async fn load_settings_json() -> Result<String, String> {
-    let mut path = db::get_aioa_dir()?;
+    let mut path = db::get_app_dir()?;
     path.push("settings.json");
     if !path.exists() {
         return Ok("{}".to_string());
@@ -47,19 +47,34 @@ pub async fn load_settings_json() -> Result<String, String> {
     std::fs::read_to_string(path).map_err(|e| format!("读取配置文件失败: {e}"))
 }
 
-/// Write configurations to ~/.aioa/settings.json
+/// Write configurations to ~/.daw/settings.json
 #[tauri::command]
 pub async fn save_settings_json(json: String) -> Result<(), String> {
-    let mut path = db::get_aioa_dir()?;
+    let mut path = db::get_app_dir()?;
     path.push("settings.json");
     std::fs::write(path, json).map_err(|e| format!("保存配置文件失败: {e}"))
 }
 
-/// Return the fixed system prompt (PREAMBLE) sent to the model on every call.
-/// Read-only — exposes it so users can inspect what the agent is told.
+/// Return the system prompt the agent receives (brand-resolved). Read-only —
+/// exposes it so users can inspect what the agent is told.
 #[tauri::command]
 pub async fn get_system_preamble() -> Result<String, String> {
-    Ok(crate::usage::PREAMBLE.to_string())
+    Ok(crate::usage::general_preamble(
+        &crate::brand::load_brand().app_name,
+    ))
+}
+
+/// Effective brand config from `~/.daw/brand.json` (Daw defaults otherwise).
+#[tauri::command]
+pub async fn get_brand_config() -> Result<crate::brand::BrandConfig, String> {
+    Ok(crate::brand::load_brand())
+}
+
+/// Custom logo (`kind` = "light" | "dark") as a base64 data URI; `None` when
+/// no custom file is configured and the frontend should use the built-in one.
+#[tauri::command]
+pub async fn get_brand_logo(kind: String) -> Result<Option<String>, String> {
+    crate::brand::load_logo(&kind)
 }
 
 // ===========================================================================
@@ -74,7 +89,7 @@ pub struct FileItem {
 }
 
 /// Read the direct children of a folder. Used by the workspace file tree (the
-/// OA app keeps a lighter version than lakemind's data-file tree).
+/// app keeps a lighter version than the data-lake prototype's data-file tree).
 #[tauri::command]
 pub async fn read_directory(path: String) -> Result<Vec<FileItem>, String> {
     tauri::async_runtime::spawn_blocking(move || -> Result<Vec<FileItem>, String> {
@@ -88,8 +103,8 @@ pub async fn read_directory(path: String) -> Result<Vec<FileItem>, String> {
         for entry in entries {
             if let Ok(entry) = entry {
                 let name = entry.file_name().to_string_lossy().to_string();
-                // Hide dotfiles + the local data store.
-                if name.starts_with('.') || name == "aioa.db" || name == "oa.db" {
+                // Hide dotfiles + the local data store (daw.db; oa.db kept for migrated legacy dirs).
+                if name.starts_with('.') || name == "daw.db" || name == "oa.db" {
                     continue;
                 }
                 let p = entry.path();
@@ -628,7 +643,7 @@ pub async fn install_data_analysis_env(
         return Ok(());
     }
 
-    let ws_dir = match crate::db::get_aioa_dir() {
+    let ws_dir = match crate::db::get_app_dir() {
         Ok(mut p) => { p.push("DefaultProject"); p }
         Err(e) => return Err(format!("无法定位工作区目录: {e}")),
     };
@@ -884,7 +899,7 @@ fn get_home_dir() -> Option<PathBuf> {
 }
 
 /// Resolve a user-facing path: absolute paths pass through, `~`-relative paths
-/// expand against the home dir, bare names resolve under `~/.aioa/<name>`.
+/// expand against the home dir, bare names resolve under `~/.daw/<name>`.
 fn resolve_path(workspace: &str) -> Result<PathBuf, String> {
     if workspace.starts_with("~/") || workspace == "~" {
         let mut home = get_home_dir().ok_or_else(|| "Could not find home directory".to_string())?;
@@ -897,8 +912,5 @@ fn resolve_path(workspace: &str) -> Result<PathBuf, String> {
     if path.is_absolute() {
         return Ok(path);
     }
-    let mut home = get_home_dir().ok_or_else(|| "Could not find home directory".to_string())?;
-    home.push(".aioa");
-    home.push(workspace);
-    Ok(home)
+    Ok(db::get_app_dir()?.join(workspace))
 }

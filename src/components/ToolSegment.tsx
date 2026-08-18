@@ -43,7 +43,7 @@ const ARG_KEY_LABELS: Record<string, string> = {
 };
 
 /**
- * 一个工具调用段（tool_call + tool_result 合并）。相比 lakemind：
+ * 一个工具调用段（tool_call + tool_result 合并）。相比早期数据湖版本：
  *  - 去掉 SqlBlock / ResultTable / OKF 详情渲染、onOpenInSqlPanel 回调。
  *  - body 改为：seg.detail 人类可读文本 + seg.payload 简单键值对/JSON 预览。
  *  - TOOL_LABELS 换成 OA 工具。

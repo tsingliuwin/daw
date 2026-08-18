@@ -2,7 +2,7 @@
 //!
 //! 每个 DataSourceConfig 对应一个 DuckDB catalog 别名 `db_<safe_name>`，
 //! 挂载后可用 `db_<name>.schema.table` 引用远程表。
-//! 从 lakemind 迁移，砍掉了 MaxCompute/sidecar 分支。
+//! 迁移时砍掉了 MaxCompute/sidecar 分支。
 
 use crate::model::DataSourceConfig;
 

@@ -25,7 +25,7 @@ use crate::skill::data_analysis::{create_view::CreateViewTool, describe_table::D
 use crate::skill::search::SearchTool;
 use crate::skill::Scenario;
 use crate::state::AppState;
-use crate::usage::{self, DATA_ANALYSIS_PREAMBLE, PREAMBLE};
+use crate::usage::{self};
 
 /// Rebuild the LLM chat history from persisted messages.
 ///
@@ -359,7 +359,7 @@ pub(crate) async fn run_agent_task_stream(
             .and_then(|mut s| s.query_row([&task_id], |r| r.get::<_, String>(0)).ok())
             .unwrap_or_else(|| "DefaultProject".to_string())
     };
-    let ws_dir = crate::db::get_aioa_dir().unwrap_or_default().join(&ws_path);
+    let ws_dir = crate::db::get_app_dir().unwrap_or_default().join(&ws_path);
     let ws_ref = crate::skill::WorkspaceRef { path: ws_path.clone(), dir: ws_dir.clone() };
 
     // 数据分析场景：懒创建/复用该工作区的 DuckDB 连接（各工作区 lake 隔离），
@@ -507,9 +507,12 @@ pub(crate) async fn run_agent_task_stream(
         weekday_cn()
     );
 
+    // Brand name from ~/.daw/brand.json shapes the agent's self-identity in
+    // the preamble (defaults to "Daw").
+    let app_name = crate::brand::load_brand().app_name;
     let base_preamble = match scenario {
-        Scenario::General => PREAMBLE,
-        Scenario::DataAnalysis => DATA_ANALYSIS_PREAMBLE,
+        Scenario::General => usage::general_preamble(&app_name),
+        Scenario::DataAnalysis => usage::data_analysis_preamble(&app_name),
     };
 
     // 数据分析场景注入工作区 OKF memory summary。

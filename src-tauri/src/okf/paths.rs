@@ -1,4 +1,4 @@
-//! OKF 路径解析。基于 `aioa_root`（生产=~/.aioa，测试=tempdir），可注入。
+//! OKF 路径解析。基于 `app_root`（生产=~/.daw，测试=tempdir），可注入。
 
 use std::path::{Path, PathBuf};
 
@@ -7,28 +7,28 @@ use crate::okf::model::{Category, Scope};
 /// OKF 路径根。所有路径相对它解析；测试可注入 tempdir。
 #[derive(Debug, Clone)]
 pub struct OkfPaths {
-    pub aioa_root: PathBuf,
+    pub app_root: PathBuf,
 }
 
 impl OkfPaths {
-    pub fn new(aioa_root: PathBuf) -> Self {
-        Self { aioa_root }
+    pub fn new(app_root: PathBuf) -> Self {
+        Self { app_root }
     }
 
-    /// 生产环境：根 = `~/.aioa`（来自 `db::get_aioa_dir`）。
+    /// 生产环境：根 = `~/.daw`（来自 `db::get_app_dir`）。
     pub fn production() -> Self {
-        Self::new(crate::db::get_aioa_dir().unwrap_or_default())
+        Self::new(crate::db::get_app_dir().unwrap_or_default())
     }
 
     /// 全局 OKF 目录：`<root>/okf`。
     pub fn global_okf_dir(&self) -> PathBuf {
-        self.aioa_root.join("okf")
+        self.app_root.join("okf")
     }
 
     /// 工作区 OKF 目录：`<resolved_ws_dir>/okf`。
     /// `ws` 可以是相对键（如 "DefaultProject"，拼到 root 下）或绝对路径（自定义工作区）。
     pub fn workspace_okf_dir(&self, ws: &str) -> PathBuf {
-        resolve_dir_under(&self.aioa_root, ws).join("okf")
+        resolve_dir_under(&self.app_root, ws).join("okf")
     }
 
     /// 某类别在某作用域下的目录。
@@ -53,13 +53,13 @@ pub fn resolve_dir_under(root: &Path, ws: &str) -> PathBuf {
 }
 
 /// 供 commands.rs 使用的入口：把 `workspaces.path` 值解析为真实目录。
-/// 相对键 → `~/.aioa/<key>`；绝对路径原样返回。
+/// 相对键 → `~/.daw/<key>`；绝对路径原样返回。
 pub fn resolve_workspace_dir(path: &str) -> Result<PathBuf, String> {
     let p = Path::new(path);
     if p.is_absolute() {
         return Ok(p.to_path_buf());
     }
-    let root = crate::db::get_aioa_dir()?;
+    let root = crate::db::get_app_dir()?;
     Ok(root.join(path))
 }
 

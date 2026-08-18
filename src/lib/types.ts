@@ -12,7 +12,7 @@ export type LogLevel = "debug" | "info" | "warn" | "error";
 
 /** 日志分类的固定枚举。控制台多 Tab 与日志分析模块据此过滤。
  * 必须与后端 model::LOG_CATEGORIES 保持一致。
- * 相比 lakemind 去掉了 query/import/sync/duckdb，新增 oa。 */
+ * 相比早期数据湖版本去掉了 query/import/sync/duckdb，新增 oa。 */
 export type LogCategory =
   | "agent"
   | "system"
@@ -54,7 +54,7 @@ export interface LogFilter {
  * 按真实发生顺序排列：reasoning → tool → reasoning → tool → … → text(结论)。
  *
  * 与后端 wire.rs 的 Segment 枚举严格对应（tag = "type", camelCase）。
- * 相比 lakemind：tool 分支去掉 sql/table，新增 detail/payload；删除 chart 分支。
+ * 相比早期数据湖版本：tool 分支去掉 sql/table，新增 detail/payload；删除 chart 分支。
  */
 export type Segment =
   | { type: "reasoning"; id: string; text: string; elapsedMs?: number; startTime?: number }

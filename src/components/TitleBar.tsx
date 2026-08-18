@@ -2,14 +2,14 @@ import { createSignal, onCleanup, onMount, Show } from "solid-js";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getVersion } from "@tauri-apps/api/app";
 import { logError } from "../lib/logger";
-import { logoSrc } from "../lib/theme";
+import { logoSrc, brand } from "../lib/brand";
 
 const isMac = typeof navigator !== "undefined" && navigator.userAgent.includes("Mac");
 
 /**
- * 应用顶部标题栏。相比 lakemind：
+ * 应用顶部标题栏。相比早期数据湖版本：
  *  - 去掉 selectedTable / 数据相关的 prop 与中部 active source 展示。
- *  - 去掉 i18n (t) 与 updater 依赖（aioa 暂未迁移这两块），文案改为中文常量，
+ *  - 去掉 i18n (t) 与 updater 依赖（暂未迁移这两块），文案改为中文常量，
  *    更新检查菜单项暂不暴露。
  *  - 保留：品牌 logo/名称、左侧栏折叠按钮、日志抽屉折叠按钮、关于弹窗、
  *    原生窗口最小化/最大化/关闭按钮（Windows/Linux）。
@@ -69,7 +69,7 @@ export default function TitleBar(props: {
             </div>
           }>
             {/* 侧边栏折叠后只保留展开按钮（logo 和品牌名跟随左侧栏一起隐藏，
-                避免顶部重复出现 "研途工作台"）。 */}
+                避免顶部重复出现品牌名）。 */}
             <button
               class="ln-arrow-btn"
               classList={{ active: props.leftOpen }}
@@ -181,9 +181,9 @@ export default function TitleBar(props: {
               <button class="modal-close" onClick={() => setAboutOpen(false)}>✕</button>
             </div>
             <div class="modal-body">
-              <div class="about-logo"><img src={logoSrc()} alt="研途工作台" style="width: 48px; height: 48px; object-fit: contain;" /></div>
-              <h4>研途工作台</h4>
-              <p class="about-desc">用任务完成请假、报销、审批等企业办公流程。</p>
+              <div class="about-logo"><img src={logoSrc()} alt={brand().app_name} style="width: 48px; height: 48px; object-fit: contain;" /></div>
+              <h4>{brand().app_name}</h4>
+              <p class="about-desc">{brand().about_description}</p>
               <div class="about-specs">
                 <div class="spec-row"><span>版本</span><strong>{appVersion()}</strong></div>
                 <div class="spec-row"><span>环境</span><strong>Tauri Webview Backend</strong></div>

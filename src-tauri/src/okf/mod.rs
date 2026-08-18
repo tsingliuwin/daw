@@ -85,7 +85,7 @@ pub struct Okf {
 }
 
 impl Okf {
-    /// 生产构造：真 git + 系统时钟，根 = `~/.aioa`。
+    /// 生产构造：真 git + 系统时钟，根 = `~/.daw`。
     pub fn production() -> Self {
         Self::with_paths(OkfPaths::production())
     }

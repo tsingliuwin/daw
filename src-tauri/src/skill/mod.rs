@@ -18,7 +18,7 @@
 //! 1. 实现 `Skill` trait（提供 id/name/preamble）
 //! 2. 在 runner 的 `build_tools` 里加 `match skill_id` 分支，构造该 skill 的工具
 //! 3. 在 `SkillRegistry::default()` 里 `register()` 该 skill
-//! 未来可从 `~/.aioa/skills/` 动态扫描 preamble，工具构造用 trait 泛型或 WASM。
+//! 未来可从 `~/.daw/skills/` 动态扫描 preamble，工具构造用 trait 泛型或 WASM。
 
 pub mod builtin;
 pub mod context;
@@ -36,7 +36,7 @@ pub mod search;
 pub struct WorkspaceRef {
     /// Workspace key (`workspaces.path`), e.g. "DefaultProject".
     pub path: String,
-    /// Absolute workspace directory `~/.aioa/<path>`.
+    /// Absolute workspace directory `~/.daw/<path>`.
     pub dir: std::path::PathBuf,
 }
 

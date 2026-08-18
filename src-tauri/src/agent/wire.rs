@@ -1,6 +1,6 @@
 //! Wire protocol: ordered segment transcript streamed to the frontend.
 //!
-//! (Migrated from lakemind's `wire.rs` with the SQL/data-viz specifics removed:
+//! (Ported from the earlier data-lake prototype, SQL/data-viz specifics removed:
 //!   - `Segment::Tool` dropped its `sql: Option<String>` and
 //!     `table: Option<SqlResult>` fields — OA tools don't run SQL. They are
 //!     replaced by `detail: Option<String>` (a human-readable summary of the

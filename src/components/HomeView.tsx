@@ -2,18 +2,21 @@ import { For, Show, createMemo, createSignal, onCleanup } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type { ModelOption, Workspace } from "../lib/types";
-import { logoSrc } from "../lib/theme";
+import { logoSrc, brand } from "../lib/brand";
 import Select from "./Select";
 import ComposerActions from "./ComposerActions";
 
 /** 工作区下拉末尾「选择新文件夹...」项的占位 value（不会是合法路径）。 */
 const NEW_FOLDER_VALUE = "__new_folder__";
 
-/** 场景配置（可扩展：未来加"设计创意"等）。 */
-const SCENARIOS = [
-  { id: "task", label: "日常办公", subtitle: "用对话完成任务——院校分析、信息整理、文案撰写，随时待命。", placeholder: "试试：「帮我分析一下今年的招生趋势」或「告诉我最近五年的考研报考人数」" },
-  { id: "data_analysis", label: "数据分析", subtitle: "查询数据库、生成图表、沉淀业务知识--用对话驱动数据分析。", placeholder: "试试：「查看有哪些数据表」或「统计各院系今年的人数并画个柱状图」" },
-] as const;
+/**
+ * 场景配置。结构固定（task / data_analysis 两个 id，决定 agent 工具集与
+ * preamble），文案来自 `~/.daw/brand.json`（见 lib/brand.ts），可整站定制。
+ */
+const scenarios = () => [
+  { id: "task" as const, ...brand().home.task },
+  { id: "data_analysis" as const, ...brand().home.data_analysis },
+];
 
 /**
  * 首页/欢迎页：居中的大输入框。
@@ -126,10 +129,11 @@ export default function HomeView(props: {
       <div class="home-view__inner">
         {/* 品牌 */}
         <div class="home-view__brand">
-          <img src={logoSrc()} alt="研途工作台" class="home-view__logo" />
-          <h1 class="home-view__title">研途工作台</h1>
+          <img src={logoSrc()} alt={brand().app_name} class="home-view__logo" />
+          <h1 class="home-view__title">{brand().home.welcome_title || brand().app_name}</h1>
+          <p class="home-view__welcome-sub">{brand().home.welcome_subtitle || brand().tagline}</p>
           <div class="home-view__scenario-group">
-            <For each={SCENARIOS}>
+            <For each={scenarios()}>
               {(s) => (
                 <button
                   class="home-view__scenario-btn"
@@ -142,7 +146,7 @@ export default function HomeView(props: {
             </For>
           </div>
           <p class="home-view__subtitle">
-            {SCENARIOS.find((s) => s.id === props.selectedScenario)?.subtitle ?? SCENARIOS[0].subtitle}
+            {scenarios().find((s) => s.id === props.selectedScenario)?.subtitle ?? scenarios()[0].subtitle}
           </p>
         </div>
 
@@ -178,7 +182,7 @@ export default function HomeView(props: {
             class="home-composer__input"
             placeholder={
               hasModels()
-                ? (SCENARIOS.find((s) => s.id === props.selectedScenario)?.placeholder ?? SCENARIOS[0].placeholder)
+                ? (scenarios().find((s) => s.id === props.selectedScenario)?.placeholder ?? scenarios()[0].placeholder)
                 : "请先在设置中配置大模型服务商…"
             }
             value={input()}

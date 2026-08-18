@@ -1,6 +1,6 @@
 //! One-shot LLM completion (no tools, no window events).
 //!
-//! (Migrated verbatim from lakemind. Used for background LLM tasks — e.g.
+//! (Used for background LLM tasks — e.g.
 //! generating a human-readable title for a leave request. Mirrors the provider-
 //! client construction in [`crate::agent::runner::run_agent_chat_stream`] but
 //! stripped down.)

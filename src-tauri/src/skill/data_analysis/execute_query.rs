@@ -76,7 +76,7 @@ impl Tool for ExecuteQueryTool {
         let sql_string = sql.to_string();
 
         // 别名归一化兜底：LLM 常把 postgres_query 的 catalog 别名写成原始连接名
-        // （如 `yantubi` 而非 `db_yantubi`），导致 binder 报
+        // （如 `demo` 而非 `db_demo`），导致 binder 报
         // "Failed to find attached database"。执行前据已注册连接自动改写。
         // 多数查询不含 postgres_query，先快速过滤避免无谓的 DB 加载。
         let sql_string = if sql.to_ascii_lowercase().contains("postgres_query") {
@@ -295,7 +295,7 @@ fn extract_table_names(sql: &str) -> Vec<String> {
 
 /// 归一化 SQL 里 `postgres_query` 第一个参数（catalog 别名）。
 ///
-/// LLM 常把 catalog 别名写成原始连接名（如 `yantubi` 而非 `db_yantubi`），
+/// LLM 常把 catalog 别名写成原始连接名（如 `demo` 而非 `db_demo`），
 /// 导致 DuckDB binder 报 "Failed to find attached database"。这里扫描每个
 /// `postgres_query('xxx', ...)`，若 `xxx` 是已注册连接的原始名，就改写成
 /// `db_<xxx>`，在执行前兜底纠偏。连接名恒为 ASCII，切片边界均为字符边界。
@@ -399,56 +399,56 @@ mod tests {
 
     #[test]
     fn rewrites_raw_name_to_alias() {
-        let sql = "SELECT * FROM postgres_query('yantubi', 'SELECT 1')";
-        let out = normalize_pg_query_aliases(sql, &[conn("yantubi")]);
-        assert_eq!(out, "SELECT * FROM postgres_query('db_yantubi', 'SELECT 1')");
+        let sql = "SELECT * FROM postgres_query('demo', 'SELECT 1')";
+        let out = normalize_pg_query_aliases(sql, &[conn("demo")]);
+        assert_eq!(out, "SELECT * FROM postgres_query('db_demo', 'SELECT 1')");
     }
 
     #[test]
     fn leaves_correct_alias_untouched() {
-        let sql = "SELECT * FROM postgres_query('db_yantubi', 'SELECT 1')";
-        let out = normalize_pg_query_aliases(sql, &[conn("yantubi")]);
+        let sql = "SELECT * FROM postgres_query('db_demo', 'SELECT 1')";
+        let out = normalize_pg_query_aliases(sql, &[conn("demo")]);
         assert_eq!(out, sql);
     }
 
     #[test]
     fn no_postgres_query_untouched() {
         let sql = "SELECT * FROM v_orders WHERE ds='20260811'";
-        let out = normalize_pg_query_aliases(sql, &[conn("yantubi")]);
+        let out = normalize_pg_query_aliases(sql, &[conn("demo")]);
         assert_eq!(out, sql);
     }
 
     #[test]
     fn handles_whitespace_and_case() {
-        let sql = "select * from POSTGRES_QUERY ( 'yantubi' , 'SELECT 1' )";
-        let out = normalize_pg_query_aliases(sql, &[conn("yantubi")]);
-        assert_eq!(out, "select * from POSTGRES_QUERY ( 'db_yantubi' , 'SELECT 1' )");
+        let sql = "select * from POSTGRES_QUERY ( 'demo' , 'SELECT 1' )";
+        let out = normalize_pg_query_aliases(sql, &[conn("demo")]);
+        assert_eq!(out, "select * from POSTGRES_QUERY ( 'db_demo' , 'SELECT 1' )");
     }
 
     #[test]
     fn preserves_inner_query_with_chinese_and_quotes() {
-        let sql = "SELECT * FROM postgres_query('yantubi', 'SELECT * FROM \"default\".\"t\" WHERE report_module = ''5_咨询团队'' ORDER BY 1')";
-        let out = normalize_pg_query_aliases(sql, &[conn("yantubi")]);
+        let sql = "SELECT * FROM postgres_query('demo', 'SELECT * FROM \"default\".\"t\" WHERE report_module = ''5_示例部门'' ORDER BY 1')";
+        let out = normalize_pg_query_aliases(sql, &[conn("demo")]);
         assert_eq!(
             out,
-            "SELECT * FROM postgres_query('db_yantubi', 'SELECT * FROM \"default\".\"t\" WHERE report_module = ''5_咨询团队'' ORDER BY 1')"
+            "SELECT * FROM postgres_query('db_demo', 'SELECT * FROM \"default\".\"t\" WHERE report_module = ''5_示例部门'' ORDER BY 1')"
         );
     }
 
     #[test]
     fn rewrites_multiple_occurrences() {
-        let sql = "SELECT * FROM postgres_query('yantubi', 'SELECT 1') JOIN postgres_query('yantubi', 'SELECT 2')";
-        let out = normalize_pg_query_aliases(sql, &[conn("yantubi")]);
+        let sql = "SELECT * FROM postgres_query('demo', 'SELECT 1') JOIN postgres_query('demo', 'SELECT 2')";
+        let out = normalize_pg_query_aliases(sql, &[conn("demo")]);
         assert_eq!(
             out,
-            "SELECT * FROM postgres_query('db_yantubi', 'SELECT 1') JOIN postgres_query('db_yantubi', 'SELECT 2')"
+            "SELECT * FROM postgres_query('db_demo', 'SELECT 1') JOIN postgres_query('db_demo', 'SELECT 2')"
         );
     }
 
     #[test]
     fn ignores_unknown_name() {
         let sql = "SELECT * FROM postgres_query('other', 'SELECT 1')";
-        let out = normalize_pg_query_aliases(sql, &[conn("yantubi")]);
+        let out = normalize_pg_query_aliases(sql, &[conn("demo")]);
         assert_eq!(out, sql);
     }
 }

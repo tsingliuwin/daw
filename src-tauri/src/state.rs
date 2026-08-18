@@ -13,7 +13,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio::sync::oneshot;
 
-use crate::db::get_home_dir;
+use crate::db::get_app_dir;
 
 /// User's decision on whether a pending write operation should proceed.
 #[derive(Debug, Clone)]
@@ -42,7 +42,7 @@ pub struct WorkspaceConnInner {
     pub conn: Arc<Mutex<duckdb::Connection>>,
     /// Interrupt handle for query timeouts on this connection.
     pub interrupt_handle: Arc<std::sync::Mutex<Arc<duckdb::InterruptHandle>>>,
-    /// Absolute path of this workspace's directory (`~/.aioa/<workspace>`).
+    /// Absolute path of this workspace's directory (`~/.daw/<workspace>`).
     /// Retained for introspection/future close-hook checkpoint; not read in
     /// the tool hot path (tools get their path from the injected `WorkspaceRef`).
     #[allow(dead_code)]
@@ -105,12 +105,11 @@ impl Default for AppState {
 }
 
 impl AppState {
-    /// Resolve a workspace's directory: `~/.aioa/<ws_path>`.
+    /// Resolve a workspace's directory: `~/.daw/<ws_path>`.
     fn workspace_dir_for(ws_path: &str) -> PathBuf {
-        let mut home = get_home_dir().unwrap_or_else(|| PathBuf::from("."));
-        home.push(".aioa");
-        home.push(ws_path);
-        home
+        get_app_dir()
+            .unwrap_or_else(|_| PathBuf::from("."))
+            .join(ws_path)
     }
 
     /// Lazily get (or create) the DuckDB connection bundle for `ws_path`.

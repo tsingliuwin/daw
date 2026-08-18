@@ -51,7 +51,7 @@ const API_FORMAT_OPTIONS = [
 ] as const;
 
 /**
- * 设置页。相比 lakemind 大幅瘦身：
+ * 设置页。相比早期数据湖版本大幅瘦身：
  *  - 只保留 general（主题/缩放）与 modelSettings（LLM provider 配置）两个 tab。
  *  - 删除 databases / systemPrompt / tenets / sampling 等 tab 及其全部逻辑。
  *  - provider 配置的 load/save 用 load_settings_json / save_settings_json，

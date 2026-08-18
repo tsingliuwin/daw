@@ -1,4 +1,4 @@
-//! 数据分析场景工具——从 lakemind 迁移的查询闭环。
+//! 数据分析场景工具——查询闭环。
 //!
 //! P1 含 4 个只读查询工具（execute_query / list_tables / describe_table /
 //! sample_data）。DDL 加工工具（create_table / create_view / drop_object）

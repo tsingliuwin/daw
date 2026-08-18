@@ -1,7 +1,8 @@
 import { Show } from "solid-js";
+import { brand } from "../lib/brand";
 
 /**
- * 备用顶部栏组件。相比 lakemind 瘦身：去掉 inspector 切换（aioa 无右侧检查器），
+ * 备用顶部栏组件。相比早期数据湖版本瘦身：去掉 inspector 切换（无右侧检查器），
  * 只保留品牌、日志抽屉折叠、设置按钮。主布局实际使用 TitleBar，TopBar 作为
  * 轻量替代保留，按需引用。
  */
@@ -12,8 +13,8 @@ export default function TopBar(props: {
 }) {
   return (
     <header class="topbar">
-      <span class="brand">研途工作台</span>
-      <span class="brand-sub">任务驱动办公</span>
+      <span class="brand">{brand().app_name}</span>
+      <span class="brand-sub">{brand().tagline}</span>
       <span class="spacer" />
       <div class="toggle-group">
         <Show

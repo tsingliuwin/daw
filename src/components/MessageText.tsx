@@ -20,7 +20,7 @@ type ResolvedChunk =
  *
  * Streaming stability: reuses chart-ref chunk objects across re-renders so
  * SolidJS <For> (reference-keyed) doesn't dispose+recreate echarts instances
- * on every token. See lakemind's original for the full rationale.
+ * on every token.
  */
 export default function MessageText(props: { text: string; segments?: Segment[]; charts?: Segment[] }) {
   let chartChunkCache = new Map<string, ResolvedChunk>();

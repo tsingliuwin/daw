@@ -8,6 +8,7 @@ import { appendDelta, pushToolCall, mergeToolResult, normalizeMessage, newSegmen
 import { mergeUsage } from "./lib/metrics";
 import { logsSignal, logError, installAppLogListener, clearLogsStore } from "./lib/logger";
 import { persistTheme, currentTheme, loadThemeFromBackend, type Theme } from "./lib/theme";
+import { loadBrandFromBackend } from "./lib/brand";
 import TitleBar from "./components/TitleBar";
 import LeftNav from "./components/LeftNav";
 import ChatView from "./components/ChatView";
@@ -15,7 +16,7 @@ import HomeView from "./components/HomeView";
 import SettingsPage from "./components/SettingsPage";
 
 /**
- * 应用主布局与状态中枢。相比 lakemind 大幅精简：
+ * 应用主布局与状态中枢。相比早期数据湖版本大幅精简：
  *   - 删除所有 SQL 编辑器、结果表、右侧 inspector、文件拖拽、HomePanel、
  *     数据树、数据库连接、import 监听、chart 段处理等。
  *   - 保留 task 相关的状态管理与流式聚合：workspaces / tasksByWorkspace /
@@ -273,6 +274,8 @@ export default function App() {
 
     // 从后端 config 表恢复主题（ui.theme）。
     void loadThemeFromBackend();
+    // 拉取品牌配置（~/.daw/brand.json）：app 名称、文案、自定义 logo、窗口标题。
+    void loadBrandFromBackend();
 
     // 安装 agent-event 监听器：聚合 reasoning/text/tool_call/tool_result/usage/
     // done/error 流进当前 assistant 消息的 segments。

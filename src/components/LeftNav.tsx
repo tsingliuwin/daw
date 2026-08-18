@@ -1,17 +1,18 @@
 import { For, Show } from "solid-js";
 import type { Workspace, Task } from "../lib/types";
-import { logoSrc, currentTheme } from "../lib/theme";
+import { logoSrc, brand } from "../lib/brand";
+import { currentTheme } from "../lib/theme";
 import BrandFooter from "./BrandFooter";
 
 const isMac = typeof navigator !== "undefined" && navigator.userAgent.includes("Mac");
 
 /**
- * 左侧导航（重写版）。相比 lakemind 删掉了全部文件树 / 数据树 / 数据库连接 / 更新
+ * 左侧导航（重写版）。相比早期数据湖版本删掉了全部文件树 / 数据树 / 数据库连接 / 更新
  * 徽标 / 多种新建动作逻辑，只保留 OA 任务所需的最小集合：
  *   - 工作区折叠分组（多工作区并存，非下拉切换）：每组 header = ▶/▼ 三角 +
  *     工作区名 + 右侧「+」按钮（新建任务）；展开时渲染该工作区下的任务项。
  *   - 任务项：点击选中、可删除，active 高亮。
- * 风格沿用 lakemind 的 CSS 类名（ln-*）与深色变量。
+ * 风格沿用早期版本的 CSS 类名（ln-*）与深色变量。
  */
 export default function LeftNav(props: {
   workspaces: Workspace[];
@@ -39,8 +40,8 @@ export default function LeftNav(props: {
       {/* 顶部：logo（非 mac）+ 侧边栏折叠按钮 */}
       <div class="ln-top-bar" classList={{ "mac-nav": isMac }}>
         <Show when={!isMac}>
-          <div class="ln-logo-box" title="研途工作台">
-            <img src={logoSrc()} alt="研途工作台" style="width: 18px; height: 18px; object-fit: contain;" />
+          <div class="ln-logo-box" title={brand().app_name}>
+            <img src={logoSrc()} alt={brand().app_name} style="width: 18px; height: 18px; object-fit: contain;" />
           </div>
         </Show>
         <div class="ln-nav-arrows" data-tauri-drag-region>

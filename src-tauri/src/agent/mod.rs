@@ -1,8 +1,8 @@
 //! Agent orchestration: rig tools, wire protocol, streaming runner, and the
 //! single public entry point [`run_agent_chat_stream`].
 //!
-//! (Migrated from lakemind's `agent/` module with the data-analysis specifics
-//! stripped: the 16 SQL/OKF tools are gone, replaced by OA tools; the
+//! (Ported from the earlier data-lake prototype with the data-analysis specifics
+//! stripped: the 16 SQL/OKF tools are gone, replaced by built-in tools; the
 //! `Segment` wire type no longer carries `SqlResult`/`Chart`; the streaming
 //! runner, the rate-limit retry, the abort handling, and the usage accounting
 //! are preserved verbatim — they are domain-agnostic.)

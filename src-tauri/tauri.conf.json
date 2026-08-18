@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "aioa",
+  "productName": "Daw",
   "version": "0.1.0",
-  "identifier": "com.aioa.desktop",
+  "identifier": "com.daw.desktop",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
@@ -13,7 +13,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "研途工作台",
+        "title": "Daw",
         "width": 1200,
         "height": 768,
         "decorations": true,

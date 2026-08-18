@@ -11,9 +11,9 @@ fn main() {
     if conn.execute("LOAD sqlite;", []).is_err() { let _ = conn.execute("INSTALL sqlite;", []); conn.execute("LOAD sqlite;", []).unwrap(); }
 
     let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-    let db_path = format!("{home}/.aioa/aioa.db");
+    let db_path = format!("{home}/.daw/daw.db");
     let sqlite = rusqlite::Connection::open(&db_path).unwrap();
-    let lake_dir = format!("{home}/.aioa/DefaultProject");
+    let lake_dir = format!("{home}/.daw/DefaultProject");
     let _ = std::fs::create_dir_all(format!("{lake_dir}/.lake/lake_data/"));
     let catalog_str = format!("{lake_dir}/.lake/lake.sqlite").replace('\\', "/");
     let data_str = format!("{lake_dir}/.lake/lake_data/").replace('\\', "/");

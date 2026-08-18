@@ -1,5 +1,5 @@
 /* ===========================================================================
-   LakeMind — ZCode 3.0 Premium Dark Theme Design System & Layout
+   Daw — design system & dark layout
    =========================================================================== */
 
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
@@ -1152,7 +1152,7 @@ select:hover:not(:disabled) {
   background: var(--bg-hover);
   color: var(--text-primary);
 }
-/* Bottom brand area: logo + "LakeMind". Clickable to open settings, but styled
+/* Bottom brand area: logo + brand name. Clickable to open settings, but styled
  * as a plain brand label (no button chrome, no hover effect) — same as the
  * settings sidebar's .ss-brand. */
 .ln-theme-toggle,
@@ -2518,7 +2518,7 @@ body.dragging-active-v * {
   gap: 4px;
 }
 
-/* Bottom brand area in the settings sidebar: logo + "LakeMind" (clickable to exit). */
+/* Bottom brand area in the settings sidebar: logo + brand name (clickable to exit). */
 .ss-brand {
   display: flex;
   align-items: center;
@@ -6506,9 +6506,9 @@ button.lm-select-trigger:hover:not(:disabled) {
 
 
 /* ===========================================================================
-   AI OA — 补丁样式（迁移新增的类名）
+   补丁样式（重写迁移新增的类名）
    ----------------------------------------------------------------------------
-   lakemind 的 App.css 整体复用，但 aioa 的 App.tsx / LeftNav / SettingsPage /
+   早期数据湖版本的 App.css 整体复用，但本应用的 App.tsx / LeftNav / SettingsPage /
    ToolSegment 等组件用了新的类名（或重写过），这些类在原 CSS 里没有定义，
    导致界面空白。下面补齐这些类，全部复用上方已定义的设计变量。
    =========================================================================== */
@@ -6818,7 +6818,7 @@ button.lm-select-trigger:hover:not(:disabled) {
 .icon-btn:hover { background: var(--bg-hover); color: var(--text-primary); }
 
 /* ===========================================================================
-   TitleBar 补充 —— .tb-menu-trigger-btn（lakemind 用的是 tb-menu-trigger）
+   TitleBar 补充 —— .tb-menu-trigger-btn（早期版本用的是 tb-menu-trigger）
    =========================================================================== */
 .tb-menu-trigger-btn {
   background: transparent;
@@ -6936,7 +6936,7 @@ button.lm-select-trigger:hover:not(:disabled) {
 }
 
 /* ===========================================================================
-   ChatView 补充 —— .chat-composer-inner（lakemind 拆分出来的内层）
+   ChatView 补充 —— .chat-composer-inner（早期版本拆分出来的内层）
    =========================================================================== */
 .chat-composer-inner {
   flex: 1;
@@ -7484,6 +7484,12 @@ input[type="number"] {
   font-weight: 700;
   color: var(--text-primary);
   letter-spacing: -0.5px;
+}
+.home-view__welcome-sub {
+  margin: -6px 0 0;
+  font-size: 13px;
+  color: var(--text-secondary);
+  text-align: center;
 }
 .home-view__subtitle {
   margin: 0;

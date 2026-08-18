@@ -1,7 +1,7 @@
 {
-  "name": "aioa",
+  "name": "daw",
   "version": "0.1.0",
-  "description": "AI OA — drive your enterprise workflows through conversation",
+  "description": "Daw — Data Agent Workstation: a customizable conversational workbench for data and tasks",
   "type": "module",
   "scripts": {
     "start": "vite",

@@ -2,10 +2,10 @@
 //! via `window.emit("agent-event", ...)`. All tools and the streaming runner go
 //! through these helpers so the wire format stays consistent.
 //!
-//! (Migrated from lakemind with the SQL/chart specifics removed:
+//! (Ported from the earlier data-lake prototype, SQL/chart specifics removed:
 //!   - `emit_tool_result` / `emit_tool_awaiting` take `detail` + `payload`
 //!     instead of `sql` + `table: SqlResult`.
-//!   - `emit_chart` is gone (no inline chart in the OA app).
+//!   - `emit_chart` is gone (no inline charts in this app).
 //! The usage helpers, the tool-call id generator, and the abort/done bookkeeping
 //! are unchanged.)
 

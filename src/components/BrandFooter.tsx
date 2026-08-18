@@ -1,10 +1,10 @@
 import { Show } from "solid-js";
+import { brand } from "../lib/brand";
 
 /**
- * 共用的底部品牌区：左侧「研途工作台」品牌名 + 右侧按钮组。
+ * 共用的底部品牌区：左侧品牌名（来自 ~/.daw/brand.json，见 lib/brand.ts）+ 右侧按钮组。
  *
- * 主界面 LeftNav 和设置页 SettingsPage 都用它，保证品牌区样式一致、单一数据源
- * （品牌名只在这里改一次）。
+ * 主界面 LeftNav 和设置页 SettingsPage 都用它，保证品牌区样式一致、单一数据源。
  *
  * 右侧按钮（从左到右）：
  *  - `onToggleTheme`：太阳/月亮图标，在深色 ↔ 浅色间二态切换（主界面用）。
@@ -22,7 +22,7 @@ export default function BrandFooter(props: {
 }) {
   return (
     <div class="ln-footer">
-      <span class="ln-brand-name">研途工作台</span>
+      <span class="ln-brand-name">{brand().app_name}</span>
       <div class="ln-footer-actions">
         {props.onToggleTheme && (
           <button

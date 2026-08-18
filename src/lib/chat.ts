@@ -4,7 +4,7 @@ import type { ChatMessage, Segment } from "./types";
  * (reasoning → tool → … → text). These helpers mutate/produce segment arrays
  * for the streaming event listener and migrate legacy persisted messages.
  *
- * 相比 lakemind：删除 pushChart；mergeToolResult 的 result 参数去掉 sql/table，
+ * 相比早期数据湖版本：删除 pushChart；mergeToolResult 的 result 参数去掉 sql/table，
  * 改为 detail/payload；normalizeMessage 删除对旧 ChatCard 的迁移逻辑。
  */
 
@@ -120,7 +120,7 @@ export function mergeToolResult(
  * (legacy or simple shape) become a single text segment.
  *
  * Tolerates partially-shaped objects (the backend load gives us raw JSON).
- * 相比 lakemind：删除对旧 ChatCard 卡片数组的迁移逻辑（aioa 无历史数据湖卡片）。
+ * 相比早期数据湖版本：删除对旧 ChatCard 卡片数组的迁移逻辑（无历史数据湖卡片）。
  */
 export function normalizeMessage(raw: any): ChatMessage {
   if (raw && Array.isArray(raw.segments)) {

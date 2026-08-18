@@ -3,7 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 
 export type Theme = "geek-dark" | "classic-dark" | "light";
 
-// 主题存在后端 config 表（~/.aioa/aioa.db），key = ui.theme。
+// 主题存在后端 config 表（~/.daw/daw.db），key = ui.theme。
 // 不用 localStorage——webview 的 localStorage 跨窗口不共享、清缓存会丢；
 // 后端 config 表是单一数据源，重启/跨窗口一致。
 const THEME_CONFIG_KEY = "ui.theme";
@@ -28,9 +28,6 @@ export function persistTheme(t: Theme) {
   });
 }
 export const [currentZoom, setCurrentZoom] = createSignal<number>(100);
-
-/** Logo path for the current theme: white logo on dark themes, dark logo on light. */
-export const logoSrc = () => (currentTheme() === "light" ? "/logo.png" : "/logo_white.png");
 
 // Set theme class on the document root when it changes
 createEffect(() => {

@@ -407,7 +407,7 @@ impl Tool for SearchTool {
 /// 从 settings.json 读搜索配置，构造对应的 SearchBackend。
 /// 返回 None 表示未配置搜索服务。
 pub fn create_search_backend_from_settings() -> Option<Arc<dyn SearchBackend>> {
-    let mut path = crate::db::get_aioa_dir().ok()?;
+    let mut path = crate::db::get_app_dir().ok()?;
     path.push("settings.json");
     let content = std::fs::read_to_string(&path).ok()?;
     let settings: serde_json::Value = serde_json::from_str(&content).ok()?;

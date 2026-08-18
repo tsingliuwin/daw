@@ -17,9 +17,9 @@ const asError = (s: Segment): ErrorSeg | null => (s.type === "error" ? s : null)
 /**
  * 任务模式主区：消息流（上）+ 段内嵌 + 底部常驻输入框。
  *
- * 相比 lakemind：
+ * 相比早期数据湖版本：
  *  - 去掉 onOpenInSqlPanel / onAddFile / onAddFolder 等 prop 及对应 UI。
- *  - 内部渲染把 ChartSegment 段移除（aioa 无 chart 段），ToolSegment 换成新版，
+ *  - 内部渲染把 ChartSegment 段移除（无 chart 段），ToolSegment 换成新版，
  *    MessageText 换成纯文本版（只接收 text）。
  *  - 保留：消息流渲染（按 segment 顺序：reasoning 折叠 → tool 段 → text markdown）、
  *    贴底滚动、token 容量条（用 derivePanelMetrics）、模型选择器、优先级选择器、
@@ -741,7 +741,7 @@ export default function ChatView(props: {
 }
 
 /**
- * 思考过程内容区：自带独立的贴底滚动管理（保留 lakemind 实现）。
+ * 思考过程内容区：自带独立的贴底滚动管理（沿用早期实现）。
  */
 function ReasoningBody(props: { text: string }) {
   let bodyRef: HTMLDivElement | undefined;
