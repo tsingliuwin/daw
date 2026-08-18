@@ -1,0 +1,276 @@
+name: Release
+
+# 发版工作流（参考 lakemind 的同名流程，产物托管改为 GitHub Releases 直链）：
+#   prepare          解析 tag → 版本/级别 → 构建矩阵
+#   build            各平台构建 + 签名 + tauri-action 发布 GitHub Release
+#   update-manifest  汇总 .sig → 生成 updates/latest.json → 提交回 main
+#
+# 二进制托管：GitHub Release 资产（稳定直链）；
+# 更新 manifest：仓库内 updates/latest.json，经 raw.githubusercontent.com 提供给
+# 应用内更新器（见 src-tauri/tauri.conf.json plugins.updater.endpoints）。
+#
+# 触发：
+#   - push 标签 v*（级别由语义化版本号自动推导：patch 非 0 = small；
+#     minor 非 0 或 major = 0 => medium；其余 large）
+#   - 手动 dispatch（指定 level 与 tag）
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      release_level:
+        description: 'Release level (small, medium, large)'
+        required: true
+        default: 'small'
+        type: choice
+        options: [small, medium, large]
+      tag_name:
+        description: 'Release tag name (e.g. v0.1.0)'
+        required: true
+        default: 'v0.1.0'
+
+permissions:
+  contents: write
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.determine.outputs.matrix }}
+      tag_name: ${{ steps.determine.outputs.tag_name }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Determine Release Settings
+        id: determine
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG_NAME="${{ github.event.inputs.tag_name }}"
+            RELEASE_LEVEL="${{ github.event.inputs.release_level }}"
+          else
+            TAG_NAME="${GITHUB_REF_NAME}"
+            VERSION="${TAG_NAME#v}"
+            if echo "$VERSION" | grep -qE '^([0-9]+)\.([0-9]+)\.([0-9]+)$'; then
+              MAJOR=$(echo "$VERSION" | cut -d. -f1)
+              MINOR=$(echo "$VERSION" | cut -d. -f2)
+              PATCH=$(echo "$VERSION" | cut -d. -f3)
+              if [ "$PATCH" != "0" ]; then
+                RELEASE_LEVEL="small"
+              elif [ "$MINOR" != "0" ] || [ "$MAJOR" = "0" ]; then
+                RELEASE_LEVEL="medium"
+              else
+                RELEASE_LEVEL="large"
+              fi
+            else
+              echo "::error::Tag $TAG_NAME is not a valid semver; defaulting to small"
+              RELEASE_LEVEL="small"
+            fi
+          fi
+
+          echo "Release $TAG_NAME (level: $RELEASE_LEVEL)"
+
+          # small/medium：Windows + macOS arm64；large 追加 macOS x64 与 Linux。
+          if [ "$RELEASE_LEVEL" = "large" ]; then
+            MATRIX='{"level":"large","include":[
+              {"os":"windows-latest","target":"","args":""},
+              {"os":"macos-latest","target":"aarch64-apple-darwin","args":"--target aarch64-apple-darwin"},
+              {"os":"macos-latest","target":"x86_64-apple-darwin","args":"--target x86_64-apple-darwin"},
+              {"os":"ubuntu-22.04","target":"","args":""}
+            ]}'
+          else
+            MATRIX='{"level":"small","include":[
+              {"os":"windows-latest","target":"","args":""},
+              {"os":"macos-latest","target":"aarch64-apple-darwin","args":"--target aarch64-apple-darwin"}
+            ]}'
+          fi
+          echo "matrix=$MATRIX" >> $GITHUB_OUTPUT
+          echo "tag_name=$TAG_NAME" >> $GITHUB_OUTPUT
+
+  build:
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.prepare.outputs.matrix) }}
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+          # shared-key 必须与 ci.yml 完全一致，才能命中缓存预热产物。
+          shared-key: "tauri-${{ matrix.os }}-${{ matrix.target }}"
+          save-if: "true"
+          cache-on-failure: "true"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      # small 级只打必要包（跳过全量 targets，省构建时间）。
+      - name: Optimize Tauri config for small release
+        if: matrix.level == 'small'
+        shell: bash
+        run: |
+          node -e "
+          const fs = require('fs');
+          const configPath = 'src-tauri/tauri.conf.json';
+          const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+          if (process.platform === 'win32') {
+            config.bundle.targets = ['nsis'];
+          } else if (process.platform === 'darwin') {
+            config.bundle.targets = ['app', 'dmg'];
+          }
+          fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
+          console.log('bundle.targets ->', config.bundle.targets);
+          "
+
+      - name: Install Linux dependencies
+        if: matrix.os == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libssl-dev
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Build and publish GitHub Release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # 给更新包签名，应用内更新器才能校验。
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: ${{ needs.prepare.outputs.tag_name }}
+          releaseName: "${{ needs.prepare.outputs.tag_name }}"
+          releaseDraft: false
+          prerelease: false
+          # 自行生成 updates/latest.json（见 update-manifest），不上传 action 的默认 manifest。
+          includeUpdaterJson: false
+          updaterJsonPreferNsis: true
+          releaseBody: "完整更新说明见 [CHANGELOG.md](https://github.com/tsingliuwin/daw/blob/main/CHANGELOG.md)"
+          args: ${{ matrix.args }}
+
+      # 收集本平台的 updater 签名文件（与 Release 资产同名），传给 update-manifest。
+      - name: Collect updater signature
+        shell: bash
+        run: |
+          if [ -n "${{ matrix.target }}" ]; then
+            BASE="src-tauri/target/${{ matrix.target }}/release/bundle"
+          else
+            BASE="src-tauri/target/release/bundle"
+          fi
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+            SIG=$(find "$BASE/nsis" -maxdepth 1 -name "*-setup.exe.sig" | head -n 1)
+          elif [ "${{ matrix.os }}" = "macos-latest" ]; then
+            SIG=$(find "$BASE/macos" -maxdepth 1 -name "*.app.tar.gz.sig" | head -n 1)
+          else
+            SIG=$(find "$BASE/appimage" -maxdepth 1 -name "*.AppImage.sig" | head -n 1)
+          fi
+          if [ -z "$SIG" ]; then
+            echo "::error::No updater .sig found under $BASE. Check createUpdaterArtifacts and the TAURI_SIGNING_PRIVATE_KEY secret (re-copy exactly: cat ~/.tauri/daw.key)."
+            exit 1
+          fi
+          mkdir -p updater-sigs
+          cp "$SIG" updater-sigs/
+          echo "Collected: $(basename "$SIG")"
+
+      - name: Upload updater signature
+        uses: actions/upload-artifact@v4
+        with:
+          name: updater-sig-${{ matrix.os }}${{ matrix.target != '' && format('-{0}', matrix.target) || '' }}
+          path: updater-sigs/*.sig
+          if-no-files-found: error
+          retention-days: 7
+
+  update-manifest:
+    needs: [prepare, build]
+    if: always() && needs.prepare.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Download updater signatures
+        uses: actions/download-artifact@v4
+        with:
+          pattern: updater-sig-*
+          merge-multiple: true
+          path: updater-sigs
+
+      - name: Generate latest.json
+        shell: bash
+        env:
+          TAG_NAME: ${{ needs.prepare.outputs.tag_name }}
+        run: |
+          node --input-type=commonjs -e '
+          const fs = require("fs");
+          const path = require("path");
+          const tag = process.env.TAG_NAME;
+          const version = tag.replace(/^v/, "");
+          const downloadBase = `https://github.com/tsingliuwin/daw/releases/download/${tag}`;
+
+          // 更新说明：从 CHANGELOG.md 提取该版本小节（`## [0.1.0] ...` 到下一个 `## [`）。
+          const changelog = fs.readFileSync("CHANGELOG.md", "utf8");
+          const esc = version.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+          const section = changelog.match(new RegExp(`## \\[${esc}\\][^\\r\\n]*\\r?\\n([\\s\\S]*?)(?=\\r?\\n## \\[|$)`));
+          const notes = (section ? section[1] : "").trim();
+
+          const sigs = fs.existsSync("updater-sigs")
+            ? fs.readdirSync("updater-sigs").filter((f) => f.endsWith(".sig"))
+            : [];
+          const platforms = {};
+          for (const sig of sigs) {
+            // .sig 文件名与 GitHub Release 资产一一对应（去掉 .sig 即资产名）。
+            const asset = sig.replace(/\.sig$/, "");
+            const signature = fs.readFileSync(path.join("updater-sigs", sig), "utf8").trim();
+            if (/aarch64.*\.app\.tar\.gz$/.test(asset)) {
+              platforms["darwin-aarch64"] = { signature, url: `${downloadBase}/${asset}` };
+            } else if (/\.app\.tar\.gz$/.test(asset)) {
+              platforms["darwin-x86_64"] = { signature, url: `${downloadBase}/${asset}` };
+            } else if (/-setup\.exe$/.test(asset)) {
+              platforms["windows-x86_64"] = { signature, url: `${downloadBase}/${asset}` };
+            } else if (/\.AppImage$/.test(asset)) {
+              platforms["linux-x86_64"] = { signature, url: `${downloadBase}/${asset}` };
+            }
+          }
+
+          if (Object.keys(platforms).length === 0) {
+            console.error("::warning::No updater signatures collected; latest.json NOT updated");
+            process.exit(0);
+          }
+
+          const manifest = {
+            version,
+            notes,
+            pubdate: new Date().toISOString(),
+            platforms,
+          };
+          fs.mkdirSync("updates", { recursive: true });
+          fs.writeFileSync("updates/latest.json", JSON.stringify(manifest, null, 2) + "\n");
+          console.log(`latest.json written for ${version} (${Object.keys(platforms).join(", ")})`);
+          '
+
+      - name: Commit and push latest.json
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add updates/latest.json
+          git commit -m "chore: release ${{ needs.prepare.outputs.tag_name }} [skip ci]" || echo "No changes to commit"
+          git push origin main

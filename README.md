@@ -4,7 +4,7 @@
 <b>Daw</b> is an open-source **Data Agent Workstation**: a desktop workbench where you talk to an AI agent that searches the web, queries your databases, renders charts, and builds up a knowledge base of what it learns — for tasks and data alike. "Daw" stands for <i>Data Agent Workstation</i>, and is also the word for the jackdaw (寒鸦), the bird picturing its logo. Ship it as-is, or make it your own with a single <code>brand.json</code> — your name, your logo, your wording.
 </blockquote>
 
-**Daw** 是一个开源的「数据智能体工作台」桌面应用：你跟一个 AI 助手对话，它就能帮你搜索互联网、查询你的数据库、生成图表，并把每次学会的业务知识沉淀进工作区知识库。项目名 **Daw** 取自 *Data Agent Workstation* 的首字母，同时也是寒鸦（jackdaw）的意思——logo 就是一只寒鸦。
+**Daw** 是一个开源的「数据智能体工作台」桌面应用：你跟一个 AI 助手对话，它就能帮你搜索互联网、查询你的数据库、生成图表，并把每次学会的业务知识沉淀进工作区知识库。项目名 **Daw** 取自 *Data Agent Workstation* 的首字母，同时也是寒鸦（jackdaw）的意思——**中文名「寒鸦数据工作台」**，logo 就是一只寒鸦。界面上默认显示中文名「寒鸦数据工作台」；英文名 Daw 用于安装包、进程与代码标识。
 
 Daw 不绑定任何一家公司：改一份 `brand.json` 配置文件，就能把它变成**你自己专属的工作台**（名字、logo、欢迎语、助手身份都归你）。
 
@@ -36,6 +36,13 @@ npm run tauri build
 首次启动后，数据目录 `~/.daw/`（Windows 为 `%USERPROFILE%\.daw`）会自动创建，并在「设置」里配置你的大模型服务商即可开聊。
 
 > 数据分析功能依赖 [DuckLake](https://ducklake.ai) 扩展；首次进入「数据分析」场景时按提示一键安装。
+
+## 自动更新与发版
+
+应用内置自动更新：启动后静默检查新版本（每 4 小时一次），发现后后台下载，就绪时在左下角品牌区出现提示，确认后自动重启安装；安装包经 minisign 签名校验。更新说明来自本仓库 `CHANGELOG.md` 对应小节，由发版 CI（`.github/workflows/release.yml`）自动生成 `updates/latest.json` 供更新器读取。
+
+- 下载安装包：[GitHub Releases](https://github.com/tsingliuwin/daw/releases)
+- 发版流程与密钥管理见 **[docs/RELEASE.md](docs/RELEASE.md)**
 
 ## 品牌定制：brand.json
 

@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="theme-color" content="#0a0a0b" />
     <meta name="color-scheme" content="dark" />
-    <title>Daw</title>
+    <title>寒鸦数据工作台</title>
     <style>
       /* First-paint background — inline so the dark canvas shows immediately,
          before the JS bundle loads and App.css is injected. Matches --bg-base. */
@@ -25,6 +25,11 @@
         justify-content: center;
         gap: 16px;
         background-color: #0a0a0b;
+      }
+      .app-splash__logo {
+        width: 72px;
+        height: 72px;
+        object-fit: contain;
       }
       .app-splash__title {
         font-size: 22px;
@@ -50,8 +55,9 @@
     <noscript>You need to enable JavaScript to run this app.</noscript>
     <div id="root">
       <!-- Replaced once Solid renders. Inlined so there's never a blank frame. -->
-      <div class="app-splash" aria-label="正在加载 Daw">
-        <div class="app-splash__title">Daw</div>
+      <div class="app-splash" aria-label="正在加载 寒鸦数据工作台">
+        <img class="app-splash__logo" src="/logo_white.png" alt="" />
+        <div class="app-splash__title">寒鸦数据工作台</div>
         <div class="app-splash__spinner"></div>
       </div>
     </div>

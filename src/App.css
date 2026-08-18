@@ -673,6 +673,93 @@ select:hover:not(:disabled) {
   text-align: right;
 }
 
+/* 底部品牌区更新 badge + tooltip */
+.ln-update-badge-wrap {
+  position: relative;
+  display: flex;
+}
+.ln-update-badge-btn--downloading svg {
+  animation: ln-update-spin 1s linear infinite;
+}
+@keyframes ln-update-spin {
+  to { transform: rotate(360deg); }
+}
+.ln-update-badge-btn--ready {
+  color: var(--accent-blue);
+  animation: ln-update-pulse 1.6s ease-out infinite;
+}
+@keyframes ln-update-pulse {
+  0% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.45); }
+  70% { box-shadow: 0 0 0 6px rgba(59, 130, 246, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0); }
+}
+.ln-update-tooltip {
+  display: none;
+  position: absolute;
+  bottom: calc(100% + 8px);
+  right: 0;
+  width: 240px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-faint);
+  border-radius: 8px;
+  padding: 8px 10px;
+  z-index: 70;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  text-align: left;
+}
+.ln-update-badge-wrap:hover .ln-update-tooltip {
+  display: block;
+}
+.ln-update-tooltip-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 4px;
+}
+.ln-update-tooltip-notes {
+  font-size: 11px;
+  color: var(--text-secondary);
+  max-height: 120px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* 更新弹窗操作区 */
+.update-modal-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 12px;
+}
+.upd-modal-btn {
+  padding: 6px 14px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-faint);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 12.5px;
+}
+.upd-modal-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+.upd-modal-btn.primary {
+  background: var(--accent-blue);
+  border-color: var(--accent-blue);
+  color: #fff;
+}
+.upd-modal-btn.primary:hover {
+  color: #fff;
+  filter: brightness(1.1);
+}
+.upd-error-msg {
+  color: var(--danger, #ef4444);
+  font-size: 12px;
+  word-break: break-word;
+}
+
 .icon-btn {
   width: 28px;
   height: 28px;

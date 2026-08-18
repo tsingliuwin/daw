@@ -3,16 +3,16 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getVersion } from "@tauri-apps/api/app";
 import { logError } from "../lib/logger";
 import { logoSrc, brand } from "../lib/brand";
+import { updater } from "../lib/updater";
 
 const isMac = typeof navigator !== "undefined" && navigator.userAgent.includes("Mac");
 
 /**
  * 应用顶部标题栏。相比早期数据湖版本：
  *  - 去掉 selectedTable / 数据相关的 prop 与中部 active source 展示。
- *  - 去掉 i18n (t) 与 updater 依赖（暂未迁移这两块），文案改为中文常量，
- *    更新检查菜单项暂不暴露。
  *  - 保留：品牌 logo/名称、左侧栏折叠按钮、日志抽屉折叠按钮、关于弹窗、
  *    原生窗口最小化/最大化/关闭按钮（Windows/Linux）。
+ *  - 新增：菜单「检查更新」入口（状态文案联动 lib/updater.ts 全局状态机）。
  */
 export default function TitleBar(props: {
   consoleOpen: boolean;
@@ -28,6 +28,18 @@ export default function TitleBar(props: {
   const [appVersion, setAppVersion] = createSignal("v0.1.0");
   const appWindow = typeof window !== "undefined" && (window as any).__TAURI_INTERNALS__ ? getCurrentWindow() : null;
 
+  // 「检查更新」菜单项文案：联动全局更新状态机（lib/updater.ts）。
+  const checkUpdatesLabel = () => {
+    const s = updater.status();
+    if (s === "checking") return "正在检查更新...";
+    if (s === "up-to-date") return `已是最新版本 (${appVersion()})`;
+    if (s === "available") return "发现新版本，开始下载...";
+    if (s === "downloading") return "有新版本，正在下载...";
+    if (s === "ready") return "新版本已就绪，可在左侧栏安装";
+    if (s === "error") return "检查更新失败";
+    return "检查更新";
+  };
+
   let menuRef!: HTMLDivElement;
 
   // Click outside to close menu
@@ -39,6 +51,8 @@ export default function TitleBar(props: {
 
   onMount(() => {
     document.addEventListener("mousedown", handleClickOutside);
+    // 启动全局更新轮询（30s 首查、每 4h 一次；发现新版本静默后台下载）。
+    updater.start();
     if (typeof window !== "undefined" && (window as any).__TAURI_INTERNALS__) {
       getVersion().then((v) => setAppVersion(`v${v}`)).catch((e) => logError("ui", "get version failed", e));
     }
@@ -120,6 +134,16 @@ export default function TitleBar(props: {
           {/* Dropdown Menu */}
           <Show when={menuOpen()}>
             <div class="tb-dropdown-menu right-aligned">
+              <button
+                class="menu-item"
+                onClick={() => { setMenuOpen(false); updater.checkInteractively(); }}
+              >
+                <span class="menu-label">{checkUpdatesLabel()}</span>
+                <span class="menu-shortcut"></span>
+              </button>
+
+              <div class="menu-divider" />
+
               <button
                 class="menu-item"
                 onClick={() => { setMenuOpen(false); setAboutOpen(true); }}

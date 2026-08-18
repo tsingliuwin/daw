@@ -70,7 +70,7 @@ pub struct BrandConfig {
 impl Default for BrandConfig {
     fn default() -> Self {
         Self {
-            app_name: "Daw".to_string(),
+            app_name: "寒鸦数据工作台".to_string(),
             tagline: "Data Agent Workstation".to_string(),
             about_description:
                 "用对话驱动你的数据与任务。Daw 是开源的 Data Agent Workstation，改一份 brand.json 就能定制成你自己的专属工作台。"
@@ -78,7 +78,7 @@ impl Default for BrandConfig {
             logo_light: String::new(),
             logo_dark: String::new(),
             home: HomeTexts {
-                welcome_title: "Daw".to_string(),
+                welcome_title: "寒鸦数据工作台".to_string(),
                 welcome_subtitle: "用对话驱动数据与任务".to_string(),
                 task: ScenarioText {
                     label: "日常任务".to_string(),

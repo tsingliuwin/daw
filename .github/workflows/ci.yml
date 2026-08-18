@@ -1,0 +1,80 @@
+name: CI Cache Warmer
+
+# 缓存预热工作流：与 release.yml 使用完全相同的 rust-cache shared-key，
+# 提前把各平台的 release 依赖编译产物放进 GitHub Actions 缓存，
+# 使发版构建直接命中缓存、跳过漫长的 DuckDB 编译。
+#
+# 触发：手动；或 main 上锁文件（Cargo.lock / package-lock.json）变化时——
+# 缓存 key 由 rust-cache 按 Rust 版本 + 锁文件哈希自动加盐，锁文件一变
+# 新 key 就绪，发版即可命中。
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - "src-tauri/Cargo.lock"
+      - "package-lock.json"
+
+jobs:
+  warm-cache:
+    # 发版提交（chore: release ...）无需再预热一遍。
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      !startsWith(github.event.head_commit.message, 'chore: release')
+    strategy:
+      fail-fast: false
+      matrix:
+        # 与 release.yml 的矩阵一一对应，保证 shared-key 完全一致。
+        include:
+          - os: windows-latest
+            target: ""
+          - os: macos-latest
+            target: "aarch64-apple-darwin"
+          - os: macos-latest
+            target: "x86_64-apple-darwin"
+          - os: ubuntu-22.04
+            target: ""
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+          # shared-key 必须与 release.yml 完全一致，Release 构建才能命中缓存。
+          shared-key: "tauri-${{ matrix.os }}-${{ matrix.target }}"
+          save-if: "true"
+          cache-on-failure: "true"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install Linux dependencies
+        if: matrix.os == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libssl-dev
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      # 只编译不打包：把 release 依赖产物热进缓存即完成使命。
+      - name: Compile Rust Dependencies (Release)
+        shell: bash
+        run: |
+          cd src-tauri
+          if [ -n "${{ matrix.target }}" ]; then
+            cargo build --release --target ${{ matrix.target }}
+          else
+            cargo build --release
+          fi

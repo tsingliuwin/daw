@@ -43,3 +43,11 @@ Agent 从不直接查 ATTACH 的远程 catalog（沿用早期数据湖原型的�
 - 全部本机数据集中在 `~/.daw/`：`daw.db`（元数据）、`settings.json`（LLM/搜索/数据源）、`<工作区>/`（聊天 jsonl、.lake、okf）。
 - `db::get_app_dir()` 是唯一入口；旧版 `~/.aioa` 首次启动时自动 rename 迁移。
 - 新代码写路径一律走 `db::get_app_dir()`，不要手拼 `~/.daw`。
+
+## 发版与自动更新
+
+- **双远程**:日常开发提交走 Gitee（origin）避免 GitHub 直连不稳；发版时把 main + 注解 tag（`vX.Y.Z`）推到 GitHub（`git@github.com:tsingliuwin/daw.git`），构建全部由 GitHub Actions 完成。
+- **两个工作流**:`.github/workflows/ci.yml`（缓存预热）与 `release.yml`（发版）通过 `swatinem/rust-cache` 的 `shared-key: "tauri-<os>-<target>"` 打通缓存，改动时两文件必须同步。
+- **更新器**:`tauri-plugin-updater`，endpoint = `https://raw.githubusercontent.com/tsingliuwin/daw/main/updates/latest.json`（由 release.yml 的 update-manifest job 生成并推回 main）。签名私钥 `~/.tauri/daw.key`（密码在 `~/.tauri/daw.key.password`）不进仓库，CI 从 GitHub secrets `TAURI_SIGNING_PRIVATE_KEY` / `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` 读取（分别为两个文件的内容）。
+- **前端更新状态机**统一在 `src/lib/updater.ts`（TitleBar 菜单 + BrandFooter badge/弹窗共用），不要在组件里各自实现。
+- 发版步骤、密钥轮换、失败回滚见 `docs/RELEASE.md`；版本号四文件联动（package.json / tauri.conf.json / Cargo.toml / Cargo.lock）。

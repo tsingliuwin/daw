@@ -24,14 +24,14 @@ export interface BrandConfig {
 
 /** Daw 默认品牌。后端 brand.json 缺失或读取失败时的兜底，与 Rust `BrandConfig::default` 一致。 */
 const DEFAULTS: BrandConfig = {
-  app_name: "Daw",
+  app_name: "寒鸦数据工作台",
   tagline: "Data Agent Workstation",
   about_description:
     "用对话驱动你的数据与任务。Daw 是开源的 Data Agent Workstation，改一份 brand.json 就能定制成你自己的专属工作台。",
   logo_light: "",
   logo_dark: "",
   home: {
-    welcome_title: "Daw",
+    welcome_title: "寒鸦数据工作台",
     welcome_subtitle: "用对话驱动数据与任务",
     task: {
       label: "日常任务",
