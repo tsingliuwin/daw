@@ -418,17 +418,27 @@ export default function App() {
 
     // 关闭窗口时若有 streaming 任务，先把内存消息 flush 到 .jsonl 再退出，
     // 防止"对话过程中关窗/重启"丢失用户消息与已流式片段（兜底）。
+    // 注意：destroy 需要 core:window:allow-destroy 权限；任何异常都不能把
+    // 关闭"卡死"——closing 标志防递归，destroy 失败时恢复标志并放行。
     const win = getCurrentWindow();
+    let closing = false;
     const unlistenClose = await win.onCloseRequested(async (event) => {
+      if (closing) return; // destroy 之后的二次触发，放行
       const sid = streamingTaskId();
       if (!sid) return; // 无流式任务，放行正常关闭
       event.preventDefault();
+      closing = true;
       const wsPath = findTaskWorkspace(sid);
       const task = wsPath ? tasksByWorkspace()[wsPath]?.find((t) => t.id === sid) : undefined;
       if (task && wsPath) {
         try { await saveTaskBackend(task, wsPath); } catch (err) { logError("agent", "flush on close failed", err); }
       }
-      await win.destroy(); // destroy 不再二次触发 close-requested，避免递归
+      try {
+        await win.destroy(); // destroy 不再二次触发 close-requested，避免递归
+      } catch (err) {
+        logError("ui", "destroy on close failed, releasing close guard", err);
+        closing = false;
+      }
     });
     onCleanup(() => {
       unlistenAppLog();

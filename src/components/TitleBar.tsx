@@ -40,6 +40,12 @@ export default function TitleBar(props: {
     return "检查更新";
   };
 
+  // ✕/菜单共用的关闭：close 会走 App 的 closeRequested 拦截（flush 流式内容），
+  // 被拒绝/失败时兜底 destroy 强关。
+  const requestWindowClose = () => {
+    void appWindow?.close().catch(() => void appWindow?.destroy());
+  };
+
   let menuRef!: HTMLDivElement;
 
   // Click outside to close menu
@@ -156,7 +162,7 @@ export default function TitleBar(props: {
 
               <button
                 class="menu-item close-item"
-                onClick={() => { setMenuOpen(false); void appWindow?.close(); }}
+                onClick={() => { setMenuOpen(false); requestWindowClose(); }}
               >
                 <span class="menu-label">关闭窗口</span>
                 <span class="menu-shortcut"></span>
@@ -187,7 +193,7 @@ export default function TitleBar(props: {
           <button
             class="tb-win-btn close-btn"
             title="关闭"
-            onClick={() => void appWindow?.close()}
+            onClick={requestWindowClose}
           >
             <svg viewBox="0 0 10 10" style="width: 10px; height: 10px;">
               <polygon points="10,0.7 9.3,0 5,4.3 0.7,0 0,0.7 4.3,5 0,9.3 0.7,10 5,5.7 9.3,10 10,9.3 5.7,5" fill="currentColor" />
