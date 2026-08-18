@@ -601,10 +601,29 @@ pub async fn save_image_from_base64(
 // Data analysis environment management
 // ===========================================================================
 
-/// 检查数据分析环境是否就绪（ducklake/sqlite 扩展已安装，可懒创建任意工作区连接）。
+/// 检查数据分析环境是否就绪。
+///
+/// 本进程内已确认过安装，或磁盘上已有上次安装的扩展（LOAD 探测成功）时返回
+/// true——启动后无需再点「启用」。只 LOAD 不 INSTALL，绝不联网下载；只有扩展
+/// 确实未安装时才返回 false，前端据此展示首次安装引导。
 #[tauri::command]
 pub async fn check_data_analysis_env(state: tauri::State<'_, AppState>) -> Result<bool, String> {
-    Ok(state.ext_installed.load(std::sync::atomic::Ordering::Relaxed))
+    if state.ext_installed.load(std::sync::atomic::Ordering::Relaxed) {
+        return Ok(true);
+    }
+    let ext_installed = state.ext_installed.clone();
+    let ready = tokio::task::spawn_blocking(move || {
+        let Ok(conn) = duckdb::Connection::open_in_memory() else {
+            return false;
+        };
+        crate::duckdb::try_load_extensions(&conn)
+    })
+    .await
+    .unwrap_or(false);
+    if ready {
+        ext_installed.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+    Ok(ready)
 }
 
 /// 直接读取 OKF 知识库文件内容（不经过 agent，供前端内链点击跳转）。

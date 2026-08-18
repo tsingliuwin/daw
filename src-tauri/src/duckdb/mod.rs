@@ -16,6 +16,12 @@ pub const QUERY_TIMEOUT_SECS: u64 = 60;
 /// 硬超时（秒）：超过后强制中断查询。工具层用 `tokio::time::timeout` 兜底。
 pub const QUERY_HARD_TIMEOUT_SECS: u64 = 120;
 
+/// LOAD-only 探测：ducklake/sqlite 扩展是否已安装在磁盘上。
+/// 只 LOAD 不 INSTALL（不联网不下载）——供启动就绪检查用。
+pub fn try_load_extensions(conn: &duckdb::Connection) -> bool {
+    conn.execute("LOAD ducklake;", []).is_ok() && conn.execute("LOAD sqlite;", []).is_ok()
+}
+
 /// 从 `~/.daw/settings.json` 读 `dataSources` 数组。
 /// 读取失败或未配置时返回空列表（不报错——数据分析工具调时会提示"未配置数据源"）。
 pub fn load_data_sources() -> Vec<DataSourceConfig> {
