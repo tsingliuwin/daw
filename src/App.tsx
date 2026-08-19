@@ -8,7 +8,7 @@ import { appendDelta, pushToolCall, mergeToolResult, normalizeMessage, newSegmen
 import { mergeUsage } from "./lib/metrics";
 import { logsSignal, logError, installAppLogListener, clearLogsStore } from "./lib/logger";
 import { persistTheme, currentTheme, loadThemeFromBackend, type Theme } from "./lib/theme";
-import { loadBrandFromBackend } from "./lib/brand";
+import { loadBrandFromBackend, logoSrc } from "./lib/brand";
 import TitleBar from "./components/TitleBar";
 import LeftNav from "./components/LeftNav";
 import ChatView from "./components/ChatView";
@@ -61,6 +61,8 @@ export default function App() {
   const [consoleOpen, setConsoleOpen] = createSignal<boolean>(false);
   const [settingsOpen, setSettingsOpen] = createSignal<boolean>(false);
   const [busy, setBusy] = createSignal<boolean>(false);
+  /** 首屏启动是否完成：工作区/任务加载就绪前渲染 boot-splash，避免先闪 HomeView 再跳对话页。 */
+  const [booted, setBooted] = createSignal<boolean>(false);
   /** 暂存"新建任务"时选择的场景（由 LeftNav 按钮设置，submitTaskFromHome 消费）。 */
   const [pendingScenario, setPendingScenario] = createSignal<"task" | "data_analysis">("task");
   /** 数据分析环境是否就绪（DuckLake 扩展已安装）。 */
@@ -256,6 +258,7 @@ export default function App() {
       logError("ui", "Failed to load workspaces", err);
     } finally {
       setBusy(false);
+      setBooted(true);
     }
   }
 
@@ -717,6 +720,15 @@ export default function App() {
 
         <main class="app-content">
           <Show
+            when={booted()}
+            fallback={
+              <div class="boot-splash">
+                <img class="boot-splash__logo" src={logoSrc()} alt="" />
+                <div class="boot-splash__spinner" />
+              </div>
+            }
+          >
+          <Show
             when={chatTask()}
             fallback={
               <HomeView
@@ -763,6 +775,7 @@ export default function App() {
                 streaming={activeStreaming()}
               />
             )}
+          </Show>
           </Show>
         </main>
 

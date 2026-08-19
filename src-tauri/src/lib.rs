@@ -73,10 +73,34 @@ pub fn run() {
                 // the value in tauri.conf.json is only the startup fallback.
                 let _ = window.set_title(&brand::load_brand().app_name);
 
+                // 按已保存的主题设置窗口底色与系统主题，避免浅色主题用户在
+                // webview 加载 index.html 之前看到 tauri.conf.json 里写死的深色底。
+                // 权威主题存于 config 表（ui.theme，见 src/lib/theme.ts）。
+                let saved_theme = crate::db::get_db_conn()
+                    .ok()
+                    .and_then(|conn| crate::db::get_config(&conn, "ui.theme").ok().flatten())
+                    .unwrap_or_default();
+                let is_light = saved_theme == "light";
+                let bg = if is_light {
+                    tauri::webview::Color(0xf8, 0xfa, 0xfc, 0xff)
+                } else {
+                    tauri::webview::Color(0x0a, 0x0a, 0x0b, 0xff)
+                };
+                let _ = window.set_background_color(Some(bg));
+                let _ = window.set_theme(Some(if is_light {
+                    tauri::Theme::Light
+                } else {
+                    tauri::Theme::Dark
+                }));
+
                 #[cfg(not(target_os = "macos"))]
                 {
                     let _ = window.set_decorations(false);
                 }
+
+                // 窗口在 tauri.conf.json 里配置为 visible:false，等到底色/主题都
+                // 就绪后再显示，避免浅色主题用户看到「先黑色窗口底 → 再浅色 splash」。
+                let _ = window.show();
             }
             Ok(())
         })

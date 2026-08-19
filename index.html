@@ -3,18 +3,42 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="theme-color" content="#0a0a0b" />
-    <meta name="color-scheme" content="dark" />
+    <meta name="theme-color" content="#0a0a0b" id="meta-theme-color" />
+    <meta name="color-scheme" content="dark" id="meta-color-scheme" />
     <title>寒鸦数据工作台</title>
+    <script>
+      // 首帧主题：localStorage 的 ui.theme 是后端 config 的快速镜像。
+      // 在 CSS 与 JS bundle 加载前同步应用，让 splash 与首帧直接用对主题，
+      // 避免每次启动「深色 splash → 浅色首页」的闪屏。权威仍以后端 config 为准。
+      (function () {
+        var t = null;
+        try { t = localStorage.getItem("ui.theme"); } catch (e) {}
+        var isLight = t === "light";
+        var isClassic = t === "classic-dark";
+        document.documentElement.className = isLight ? "light" : isClassic ? "classic-dark" : "geek-dark";
+        document.documentElement.setAttribute("data-boot", isLight ? "light" : "dark");
+        var cs = document.getElementById("meta-color-scheme");
+        var tc = document.getElementById("meta-theme-color");
+        if (cs) cs.setAttribute("content", isLight ? "light" : "dark");
+        if (tc) tc.setAttribute("content", isLight ? "#f8fafc" : "#0a0a0b");
+      })();
+    </script>
     <style>
-      /* First-paint background — inline so the dark canvas shows immediately,
-         before the JS bundle loads and App.css is injected. Matches --bg-base. */
+      /* First-paint background — inline so the canvas shows immediately,
+         before the JS bundle loads and App.css is injected. Defaults to dark
+         and switches to light via html[data-boot="light"] set synchronously
+         in the script above. */
       html, body, #root {
         margin: 0;
         height: 100%;
         background-color: #0a0a0b;
         color: #e6e7eb;
         font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+      html[data-boot="light"] body,
+      html[data-boot="light"] #root {
+        background-color: #f8fafc;
+        color: #0f172a;
       }
       .app-splash {
         position: fixed;
@@ -26,17 +50,23 @@
         gap: 16px;
         background-color: #0a0a0b;
       }
+      html[data-boot="light"] .app-splash { background-color: #f8fafc; }
       .app-splash__logo {
         width: 72px;
         height: 72px;
         object-fit: contain;
       }
+      .app-splash__logo--light { display: none; }
+      .app-splash__logo--dark { display: block; }
+      html[data-boot="light"] .app-splash__logo--light { display: block; }
+      html[data-boot="light"] .app-splash__logo--dark { display: none; }
       .app-splash__title {
         font-size: 22px;
         font-weight: 600;
         letter-spacing: 0.5px;
         color: #e6e7eb;
       }
+      html[data-boot="light"] .app-splash__title { color: #0f172a; }
       .app-splash__spinner {
         width: 22px;
         height: 22px;
@@ -44,6 +74,10 @@
         border-top-color: #3b82f6;
         border-radius: 50%;
         animation: app-splash-spin 0.8s linear infinite;
+      }
+      html[data-boot="light"] .app-splash__spinner {
+        border-color: rgba(15, 23, 42, 0.12);
+        border-top-color: #4f46e5;
       }
       @keyframes app-splash-spin {
         to { transform: rotate(360deg); }
@@ -56,7 +90,8 @@
     <div id="root">
       <!-- Replaced once Solid renders. Inlined so there's never a blank frame. -->
       <div class="app-splash" aria-label="正在加载 寒鸦数据工作台">
-        <img class="app-splash__logo" src="/logo_white.png" alt="" />
+        <img class="app-splash__logo app-splash__logo--light" src="/logo.png" alt="" />
+        <img class="app-splash__logo app-splash__logo--dark" src="/logo_white.png" alt="" />
         <div class="app-splash__title">寒鸦数据工作台</div>
         <div class="app-splash__spinner"></div>
       </div>

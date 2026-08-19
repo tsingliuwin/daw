@@ -17,6 +17,7 @@
         "width": 1200,
         "height": 768,
         "decorations": true,
+        "visible": false,
         "dragDropEnabled": true,
         "titleBarStyle": "Overlay",
         "hiddenTitle": true,
