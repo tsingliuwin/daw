@@ -441,9 +441,10 @@ pub(crate) async fn run_agent_task_stream(
             },
         )
     };
-    let build_data_tools = || -> (GetCurrentTimeTool, ExecuteQueryTool, ListTablesTool, DescribeTableTool, SampleDataTool, RenderChartTool, LoadOkfBlockTool, WriteOkfBlockTool, SearchOkfKnowledgeTool, CreateViewTool, DropObjectTool, ListConnectionsTool, ListRemoteTablesTool, RegisterTableTool, ReadOkfMetadataTool, UpdateOkfMetadataTool, ListOkfKnowledgeTool, DeleteOkfKnowledgeTool, RenameOkfKnowledgeTool) {
+    let build_data_tools = || -> (GetCurrentTimeTool, SearchTool, ExecuteQueryTool, ListTablesTool, DescribeTableTool, SampleDataTool, RenderChartTool, LoadOkfBlockTool, WriteOkfBlockTool, SearchOkfKnowledgeTool, CreateViewTool, DropObjectTool, ListConnectionsTool, ListRemoteTablesTool, RegisterTableTool, ReadOkfMetadataTool, UpdateOkfMetadataTool, ListOkfKnowledgeTool, DeleteOkfKnowledgeTool, RenameOkfKnowledgeTool) {
         (
             GetCurrentTimeTool { app_state: app_state.clone(), task_id: task_id.clone(), window: window.clone() },
+            SearchTool { app_state: app_state.clone(), task_id: task_id.clone(), window: window.clone() },
             ExecuteQueryTool { app_state: app_state.clone(), task_id: task_id.clone(), window: window.clone(), ws: ws_ref.clone() },
             ListTablesTool { app_state: app_state.clone(), task_id: task_id.clone(), window: window.clone(), ws: ws_ref.clone() },
             DescribeTableTool { app_state: app_state.clone(), task_id: task_id.clone(), window: window.clone(), ws: ws_ref.clone() },
@@ -473,9 +474,10 @@ pub(crate) async fn run_agent_task_stream(
             vec![t.definition(String::new()).await, s.definition(String::new()).await]
         }
         Scenario::DataAnalysis => {
-            let (t, e, l, d, sd, rc, ol, ow, os, cv, doi, lc, lrt, rt, rm, um, lk, dk, rk) = build_data_tools();
+            let (t, s, e, l, d, sd, rc, ol, ow, os, cv, doi, lc, lrt, rt, rm, um, lk, dk, rk) = build_data_tools();
             vec![
                 t.definition(String::new()).await,
+                s.definition(String::new()).await,
                 e.definition(String::new()).await,
                 l.definition(String::new()).await,
                 d.definition(String::new()).await,
@@ -621,7 +623,7 @@ pub(crate) async fn run_agent_task_stream(
                 }
             }
             Scenario::DataAnalysis => {
-                let (time_tool, exec_tool, list_tool, desc_tool, sample_tool, chart_tool, okf_load_tool, okf_write_tool, okf_search_tool, cv_tool, drop_tool, lc_tool, lrt_tool, rt_tool, okf_meta_read_tool, okf_meta_update_tool, okf_list_tool, okf_delete_tool, okf_rename_tool) = build_data_tools();
+                let (time_tool, search_tool, exec_tool, list_tool, desc_tool, sample_tool, chart_tool, okf_load_tool, okf_write_tool, okf_search_tool, cv_tool, drop_tool, lc_tool, lrt_tool, rt_tool, okf_meta_read_tool, okf_meta_update_tool, okf_list_tool, okf_delete_tool, okf_rename_tool) = build_data_tools();
                 if format == "openai" {
                     let base_url = sanitize_endpoint(&provider.endpoint);
                     let client: rig_core::providers::openai::Client = rig_core::providers::openai::Client::builder()
@@ -635,6 +637,7 @@ pub(crate) async fn run_agent_task_stream(
                         .preamble(&combined_preamble)
                         .max_tokens(max_tokens_limit)
                         .tool(time_tool)
+                        .tool(search_tool)
                         .tool(exec_tool)
                         .tool(list_tool)
                         .tool(desc_tool)
@@ -672,6 +675,7 @@ pub(crate) async fn run_agent_task_stream(
                         .preamble(&combined_preamble)
                         .max_tokens(max_tokens_limit)
                         .tool(time_tool)
+                        .tool(search_tool)
                         .tool(exec_tool)
                         .tool(list_tool)
                         .tool(desc_tool)
@@ -710,6 +714,7 @@ pub(crate) async fn run_agent_task_stream(
                         .preamble(&combined_preamble)
                         .max_tokens(if thinking_budget > 0 { thinking_budget + 4096 } else { 4096 })
                         .tool(time_tool)
+                        .tool(search_tool)
                         .tool(exec_tool)
                         .tool(list_tool)
                         .tool(desc_tool)
