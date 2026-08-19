@@ -63,6 +63,9 @@ export default function App() {
   const [busy, setBusy] = createSignal<boolean>(false);
   /** 首屏启动是否完成：工作区/任务加载就绪前渲染 boot-splash，避免先闪 HomeView 再跳对话页。 */
   const [booted, setBooted] = createSignal<boolean>(false);
+  /** 根容器尺寸（逻辑 px）。由 Tauri 原生 resize 的物理尺寸 ÷ scaleFactor 计算，
+   *  用于绕过最大化时 WebView 视口未同步导致的 .app-shell 停在旧宽度。 */
+  const [shellSize, setShellSize] = createSignal<{ w: number; h: number } | null>(null);
   /** 暂存"新建任务"时选择的场景（由 LeftNav 按钮设置，submitTaskFromHome 消费）。 */
   const [pendingScenario, setPendingScenario] = createSignal<"task" | "data_analysis">("task");
   /** 数据分析环境是否就绪（DuckLake 扩展已安装）。 */
@@ -263,6 +266,18 @@ export default function App() {
   }
 
   onMount(async () => {
+    // 根容器尺寸校准：用 Tauri 原生 resize（物理像素 ÷ scaleFactor）显式设置根
+    // 容器尺寸，绕过最大化时 100vw/100vh 的 WebView 视口未同步（见 App.css .app-shell）。
+    const shellWin = getCurrentWindow();
+    const applyShellSize = async (physical: { width: number; height: number }) => {
+      try {
+        const sf = await shellWin.scaleFactor();
+        setShellSize({ w: Math.round(physical.width / sf), h: Math.round(physical.height / sf) });
+      } catch { /* 忽略：保留 CSS 100% 兜底 */ }
+    };
+    try { await applyShellSize(await shellWin.innerSize()); } catch { /* ignore */ }
+    try { await shellWin.onResized(({ payload }) => { void applyShellSize(payload); }); } catch { /* ignore */ }
+
     // 检查数据分析环境是否就绪。
     try {
       const ready = await invoke<boolean>("check_data_analysis_env");
@@ -684,7 +699,10 @@ export default function App() {
   const activeStreaming = () => streamingTaskId() != null && streamingTaskId() === activeTaskId();
 
   return (
-    <div class="app-shell">
+    <div
+      class="app-shell"
+      style={shellSize() ? { width: `${shellSize()!.w}px`, height: `${shellSize()!.h}px` } : undefined}
+    >
       {/* 左侧栏：通顶（高度 = 整个窗口），顶部的 logo/折叠按钮与右侧窗口按钮在同一水平线 */}
       <Show when={leftOpen()}>
         <LeftNav

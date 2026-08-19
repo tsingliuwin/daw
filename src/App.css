@@ -196,8 +196,8 @@ select:hover:not(:disabled) {
 .app-shell {
   display: flex;
   flex-direction: row;
-  height: 100vh;
-  width: 100vw;
+  height: 100%;
+  width: 100%;
   overflow: hidden;
   position: relative; /* absolute splitters reference frame */
   background-color: var(--bg-base);
@@ -796,7 +796,7 @@ select:hover:not(:disabled) {
   width: var(--left-width, 240px);
   min-width: var(--left-width, 240px);
   max-width: var(--left-width, 240px);
-  height: 100vh;
+  height: 100%;
   display: flex;
   flex-direction: column;
   background: var(--bg-surface);
@@ -6607,8 +6607,8 @@ button.lm-select-trigger:hover:not(:disabled) {
 .app-shell {
   display: flex;
   flex-direction: row;
-  height: 100vh;
-  width: 100vw;
+  height: 100%;
+  width: 100%;
   overflow: hidden;
   background-color: var(--bg-base);
   color: var(--text-primary);
@@ -6739,7 +6739,7 @@ button.lm-select-trigger:hover:not(:disabled) {
 .left-nav {
   width: var(--left-width, 248px);
   flex-shrink: 0;
-  height: 100vh; /* 通顶：高度 = 整个窗口，与右侧 app-right 平齐 */
+  height: 100%; /* 通顶：高度 = 整个窗口，与右侧 app-right 平齐 */
   display: flex;
   flex-direction: column;
   background-color: var(--bg-surface);
@@ -7609,16 +7609,19 @@ input[type="number"] {
   background: rgba(125, 125, 125, 0.18);
 }
 .home-view__scenario-btn.active {
-  background: #6366F1;
-  color: #ffffff;
+  /* 中性「前景/背景反色」选中态：跟随主题灰阶，与单色（黑白）logo 协调，
+     不再使用硬编码的品牌蓝。深色主题 = 浅底深字，浅色主题 = 深底浅字。 */
+  background: var(--text-primary);
+  color: var(--bg-base);
 }
 .home-view__scenario-btn.active:hover {
-  background: #6366F1;
-  color: #ffffff;
+  background: var(--text-primary);
+  color: var(--bg-base);
 }
 :root.light .home-view__scenario-btn.active,
 :root.light .home-view__scenario-btn.active:hover {
-  background: #494FF4;
+  background: var(--text-primary);
+  color: var(--bg-base);
 }
 
 /* 居中输入框 */
