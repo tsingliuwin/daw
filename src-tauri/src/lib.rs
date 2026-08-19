@@ -49,7 +49,11 @@ pub fn run() {
         .with_target(false)
         .with_level(true)
         .compact();
-    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+    // 默认显示 info，但把 rig / rig_core 的 info 压到 warn：它们在多轮流式对话时
+    // 会打印大量「Depth reached / multi-turn stream finished / tool call」日志刷屏。
+    // 需要排查 LLM 行为时，可用 RUST_LOG=rig=debug（或 rig_core=debug）覆盖。
+    let filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new("info,rig=warn,rig_core=warn"));
     tracing_subscriber::registry()
         .with(fmt_layer)
         .with(logging::SqliteEmitLayer::new())
