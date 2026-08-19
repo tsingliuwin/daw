@@ -27,7 +27,7 @@ const DEFAULTS: BrandConfig = {
   app_name: "寒鸦数据工作台",
   tagline: "Data Agent Workstation",
   about_description:
-    "用对话驱动你的数据与任务。Daw 是开源的 Data Agent Workstation，改一份 brand.json 就能定制成你自己的专属工作台。",
+    "用对话驱动你的数据与任务：搜索资料、查询数据、生成图表，一句指令就搞定。",
   logo_light: "",
   logo_dark: "",
   home: {

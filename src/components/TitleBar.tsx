@@ -216,8 +216,8 @@ export default function TitleBar(props: {
               <p class="about-desc">{brand().about_description}</p>
               <div class="about-specs">
                 <div class="spec-row"><span>版本</span><strong>{appVersion()}</strong></div>
-                <div class="spec-row"><span>环境</span><strong>Tauri Webview Backend</strong></div>
-                <div class="spec-row"><span>架构</span><strong>SolidJS Chat Layout</strong></div>
+                <div class="spec-row"><span>开源协议</span><strong>AGPL-3.0</strong></div>
+                <div class="spec-row"><span>数据与隐私</span><strong>全部保存在本地</strong></div>
               </div>
             </div>
           </div>
