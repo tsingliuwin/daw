@@ -474,6 +474,17 @@ export default function ChatView(props: {
                         const rs = () => asReasoning(seg());
                         const ts = () => asText(seg());
                         const es = () => asError(seg());
+                        // 流式尾部文本段：正在生长的最后一条 assistant 消息的最后一个
+                        // text 段。markdown 终渲（marked + Shiki + innerHTML 重建）对
+                        // 逐段增长的内容是每次全量重算，长报告流式期会把渲染管线整个
+                        // 占满（实测连合成器帧都停滞，窗口 resize 无法落地）——流式期
+                        // 先按纯文本追加渲染，段关闭/流结束后由 fallback 走 markdown。
+                        const isLiveTextTail = createMemo(() => {
+                          if (!isStreaming() || msg().role !== "assistant") return false;
+                          if (msg().id !== props.messages[props.messages.length - 1]?.id) return false;
+                          const segs = msg().segments;
+                          return segs.length > 0 && segs[segs.length - 1].id === seg().id && seg().type === "text";
+                        });
                         const reasoningMs = createMemo<number | undefined>(() => {
                           if (seg().id === activeReasoningId() && rs()?.startTime != null) {
                             return now() - rs()!.startTime!;
@@ -539,8 +550,13 @@ export default function ChatView(props: {
                             </Match>
                             <Match when={seg().type === "text" && ts()}>
                               <div class="chat-msg__text">
-                                <Show when={msg().role === "assistant"} fallback={ts()!.text}>
-                                  <MessageText text={ts()!.text} segments={msg().segments} charts={allCharts()} />
+                                <Show
+                                  when={!isLiveTextTail()}
+                                  fallback={<div class="chat-msg__text--live">{ts()!.text}</div>}
+                                >
+                                  <Show when={msg().role === "assistant"} fallback={ts()!.text}>
+                                    <MessageText text={ts()!.text} segments={msg().segments} charts={allCharts()} />
+                                  </Show>
                                 </Show>
                               </div>
                             </Match>

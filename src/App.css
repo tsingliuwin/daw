@@ -4505,6 +4505,12 @@ button.lm-select-trigger:hover:not(:disabled) {
   border-radius: 0;
   padding: 4px 0;
 }
+/* 流式中的尾部文本段：纯文本直出（见 ChatView isLiveTextTail），流结束换回
+   markdown 渲染。排版尽量贴近 .md-rendered 的正文观感，避免收尾时跳变过大。 */
+.chat-msg__text--live {
+  white-space: pre-wrap;
+  font-family: inherit;
+}
 .chat-msg__typing {
   padding: 8px 12px;
   color: var(--text-dim);
