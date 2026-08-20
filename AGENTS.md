@@ -8,6 +8,7 @@
 - **结论**：CSS `100%` 由渲染管线驱动，不占 JS 任务队列，洪水期截图验证最大化/还原均正确自愈；还天然避开界面缩放（`documentElement.style.zoom`）≠100% 时内联像素被 zoom 倍率放大的隐患。
 - **排障手法**：WebView2 远程调试口（`WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9222` + 独立 `WEBVIEW2_USER_DATA_FOLDER`）+ 裸 CDP（Runtime.evaluate/Page.captureScreenshot）；合成器截图在主线程饿死时仍可用，是洪水期唯一可靠的观测手段。
 - 同类风险：任何「窗口状态 → JS → 内联样式」的链路在流式期都不可依赖；需要样式响应窗口尺寸时优先 CSS（含 container query）。
+- **节流不够，还要降单元成本**：delta 节流（150ms 冲刷）只降频率；真实重任务里每次冲刷仍对整段累积文本全量 marked 解析 + Shiki 高亮 + innerHTML 重建，渲染管线照样饱和（实测求值排队 14.5s、合成器帧停滞、WebView2 表面卡死且整页重载不恢复）。根治靠 ChatView 的 `isLiveTextTail`：流式尾部 text 段纯文本直出，流结束才 markdown 终渲。
 
 ## DuckDB postgres_query 关键经验
 
