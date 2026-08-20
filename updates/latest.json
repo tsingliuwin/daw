@@ -1,23 +1,23 @@
 {
-  "version": "0.1.1",
-  "notes": "### 修复\n\n- 窗口关闭按钮在存在流式任务时偶发失效：补齐 `core:window:allow-destroy` 权限、关闭拦截器加异常兜底（任何异常不再卡死关闭）、✕/菜单关闭自动降级 destroy。\n- macOS 更新 manifest 生成：按构建架构精确选择签名文件，拒绝无架构后缀的中间产物（0.1.0 首发时 macOS 条目曾指向不存在的资产，已手工修正；0.1.1 起由流水线正确生成）。",
-  "pubdate": "2026-08-18T09:58:32.361Z",
+  "version": "0.1.2",
+  "notes": "### 新增\n\n- 数据分析场景新增联网搜索工具（克制使用）：查不到的实时公开信息可联网补全，不替代数据查询。\n\n### 修复\n\n- 对话过程中布局偶发错位：根容器尺寸卡在旧值导致右侧出现大片空白、窗口按钮位置偏移，改为双通道校准并防乱序写入。\n- 最大化窗口时布局缩水：根容器/侧栏改用百分比尺寸，并按原生窗口尺寸校准兜底。\n- 启动时深色闪屏与首页跳转。\n\n### 变更\n\n- 关于弹窗文案去技术化；对话时终端日志噪音降低。",
+  "pubdate": "2026-08-20T08:13:06.419Z",
   "platforms": {
-    "darwin-aarch64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTSGFaT3VTLzhlcUFoOW9aSUFWc1JoZlpxaW5XN3BtU0xPdEhEQWx2R0lXc0hzVzNPcVFpV0gxalBTeFdlNmV4NmVuZ3R6Q1NBZTZySmRqUHZZdXB6aFF3QS9WYWJ4YXdrPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg3MDQ2ODk3CWZpbGU6RGF3LmFwcC50YXIuZ3oKT1lHekpySi92WjlHTTEzN1h4WWVGd2xGY2hqVjJBWnQ2cmY1YVZRMEJwNk43SUwyOG5Id3lQU1MzbWpaYkRCVDlIL2tVTlhsZGtxWVlZcjhPSGRkQmc9PQo=",
-      "url": "https://github.com/tsingliuwin/daw/releases/download/v0.1.1/Daw_aarch64.app.tar.gz"
-    },
-    "darwin-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTSGFaT3VTLzhlcUorM3kzUkZrRGtCU084RFRORDduNy9VVFJ3cTVVWDhJck5RREc1NTNqaWJKOW12UTNhRkhYZGN6dDlOL1A5SVF1VXlZUEpyUFBETmhrdnRvTGQ1dkEwPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg3MDQ3MDg2CWZpbGU6RGF3LmFwcC50YXIuZ3oKRGd3TStiakJzOVZKVEVFTXJjVlNqajJ2bTYxOStUUmptTXAzbEp0Z1UyRjdzZ1g3dDJDdVJwZExWU29ZQ0t6MmxDZnFIVVptV1NIRmpnREJMOUdqRFE9PQo=",
-      "url": "https://github.com/tsingliuwin/daw/releases/download/v0.1.1/Daw_x64.app.tar.gz"
-    },
     "linux-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTSGFaT3VTLzhlcU1CWGs4aVJXdklyK05udWFIY2NNOS8zblpZRHpjdzlwOTJQWHdCVStFZkVTWTFBREduMUhGME95Y3NERURwQXUrYWNVazBwai9jQkplOE9xZnhBM3dRPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg3MDQ2NzI2CWZpbGU6RGF3XzAuMS4xX2FtZDY0LkFwcEltYWdlCnFTaFBiOVlwM1MvRnIwcTVQVTBJejBIbU9xczZxOTVqMHUyd2k2eTJWQkNsYURiWWUzS0VEelNXQmxaRkV3YjEyb0NibVJOQ1M4MldITkpxK2xHZ0NRPT0K",
-      "url": "https://github.com/tsingliuwin/daw/releases/download/v0.1.1/Daw_0.1.1_amd64.AppImage"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTSGFaT3VTLzhlcUNNUVZwVTRWcFl2eE1rZ0RJcHpZVGtkMzBFcFl6Um0wM2VIWE5TcVo5ck5EajlvK3ZpdjYwVTVhN0xNV0F5UDZ4SEIwaWI2bFhrbTAxRCtVZnZKbmdrPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg3MjEzMDE4CWZpbGU6RGF3XzAuMS4yX2FtZDY0LkFwcEltYWdlCnYyQ0tMMDQ2MzN3aUlyQUdqMHFwUEVqR0p0U2sxbVRreXdYbjRuK2l0SFFBaGdFNEZKclZpVjRyMkdyRlM4V1BVd0k2WTU3ZHk0OXdvSjM1YldQOERBPT0K",
+      "url": "https://github.com/tsingliuwin/daw/releases/download/v0.1.2/Daw_0.1.2_amd64.AppImage"
     },
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTSGFaT3VTLzhlcU1taEVHb0xmeStYTHh0eXlRSXduNjlqRStRNHVCYmg2TlhTZ0c3azduOFJrQ1E3Z0E0alRLU0pOcDVQWWtPSkllOWVxMStsZVptY2VWZ3dGUFBxb1FNPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg3MDQ2Nzk2CWZpbGU6RGF3XzAuMS4xX3g2NC1zZXR1cC5leGUKMDhZT3VKK3FzZEkrWVJYa09lalBJMmFVWkF6T2taY2FWem1XcWh6b0pLenpTRWlOZFd4QmowMDFqVitnQmpiNEJmZkZac0E3OGNCM0lXTzB2K25KQkE9PQo=",
-      "url": "https://github.com/tsingliuwin/daw/releases/download/v0.1.1/Daw_0.1.1_x64-setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTSGFaT3VTLzhlcUVPVHFFUCtiVEk4djlNcm1wQUJ1V0c0Ung2OHFRb09MZ2R6SUpFNVlSK3ZaZjk3SFlkakgzcGZXbGhhR0k0dTAxV0RSNjhOZnpLajFrVHBvRlREL2dFPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg3MjEyOTk3CWZpbGU6RGF3XzAuMS4yX3g2NC1zZXR1cC5leGUKMEp5cWp0VGIzeHE0REZQbHdWNmgvbmJjOXdSazR4QnE0YmVyMFVwL0NvK3p5SjI1YlZMRkJhZ09EWWNQZysxVTFTaFd3c29idE91bkNta3dFYmlaQWc9PQo=",
+      "url": "https://github.com/tsingliuwin/daw/releases/download/v0.1.2/Daw_0.1.2_x64-setup.exe"
+    },
+    "darwin-aarch64": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTSGFaT3VTLzhlcUZIMDgza3VLRyt1bWcyck1EWFdWeXlmRGw4RGo2bEtYNEV1TmVsRVFVOWlHbjNJcXRmSi83UmZ1eVBCNHBKN0x4NmltTnNVeWJCN0R3QThkS0laRWc0PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg3MjEzNDg0CWZpbGU6RGF3LmFwcC50YXIuZ3oKT0tNQ1I0Nk95cDkydzJFYXBTUkdDai9URGV4Q3VhMUpycU9Na3dsMmhhNTN0MGR5V1JkeUg1MnNPZ2U0cFErTE43M3lCbUgzNFpycWx1anhLcTZPQ0E9PQo=",
+      "url": "https://github.com/tsingliuwin/daw/releases/download/v0.1.2/Daw_aarch64.app.tar.gz"
+    },
+    "darwin-x86_64": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTSGFaT3VTLzhlcUVEK00xbk9xRnFYM1VmNnNXT3Q3OGZVaVk3Q2NzaUc3SU1NS1VZTzF3cHZGQ2pzTnRma1VYMWFNcStaTjJaOXNTd2Z5RWNacURITTZwcUc3N0RVdEFvPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg3MjEzNTU1CWZpbGU6RGF3LmFwcC50YXIuZ3oKOXBOeDNxbWcvdzRKbWdVVkthS1FGREMrZHJFdEVXQkp5ODhJcW9KU292UUFzeWhxb2lobDZOV2licXBlQmlwZThFcXgxNlNyQ2h6RDBQVHovbkZSQWc9PQo=",
+      "url": "https://github.com/tsingliuwin/daw/releases/download/v0.1.2/Daw_x64.app.tar.gz"
     }
   }
 }
