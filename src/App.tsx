@@ -63,9 +63,6 @@ export default function App() {
   const [busy, setBusy] = createSignal<boolean>(false);
   /** 首屏启动是否完成：工作区/任务加载就绪前渲染 boot-splash，避免先闪 HomeView 再跳对话页。 */
   const [booted, setBooted] = createSignal<boolean>(false);
-  /** 根容器尺寸（逻辑 px）。由 Tauri 原生 resize 的物理尺寸 ÷ scaleFactor 计算，
-   *  用于绕过最大化时 WebView 视口未同步导致的 .app-shell 停在旧宽度。 */
-  const [shellSize, setShellSize] = createSignal<{ w: number; h: number } | null>(null);
   /** 暂存"新建任务"时选择的场景（由 LeftNav 按钮设置，submitTaskFromHome 消费）。 */
   const [pendingScenario, setPendingScenario] = createSignal<"task" | "data_analysis">("task");
   /** 数据分析环境是否就绪（DuckLake 扩展已安装）。 */
@@ -266,27 +263,6 @@ export default function App() {
   }
 
   onMount(async () => {
-    // 根容器尺寸校准：用 Tauri 原生窗口尺寸（物理像素 ÷ scaleFactor）显式设置根
-    // 容器尺寸，绕过最大化时 WebView 视口未同步导致的 .app-shell 停在旧宽度。
-    // 注意内联像素尺寸一旦写错就会盖过 CSS 100% 且不会自愈（布局缩水/错位），所以：
-    //   1. 原生 onResized 与 WebView 视口 resize 双通道触发——任一事件丢失时另一通道兜底；
-    //   2. 每次重新读 innerSize 而不是信事件 payload，避免乱序事件写入旧值；
-    //   3. 序号防并发：后发起的校准完成时丢弃先发起但晚返回的旧结果。
-    const shellWin = getCurrentWindow();
-    let shellSizeSeq = 0;
-    const applyShellSize = async () => {
-      const seq = ++shellSizeSeq;
-      try {
-        const [physical, sf] = await Promise.all([shellWin.innerSize(), shellWin.scaleFactor()]);
-        if (seq !== shellSizeSeq) return;
-        setShellSize({ w: Math.round(physical.width / sf), h: Math.round(physical.height / sf) });
-      } catch { /* 忽略：保留 CSS 100% 兜底 */ }
-    };
-    await applyShellSize();
-    try { await shellWin.onResized(() => { void applyShellSize(); }); } catch { /* ignore */ }
-    window.addEventListener("resize", applyShellSize);
-    onCleanup(() => window.removeEventListener("resize", applyShellSize));
-
     // 检查数据分析环境是否就绪。
     try {
       const ready = await invoke<boolean>("check_data_analysis_env");
@@ -708,10 +684,7 @@ export default function App() {
   const activeStreaming = () => streamingTaskId() != null && streamingTaskId() === activeTaskId();
 
   return (
-    <div
-      class="app-shell"
-      style={shellSize() ? { width: `${shellSize()!.w}px`, height: `${shellSize()!.h}px` } : undefined}
-    >
+    <div class="app-shell">
       {/* 左侧栏：通顶（高度 = 整个窗口），顶部的 logo/折叠按钮与右侧窗口按钮在同一水平线 */}
       <Show when={leftOpen()}>
         <LeftNav
