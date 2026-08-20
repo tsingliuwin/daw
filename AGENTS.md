@@ -1,5 +1,14 @@
 # AGENTS.md — 项目开发经验记录
 
+## 布局尺寸纪律：壳层只用纯 CSS 百分比（三轮教训）
+
+根容器/壳层尺寸**禁止内联像素校准**（b404fe9 引入、903d6a8 加固、4b1fedd 彻底移除）：
+
+- **根因**：流式输出高峰期主线程被渲染任务洪水占满（实测 Runtime.evaluate 排队 12s+ 无响应），任何依赖 JS 事件（Tauri `onResized`、`window.resize`）+ IPC（`innerSize()`）的尺寸校准在该场景**整体失效**，内联像素尺寸闩在旧值 → 最大化后右侧大片空白、还原后内容被裁。
+- **结论**：CSS `100%` 由渲染管线驱动，不占 JS 任务队列，洪水期截图验证最大化/还原均正确自愈；还天然避开界面缩放（`documentElement.style.zoom`）≠100% 时内联像素被 zoom 倍率放大的隐患。
+- **排障手法**：WebView2 远程调试口（`WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9222` + 独立 `WEBVIEW2_USER_DATA_FOLDER`）+ 裸 CDP（Runtime.evaluate/Page.captureScreenshot）；合成器截图在主线程饿死时仍可用，是洪水期唯一可靠的观测手段。
+- 同类风险：任何「窗口状态 → JS → 内联样式」的链路在流式期都不可依赖；需要样式响应窗口尺寸时优先 CSS（含 container query）。
+
 ## DuckDB postgres_query 关键经验
 
 **postgres_query 的第一个参数必须是 catalog 别名（如 `db_xxx`），不能是连接串（如 `host=... port=...`）。**
