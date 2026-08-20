@@ -262,6 +262,66 @@ export default function App() {
     }
   }
 
+  // ── 流式渲染节流 ──
+  // text/reasoning delta 事件极频繁（每个 token 一条），每条都直接
+  // setTasksByWorkspace 会让消息列表 + markdown 逐 token 全量重渲染，把主线程
+  // 饿死（实测流式期 Runtime.evaluate 排队 12s+），窗口 resize/最大化等交互在
+  // 流式期整体失去响应——这是"对话内容多时布局错位"的根因。这里把 delta 按任务
+  // 缓冲，最多每 150ms 冲刷一次；非 delta 事件（tool_result/chart/done 等）
+  // 到达前先冲刷该任务缓冲，保证事件先后顺序不变。
+  const deltaBuf = new Map<string, Array<{ kind: "text" | "reasoning"; text: string }>>();
+  let deltaFlushTimer: ReturnType<typeof setTimeout> | null = null;
+  const DELTA_FLUSH_MS = 150;
+
+  function applyDeltaBatch(taskId: string, batch: Array<{ kind: "text" | "reasoning"; text: string }>) {
+    if (batch.length === 0) return;
+    setTasksByWorkspace((prev) => {
+      let targetWs: string | null = null;
+      for (const [p, arr] of Object.entries(prev)) {
+        if (arr.some((t) => t.id === taskId)) {
+          targetWs = p;
+          break;
+        }
+      }
+      if (targetWs === null) return prev;
+      const wsPath = targetWs;
+      const newArr = prev[wsPath].map((t) => {
+        if (t.id !== taskId) return t;
+        const messages = [...(t.messages ?? [])];
+        let lastMsg = messages[messages.length - 1];
+        if (!lastMsg || lastMsg.role !== "assistant") {
+          lastMsg = {
+            id: `msg-assistant-${Date.now()}`,
+            role: "assistant",
+            segments: [],
+            ts: Date.now(),
+          };
+          messages.push(lastMsg);
+        }
+        let segments = lastMsg.segments ? [...lastMsg.segments] : [];
+        for (const d of batch) segments = appendDelta(segments, d.kind, d.text);
+        messages[messages.length - 1] = { ...lastMsg, segments };
+        return { ...t, messages };
+      });
+      return { ...prev, [wsPath]: newArr };
+    });
+  }
+
+  function flushTaskDeltas(taskId: string) {
+    const buf = deltaBuf.get(taskId);
+    if (!buf || buf.length === 0) return;
+    deltaBuf.delete(taskId);
+    applyDeltaBatch(taskId, buf);
+  }
+
+  function scheduleDeltaFlush() {
+    if (deltaFlushTimer !== null) return;
+    deltaFlushTimer = setTimeout(() => {
+      deltaFlushTimer = null;
+      for (const id of [...deltaBuf.keys()]) flushTaskDeltas(id);
+    }, DELTA_FLUSH_MS);
+  }
+
   onMount(async () => {
     // 检查数据分析环境是否就绪。
     try {
@@ -306,6 +366,17 @@ export default function App() {
           return next;
         });
       }
+
+      // 流式渲染节流：text/reasoning delta 进缓冲定频冲刷，不逐事件触发重渲染。
+      if (payload.kind === "text" || payload.kind === "reasoning") {
+        const buf = deltaBuf.get(targetId) ?? [];
+        buf.push({ kind: payload.kind, text: payload.text ?? "" });
+        deltaBuf.set(targetId, buf);
+        scheduleDeltaFlush();
+        return;
+      }
+      // 非 delta 事件：先冲刷该任务的 delta 缓冲，保证事件先后顺序。
+      flushTaskDeltas(targetId);
 
       setTasksByWorkspace((prev) => {
         // 找到 targetId 所在的工作区，找不到则 no-op。
