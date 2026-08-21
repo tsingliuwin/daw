@@ -1,7 +1,8 @@
-import { Index, Show, Switch, Match, createSignal, createEffect, createMemo, onMount, onCleanup, untrack } from "solid-js";
+import { Index, For, Show, Switch, Match, createSignal, createEffect, createMemo, onMount, onCleanup, untrack } from "solid-js";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { ChatMessage, Segment, TokenUsage, ModelOption, RetryNotice } from "../lib/types";
 import { derivePanelMetrics, fmtCap, fmtPct } from "../lib/metrics";
+import MarkdownRenderer from "./MarkdownRenderer";
 import ToolSegment from "./ToolSegment";
 import ChartSegment from "./ChartSegment";
 import MessageText from "./MessageText";
@@ -475,10 +476,10 @@ export default function ChatView(props: {
                         const ts = () => asText(seg());
                         const es = () => asError(seg());
                         // 流式尾部文本段：正在生长的最后一条 assistant 消息的最后一个
-                        // text 段。markdown 终渲（marked + Shiki + innerHTML 重建）对
-                        // 逐段增长的内容是每次全量重算，长报告流式期会把渲染管线整个
-                        // 占满（实测连合成器帧都停滞，窗口 resize 无法落地）——流式期
-                        // 先按纯文本追加渲染，段关闭/流结束后由 fallback 走 markdown。
+                        // text 段。整段 markdown 逐冲刷全量重算（marked + Shiki +
+                        // innerHTML 重建）在长输出流式期会把渲染管线占满——改为
+                        // LiveMarkdown 渐进渲染（段落级增量 + 活动段跳过高亮），
+                        // 流结束后回落 MessageText 全量终渲。
                         const isLiveTextTail = createMemo(() => {
                           if (!isStreaming() || msg().role !== "assistant") return false;
                           if (msg().id !== props.messages[props.messages.length - 1]?.id) return false;
@@ -552,7 +553,7 @@ export default function ChatView(props: {
                               <div class="chat-msg__text">
                                 <Show
                                   when={!isLiveTextTail()}
-                                  fallback={<div class="chat-msg__text--live">{ts()!.text}</div>}
+                                  fallback={<LiveMarkdown text={ts()!.text} />}
                                 >
                                   <Show when={msg().role === "assistant"} fallback={ts()!.text}>
                                     <MessageText text={ts()!.text} segments={msg().segments} charts={allCharts()} />
@@ -757,9 +758,43 @@ export default function ChatView(props: {
 }
 
 /**
- * 思考过程内容区：自带独立的贴底滚动管理（沿用早期实现）。
+ * 流式尾段的渐进 markdown：按空行把追加式文本切段，完成段落缓存复用同一
+ * 对象（<For> 按引用 diff），段落闭合时只解析一次；活动尾段（最后一段，通常
+ * 是当前段落或未闭合代码块）每次冲刷重渲染——体量小且跳过 Shiki 高亮。
+ * 段落闭合后 streaming 翻转补一次高亮；流结束整条消息由 MessageText 全量
+ * 终渲，被空行切开的连续列表/表格等跨段上下文随之复原。
  */
-function ReasoningBody(props: { text: string }) {
+function LiveMarkdown(props: { text: string }) {
+  let cache = new Map<string, { key: string; content: string }>();
+  const chunks = createMemo(() => {
+    const rawParts = props.text.length > 0 ? props.text.split(/\n\n+/) : [];
+    const next = new Map<string, { key: string; content: string }>();
+    const out = rawParts.map((p, i) => {
+      const key = i + ":" + p;
+      const hit = cache.get(key);
+      if (hit) {
+        next.set(key, hit);
+        return hit;
+      }
+      const fresh = { key, content: p };
+      next.set(key, fresh);
+      return fresh;
+    });
+    cache = next;
+    return out;
+  });
+  return (
+    <For each={chunks()}>
+      {(c, i) => (
+        <MarkdownRenderer content={c.content} streaming={i() === chunks().length - 1} />
+      )}
+    </For>
+  );
+}
+
+/**
+ * 思考过程内容区：自带独立的贴底滚动管理（沿用早期实现）。
+ */function ReasoningBody(props: { text: string }) {
   let bodyRef: HTMLDivElement | undefined;
   const [stick, setStick] = createSignal(true);
   let lastScrollHeight = 0;

@@ -47,12 +47,20 @@ function transformerLineNumbers(enable: boolean): ShikiTransformer {
 }
 
 /** Render a single code block to highlighted HTML. Falls back to a plain
- *  `<pre><code>` for unsupported languages or before the highlighter loads. */
+ * `<pre><code>` for unsupported languages or before the highlighter loads. */
 function highlightCode(code: string, langRaw: string): string {
   const lang = langRaw.toLowerCase().trim();
   const theme = activeCodeTheme();
   const hl = highlighter();
   const supported = (SUPPORTED_LANGS as readonly string[]).includes(lang);
+
+  // 流式渲染期（streaming 实例，见 parseWithPlainCode）：Shiki 全量语法高亮是
+  // 流式期最贵的单点（一个代码块几十毫秒，逐冲刷重算直接打满主线程），先出
+  // 纯代码，段落闭合/流结束后由非 streaming 渲染补齐高亮。
+  if (streamingParseDepth > 0) {
+    const escaped = code.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    return `<pre><code class="language-${lang || "text"}">${escaped}</code></pre>`;
+  }
 
   if (!hl || !supported) {
     const escaped = code
@@ -85,6 +93,18 @@ renderer.code = ({ text, lang }: { text: string; lang?: string }) =>
 
 marked.use({ renderer });
 
+// marked 的 renderer 是模块级共享的；marked.parse 同步执行，这里用计数器在
+// streaming 实例解析期间打开 highlightCode 的"跳过 Shiki"开关（单线程同步安全）。
+let streamingParseDepth = 0;
+function parseMarked(content: string, streaming: boolean): string {
+  streamingParseDepth += streaming ? 1 : 0;
+  try {
+    return marked.parse(content) as string;
+  } finally {
+    streamingParseDepth -= streaming ? 1 : 0;
+  }
+}
+
 // Re-configure marked when the renderer closure needs refreshing is unnecessary —
 // highlightCode reads signals at call time, and we re-run parse in the memo below
 // whenever those signals change.
@@ -100,13 +120,16 @@ marked.use({ renderer });
 export default function MarkdownRenderer(props: {
   content: string;
   onWikiLink?: (table: string) => void;
+  /** 流式渲染中的实例：跳过 Shiki 高亮（见 highlightCode），闭合后由
+   * streaming=false 的渲染补齐。 */
+  streaming?: boolean;
 }) {
   const html = createMemo(() => {
     if (!props.content) return "";
     void activeCodeTheme();
     void codeLineNumbers();
     void highlighter.state;
-    const raw = marked.parse(props.content) as string;
+    const raw = parseMarked(props.content, !!props.streaming);
     return raw
       .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, "")
       .replace(/<iframe\b[^>]*>.*?<\/iframe>/gi, "")
