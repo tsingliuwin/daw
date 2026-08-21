@@ -9,6 +9,7 @@
 - **排障手法**：WebView2 远程调试口（`WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9222` + 独立 `WEBVIEW2_USER_DATA_FOLDER`）+ 裸 CDP（Runtime.evaluate/Page.captureScreenshot）；合成器截图在主线程饿死时仍可用，是洪水期唯一可靠的观测手段。
 - 同类风险：任何「窗口状态 → JS → 内联样式」的链路在流式期都不可依赖；需要样式响应窗口尺寸时优先 CSS（含 container query）。
 - **节流不够，还要降单元成本**：delta 节流（150ms 冲刷）只降频率；真实重任务里每次冲刷仍对整段累积文本全量 marked 解析 + Shiki 高亮 + innerHTML 重建，渲染管线照样饱和（实测求值排队 14.5s、合成器帧停滞、WebView2 表面卡死且整页重载不恢复）。根治靠 ChatView 的 `isLiveTextTail`：流式尾部 text 段纯文本直出，流结束才 markdown 终渲。
+- **`<For>` 按引用 diff 是隐形全量重建点**：MessageText 的 chunks memo 每次 recompute 新建 text chunk 对象 → For 每次销毁重建全部子树。流式期 `allCharts` 每次冲刷都产生新数组身份连带 memo 重跑，带图表引用的消息每 150ms 全量重走 marked+Shiki（订单类长对话 30 图表 → 渲染债滚雪球，流停后 143% CPU 再烧十分钟）。chunk 对象必须跨 recompute 缓存复用（按「序号+内容」键），图表块按 ref 缓存同理。任何喂给 `<For>` 的派生数组都要警惕这一点。
 
 ## DuckDB postgres_query 关键经验
 
