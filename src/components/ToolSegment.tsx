@@ -7,9 +7,12 @@ import MarkdownRenderer from "./MarkdownRenderer";
 /** detail 是 markdown 正文（需要格式化渲染）的工具；其余走等宽 <pre>（如 SQL）。 */
 const MD_DETAIL_TOOLS = new Set([
   "list_okf_knowledge",
+  "load_okf_knowledge",
+  "write_okf_knowledge",
+  "read_okf_metadata",
+  // 旧名（历史会话回放兼容）
   "load_okf_block",
   "write_okf_block",
-  "read_okf_metadata",
 ]);
 
 /** 工具的人类可读标签。未知工具回退到原始 tool 名。 */
@@ -25,6 +28,9 @@ const TOOL_LABELS: Record<string, string> = {
   describe_table: "表结构",
   sample_data: "采样数据",
   render_chart: "生成图表",
+  load_okf_knowledge: "读取知识",
+  write_okf_knowledge: "记录知识",
+  // 旧名（历史会话回放兼容）
   load_okf_block: "读取知识",
   write_okf_block: "记录知识",
   search_okf_knowledge: "搜索知识",

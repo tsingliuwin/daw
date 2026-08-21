@@ -21,7 +21,7 @@ use super::events::{
 };
 use super::wire::{ChatMessageDto, Segment};
 use crate::skill::builtin::GetCurrentTimeTool;
-use crate::skill::data_analysis::{create_view::CreateViewTool, describe_table::DescribeTableTool, delete_okf_knowledge::DeleteOkfKnowledgeTool, drop_object::DropObjectTool, execute_query::ExecuteQueryTool, list_connections::ListConnectionsTool, list_okf_knowledge::ListOkfKnowledgeTool, list_remote_tables::ListRemoteTablesTool, list_tables::ListTablesTool, load_okf_block::LoadOkfBlockTool, read_okf_metadata::ReadOkfMetadataTool, register_table::RegisterTableTool, rename_okf_knowledge::RenameOkfKnowledgeTool, render_chart::RenderChartTool, sample_data::SampleDataTool, search_okf_knowledge::SearchOkfKnowledgeTool, update_okf_metadata::UpdateOkfMetadataTool, write_okf_block::WriteOkfBlockTool};
+use crate::skill::data_analysis::{create_view::CreateViewTool, describe_table::DescribeTableTool, delete_okf_knowledge::DeleteOkfKnowledgeTool, drop_object::DropObjectTool, execute_query::ExecuteQueryTool, list_connections::ListConnectionsTool, list_okf_knowledge::ListOkfKnowledgeTool, list_remote_tables::ListRemoteTablesTool, list_tables::ListTablesTool, load_okf_knowledge::LoadOkfKnowledgeTool, read_okf_metadata::ReadOkfMetadataTool, register_table::RegisterTableTool, rename_okf_knowledge::RenameOkfKnowledgeTool, render_chart::RenderChartTool, sample_data::SampleDataTool, search_okf_knowledge::SearchOkfKnowledgeTool, update_okf_metadata::UpdateOkfMetadataTool, write_okf_knowledge::WriteOkfKnowledgeTool};
 use crate::skill::search::SearchTool;
 use crate::skill::Scenario;
 use crate::state::AppState;
@@ -168,6 +168,18 @@ fn classify_rate_limit_error(msg: &str) -> RateLimitKind {
     RateLimitKind::No
 }
 
+/// Detect provider-side rejections of model-emitted tool calls that don't
+/// match the registered tool list (e.g. 火山 plan 端点把不认识的工具名整请求
+/// 打回: `PromptError: UnknownToolCall: model attempted to call unknown or
+/// disallowed tool ...`). ratelimit 分类器处理不了这类错误，单独识别以便给
+/// 用户可操作的提示。
+fn is_unknown_tool_call_error(msg: &str) -> bool {
+    msg.contains("UnknownToolCall")
+        || msg.contains("unknown or disallowed tool")
+        || msg.contains("未知工具")
+        || msg.contains("不存在的工具")
+}
+
 /// Drive the rig multi-turn stream: map each `MultiTurnStreamItem` to a frontend
 /// event. Tool calls/results are NOT taken from rig's stream — each tool emits
 /// its own richer `tool_call`/`tool_result` from inside `call()`.
@@ -258,9 +270,15 @@ async fn run_stream_loop<R>(
             // Tool calls arrive here too, but the tools emit their own events.
             Ok(_) => { emitted_any = true; }
             Err(e) => {
-                let msg = e.to_string();
+                let mut msg = e.to_string();
                 if !emitted_any && classify_rate_limit_error(&msg) == RateLimitKind::Retriable {
                     return RunOutcome::RateLimited(msg.clone());
+                }
+                if is_unknown_tool_call_error(&msg) {
+                    msg.push_str(
+                        "\n\n模型尝试调用了一个不在工具列表中的函数，请求被服务端否决。\
+                         这类失败通常由模型臆造工具名引起，直接重试或换个模型即可恢复。",
+                    );
                 }
                 emit_event(&window, &task_id, "error", Some(msg.clone()), None);
                 return RunOutcome::Done;
@@ -441,7 +459,7 @@ pub(crate) async fn run_agent_task_stream(
             },
         )
     };
-    let build_data_tools = || -> (GetCurrentTimeTool, SearchTool, ExecuteQueryTool, ListTablesTool, DescribeTableTool, SampleDataTool, RenderChartTool, LoadOkfBlockTool, WriteOkfBlockTool, SearchOkfKnowledgeTool, CreateViewTool, DropObjectTool, ListConnectionsTool, ListRemoteTablesTool, RegisterTableTool, ReadOkfMetadataTool, UpdateOkfMetadataTool, ListOkfKnowledgeTool, DeleteOkfKnowledgeTool, RenameOkfKnowledgeTool) {
+    let build_data_tools = || -> (GetCurrentTimeTool, SearchTool, ExecuteQueryTool, ListTablesTool, DescribeTableTool, SampleDataTool, RenderChartTool, LoadOkfKnowledgeTool, WriteOkfKnowledgeTool, SearchOkfKnowledgeTool, CreateViewTool, DropObjectTool, ListConnectionsTool, ListRemoteTablesTool, RegisterTableTool, ReadOkfMetadataTool, UpdateOkfMetadataTool, ListOkfKnowledgeTool, DeleteOkfKnowledgeTool, RenameOkfKnowledgeTool) {
         (
             GetCurrentTimeTool { app_state: app_state.clone(), task_id: task_id.clone(), window: window.clone() },
             SearchTool { app_state: app_state.clone(), task_id: task_id.clone(), window: window.clone() },
@@ -450,8 +468,8 @@ pub(crate) async fn run_agent_task_stream(
             DescribeTableTool { app_state: app_state.clone(), task_id: task_id.clone(), window: window.clone(), ws: ws_ref.clone() },
             SampleDataTool { app_state: app_state.clone(), task_id: task_id.clone(), window: window.clone(), ws: ws_ref.clone() },
             RenderChartTool { app_state: app_state.clone(), task_id: task_id.clone(), window: window.clone(), ws: ws_ref.clone() },
-            LoadOkfBlockTool { app_state: app_state.clone(), task_id: task_id.clone(), window: window.clone(), ws: ws_ref.clone() },
-            WriteOkfBlockTool { app_state: app_state.clone(), task_id: task_id.clone(), window: window.clone(), ws: ws_ref.clone() },
+            LoadOkfKnowledgeTool { app_state: app_state.clone(), task_id: task_id.clone(), window: window.clone(), ws: ws_ref.clone() },
+            WriteOkfKnowledgeTool { app_state: app_state.clone(), task_id: task_id.clone(), window: window.clone(), ws: ws_ref.clone() },
             SearchOkfKnowledgeTool { app_state: app_state.clone(), task_id: task_id.clone(), window: window.clone(), ws: ws_ref.clone() },
             CreateViewTool { app_state: app_state.clone(), task_id: task_id.clone(), window: window.clone(), confirm_mode: confirm_mode.clone(), ws: ws_ref.clone() },
             DropObjectTool { app_state: app_state.clone(), task_id: task_id.clone(), window: window.clone(), confirm_mode: confirm_mode.clone(), ws: ws_ref.clone() },

@@ -7,13 +7,13 @@ use super::super::super::agent::events::{emit_tool_call, emit_tool_result, next_
 use super::super::super::state::AppState;
 
 #[derive(Deserialize, Serialize)]
-pub struct LoadOkfBlockArgs {
+pub struct LoadOkfKnowledgeArgs {
     category: String,
     name: String,
     heading: String,
 }
 
-pub struct LoadOkfBlockTool {
+pub struct LoadOkfKnowledgeTool {
     #[allow(dead_code)]
     pub app_state: AppState,
     pub task_id: String,
@@ -21,15 +21,15 @@ pub struct LoadOkfBlockTool {
     pub ws: crate::skill::WorkspaceRef,
 }
 
-impl Tool for LoadOkfBlockTool {
-    const NAME: &'static str = "load_okf_block";
+impl Tool for LoadOkfKnowledgeTool {
+    const NAME: &'static str = "load_okf_knowledge";
     type Error = ToolError;
-    type Args = LoadOkfBlockArgs;
+    type Args = LoadOkfKnowledgeArgs;
     type Output = String;
 
     async fn definition(&self, _prompt: String) -> ToolDefinition {
         ToolDefinition {
-            name: "load_okf_block".to_string(),
+            name: "load_okf_knowledge".to_string(),
             description: "读取本地 OKF 知识库某条知识的细节。可读某文件下指定标题（精简读取以省 token），或用 heading=all 读整篇全文。会话开场已注入大纲，按需精读具体条目即可。".to_string(),
             parameters: json!({
                 "type": "object",
@@ -45,7 +45,7 @@ impl Tool for LoadOkfBlockTool {
 
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
         let call_id = next_tool_id("okf");
-        emit_tool_call(&self.window, &self.task_id, &call_id, "load_okf_block", json!({
+        emit_tool_call(&self.window, &self.task_id, &call_id, "load_okf_knowledge", json!({
             "category": &args.category, "name": &args.name, "heading": &args.heading,
         }));
 

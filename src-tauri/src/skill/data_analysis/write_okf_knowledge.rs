@@ -7,7 +7,7 @@ use super::super::super::agent::events::{emit_tool_call, emit_tool_result, next_
 use super::super::super::state::AppState;
 
 #[derive(Deserialize, Serialize)]
-pub struct WriteOkfBlockArgs {
+pub struct WriteOkfKnowledgeArgs {
     category: String,
     name: String,
     heading: String,
@@ -18,7 +18,7 @@ pub struct WriteOkfBlockArgs {
     confirm_new: bool,
 }
 
-pub struct WriteOkfBlockTool {
+pub struct WriteOkfKnowledgeTool {
     #[allow(dead_code)]
     pub app_state: AppState,
     pub task_id: String,
@@ -26,15 +26,15 @@ pub struct WriteOkfBlockTool {
     pub ws: crate::skill::WorkspaceRef,
 }
 
-impl Tool for WriteOkfBlockTool {
-    const NAME: &'static str = "write_okf_block";
+impl Tool for WriteOkfKnowledgeTool {
+    const NAME: &'static str = "write_okf_knowledge";
     type Error = ToolError;
-    type Args = WriteOkfBlockArgs;
+    type Args = WriteOkfKnowledgeArgs;
     type Output = String;
 
     async fn definition(&self, _prompt: String) -> ToolDefinition {
         ToolDefinition {
-            name: "write_okf_block".to_string(),
+            name: "write_okf_knowledge".to_string(),
             description: "向本地 OKF 知识库写入或更新业务知识。当用户补充了字段释义、关联关系、排障经验时必须立即调用。类别选择：concepts=全局业务概念/公司背景；tables/views=单表字段释义/关联；pipelines/specific=清洗配方/排障。首次写入某个文件时建议提供 description（一句话用途说明）。新建文件时自动做相似度检测：若返回「疑似重复」候选，同一主题必须改用既有 name 写入既有文件；确属不同知识才传 confirm_new=true。".to_string(),
             parameters: json!({
                 "type": "object",
@@ -53,7 +53,7 @@ impl Tool for WriteOkfBlockTool {
 
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
         let call_id = next_tool_id("okf");
-        emit_tool_call(&self.window, &self.task_id, &call_id, "write_okf_block", json!({
+        emit_tool_call(&self.window, &self.task_id, &call_id, "write_okf_knowledge", json!({
             "category": &args.category, "name": &args.name, "heading": &args.heading,
         }));
 
@@ -94,7 +94,7 @@ impl Tool for WriteOkfBlockTool {
                     };
                     msg.push_str(&format!("- {}（相似度 {:.2}）{}\n", c.name, c.score, desc_part));
                 }
-                msg.push_str("请二选一：\n1. 同一主题 → 改用既有 name 重新调用 write_okf_block（可先 load_okf_block 读全文再整合更新，互补内容写成同文件的不同板块）；\n2. 确属不同知识 → 重新调用并传 confirm_new=true。\n本次未写入。");
+                msg.push_str("请二选一：\n1. 同一主题 → 改用既有 name 重新调用 write_okf_knowledge（可先 load_okf_knowledge 读全文再整合更新，互补内容写成同文件的不同板块）；\n2. 确属不同知识 → 重新调用并传 confirm_new=true。\n本次未写入。");
                 let elapsed = start.elapsed().as_millis() as u64;
                 emit_tool_result(
                     &self.window, &self.task_id, &call_id, "ok",
