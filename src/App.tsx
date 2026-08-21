@@ -776,6 +776,7 @@ export default function App() {
             const next: Theme = currentTheme() === "light" ? "geek-dark" : "light";
             persistTheme(next);
           }}
+          hasRunningWork={() => streamingTaskId() != null}
         />
       </Show>
 

@@ -350,6 +350,11 @@ select:hover:not(:disabled) {
 
 .menu-item .menu-label {
   flex: 1;
+  /* 菜单项文案不换行（「有新版本，正在下载...」等长文案曾在此被挤成两行） */
+  white-space: nowrap;
+}
+.menu-item .menu-shortcut:empty {
+  display: none; /* 空快捷键 span 不占位，避免挤压 label */
 }
 
 .menu-item .menu-shortcut {
@@ -758,6 +763,17 @@ select:hover:not(:disabled) {
   color: var(--danger, #ef4444);
   font-size: 12px;
   word-break: break-word;
+}
+/* 更新安装弹窗：有任务运行时的中断提醒（琥珀色）。 */
+.upd-running-warn {
+  margin: 0;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: var(--accent-amber-bg);
+  color: var(--accent-amber);
+  font-size: 12px;
+  line-height: 1.5;
+  text-align: left;
 }
 
 .icon-btn {

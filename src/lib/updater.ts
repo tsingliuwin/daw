@@ -8,7 +8,7 @@
  *
  * Chrome 之外（浏览器 dev 模式）自动静默：无 __TAURI_INTERNALS__ 时不做任何事。
  */
-import { check, type DownloadEvent } from "@tauri-apps/plugin-updater";
+import { check, type DownloadEvent, type Update } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { createSignal, createRoot } from "solid-js";
@@ -63,11 +63,15 @@ export async function checkForUpdate(): Promise<UpdateInfo | null> {
 }
 
 /**
- * Full update flow: check → download (with progress) → stage for install.
- * Does NOT relaunch; the caller decides via {@link relaunchApp}.
+ * Download the update and stage it locally. Does NOT install or restart —
+ * 关键：Windows 上 downloadAndInstall 会在下载完成后立即退出应用并运行
+ * 安装器（passive 模式自动重启），用户正在跑的任务会被直接打断。因此这里
+ * 只做 download 暂存，安装由用户在确认弹窗点击后经 {@link runInstall} 触发。
  * Throws on any failure (caller offers the download-page fallback).
  */
-async function downloadAndInstallUpdate(
+let stagedUpdate: Update | null = null;
+
+async function downloadUpdate(
   onProgress?: (p: DownloadProgress) => void,
 ): Promise<void> {
   const update = await check();
@@ -76,7 +80,7 @@ async function downloadAndInstallUpdate(
   let total = 0;
   let downloaded = 0;
 
-  await update.downloadAndInstall((ev: DownloadEvent) => {
+  await update.download((ev: DownloadEvent) => {
     if (ev.event === "Started" && ev.data.contentLength) {
       total = ev.data.contentLength;
     } else if (ev.event === "Progress") {
@@ -87,7 +91,7 @@ async function downloadAndInstallUpdate(
     }
   });
 
-  await update.close();
+  stagedUpdate = update;
 }
 
 /** Restart the app to apply a staged update. */
@@ -171,13 +175,13 @@ const store = createRoot(() => {
     }
   };
 
-  /** Download and stage the update silently. */
+  /** Download the update silently (no install/restart — see downloadUpdate). */
   const runDownload = async () => {
     if (status() === "downloading" || status() === "ready") return;
     setStatus("downloading");
     resetTransient();
     try {
-      await downloadAndInstallUpdate((p) => setProgress(p));
+      await downloadUpdate((p) => setProgress(p));
       setStatus("ready");
     } catch (e) {
       logError("system", "Download failed", e);
@@ -189,13 +193,20 @@ const store = createRoot(() => {
     }
   };
 
-  /** Apply the staged update by relaunching. */
+  /**
+   * Install the staged update and relaunch. Only ever called from the user's
+   * explicit confirmation（确认弹窗「安装并重启」按钮）——绝不自动触发。
+   */
   const runInstall = async () => {
     setStatus("installing");
     try {
+      if (stagedUpdate) {
+        await stagedUpdate.install();
+        stagedUpdate = null;
+      }
       await relaunch();
     } catch (e) {
-      logError("system", "Relaunch failed", e);
+      logError("system", "Install/relaunch failed", e);
       setStatus("error");
       setError(e instanceof Error ? e.message : String(e));
     }

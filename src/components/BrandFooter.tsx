@@ -22,6 +22,9 @@ export default function BrandFooter(props: {
   isDarkTheme?: boolean;
   onOpenSettings?: () => void;
   onCloseSettings?: () => void;
+  /** 是否有正在运行的任务（如流式输出）。安装更新需要重启应用，弹窗中据此
+   *  提醒用户重启会中断任务。由 App 传入，settings 页不传则不提醒。 */
+  hasRunningWork?: () => boolean;
 }) {
   const [updateModalOpen, setUpdateModalOpen] = createSignal(false);
 
@@ -168,6 +171,11 @@ export default function BrandFooter(props: {
                   <span class="update-notes-label">更新内容</span>
                   <pre class="update-notes-body">{updater.info().notes || "（无更新说明）"}</pre>
                 </div>
+                <Show when={props.hasRunningWork?.()}>
+                  <p class="upd-running-warn">
+                    ⚠️ 当前有任务正在运行，重启会中断正在进行的输出。建议等任务完成后再安装。
+                  </p>
+                </Show>
                 <div class="update-modal-actions">
                   <button
                     class="upd-modal-btn primary"

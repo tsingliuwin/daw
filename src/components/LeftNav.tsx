@@ -34,6 +34,8 @@ export default function LeftNav(props: {
   onOpenSettings: () => void;
   /** 快捷切换主题（深色 ↔ 浅色）。底部品牌区主题按钮触发。 */
   onToggleTheme: () => void;
+  /** 是否有正在运行的任务（更新安装弹窗据此提醒重启会中断任务）。 */
+  hasRunningWork?: () => boolean;
 }) {
   return (
     <div class="left-nav">
@@ -153,6 +155,7 @@ export default function LeftNav(props: {
         onToggleTheme={props.onToggleTheme}
         isDarkTheme={currentTheme() !== "light"}
         onOpenSettings={props.onOpenSettings}
+        hasRunningWork={props.hasRunningWork}
       />
     </div>
   );
