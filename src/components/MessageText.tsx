@@ -24,6 +24,12 @@ type ResolvedChunk =
  */
 export default function MessageText(props: { text: string; segments?: Segment[]; charts?: Segment[] }) {
   let chartChunkCache = new Map<string, ResolvedChunk>();
+  // 文本块按「序号+内容」缓存复用同一对象：Solid 的 <For> 按引用 diff，而流式期
+  // 父级每 150ms 冲刷一次（allCharts 每冲刷都产生新数组身份，连带本 memo 重跑）。
+  // 若每次重建 text chunk 对象，For 会销毁并重建全部子树——带图表引用的消息
+  // （每段文本+图表交替）每冲刷就全量重走 marked+Shiki markdown 渲染，长对话
+  // 流式期渲染债滚雪球，主线程十分钟级冻结、窗口 resize 无法落地。
+  let textChunkCache = new Map<string, ResolvedChunk>();
 
   const chunks = createMemo<ResolvedChunk[]>(() => {
     const segs = props.segments ?? [];
@@ -31,7 +37,8 @@ export default function MessageText(props: { text: string; segments?: Segment[];
     // chart emitted in a previous message still resolves inline.
     const searchSource = props.charts ?? segs;
     const nextCache = new Map<string, ResolvedChunk>();
-    const out: ResolvedChunk[] = splitTextByChartRefs(props.text).map((p) => {
+    const nextTextCache = new Map<string, ResolvedChunk>();
+    const out: ResolvedChunk[] = splitTextByChartRefs(props.text).map((p, i) => {
       if (p.kind === "chartRef") {
         const chart = findChartSegment(searchSource, p.ref);
         const cached = chartChunkCache.get(p.ref);
@@ -43,9 +50,18 @@ export default function MessageText(props: { text: string; segments?: Segment[];
         nextCache.set(p.ref, fresh);
         return fresh;
       }
-      return { kind: "text", content: p.content };
+      const key = i + ":" + p.content;
+      const cached = textChunkCache.get(key);
+      if (cached) {
+        nextTextCache.set(key, cached);
+        return cached;
+      }
+      const fresh: ResolvedChunk = { kind: "text", content: p.content };
+      nextTextCache.set(key, fresh);
+      return fresh;
     });
     chartChunkCache = nextCache;
+    textChunkCache = nextTextCache;
     return out;
   });
   const hasRefs = createMemo(() => chunks().some((c) => c.kind === "chartRef"));
