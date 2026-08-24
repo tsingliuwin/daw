@@ -427,6 +427,7 @@ export default function App() {
               payload: s.payload,
               elapsedMs: s.elapsedMs,
               result: s.result,
+              meta: s.meta,
             });
           } else if (kind === "chart" && payload.segment) {
             // chart segment：push 进消息 segments 列表，ChatView 渲染 ChartSegment。

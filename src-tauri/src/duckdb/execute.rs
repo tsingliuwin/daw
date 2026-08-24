@@ -38,13 +38,7 @@ pub fn run_query(conn: &duckdb::Connection, sql: &str, cap: Option<usize>) -> Re
     };
 
     // 把用户 SQL 包成子查询再加 LIMIT（若用户自己的 LIMIT ≤ cap 则透传）。
-    let inner = sql.trim().trim_end_matches(';');
-    let existing_limit = parse_trailing_limit(inner);
-    let wrapped = match (cap, existing_limit) {
-        (Some(cap_val), Some(limit_val)) if limit_val <= cap_val as u64 => inner.to_string(),
-        (Some(cap_val), _) => format!("SELECT * FROM ({inner}) AS _q LIMIT {cap_val}"),
-        (None, _) => inner.to_string(),
-    };
+    let wrapped = wrap_query(sql, cap);
 
     let query_res = (|| -> Result<SqlResult, String> {
         let mut stmt = conn.prepare(&wrapped).map_err(|e| e.to_string())?;
@@ -113,6 +107,20 @@ pub fn run_query(conn: &duckdb::Connection, sql: &str, cap: Option<usize>) -> Re
                 Err(e)
             }
         }
+    }
+}
+
+/// Resolve the statement actually handed to DuckDB for `sql` under a row `cap`:
+/// a subquery-wrapped `SELECT * FROM (...) AS _q LIMIT n` unless the SQL already
+/// carries a smaller LIMIT. Exposed so tool layers can record the *executed*
+/// SQL in audit logs instead of the pre-rewrite original.
+pub fn wrap_query(sql: &str, cap: Option<usize>) -> String {
+    let inner = sql.trim().trim_end_matches(';');
+    let existing_limit = parse_trailing_limit(inner);
+    match (cap, existing_limit) {
+        (Some(cap_val), Some(limit_val)) if limit_val <= cap_val as u64 => inner.to_string(),
+        (Some(cap_val), _) => format!("SELECT * FROM ({inner}) AS _q LIMIT {cap_val}"),
+        (None, _) => inner.to_string(),
     }
 }
 

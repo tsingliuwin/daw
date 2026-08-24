@@ -3,7 +3,9 @@ use serde_json::json;
 use rig_core::{completion::ToolDefinition, tool::Tool};
 
 use super::super::super::agent::error::ToolError;
-use super::super::super::agent::events::{emit_tool_call, emit_tool_result, next_tool_id};
+use super::super::super::agent::events::{
+    emit_tool_call, emit_tool_result, emit_tool_result_with_meta, next_tool_id,
+};
 use super::super::super::duckdb::{execute, QUERY_HARD_TIMEOUT_SECS};
 use super::super::super::duckdb::attach::workspace_attach_alias;
 use super::super::super::model::SqlResult;
@@ -100,6 +102,10 @@ impl Tool for ExecuteQueryTool {
 
         let hard_secs = QUERY_HARD_TIMEOUT_SECS;
 
+        // 实际落 DuckDB 的语句（别名归一化 + 行数包装）——日志与 transcript meta
+        // 都记录它，与模型原文 sql 对照即可复现"当时到底查了什么"。
+        let sql_executed = execute::wrap_query(&sql_string, Some(50));
+
         // 执行前检查：解析 SQL 里的表名，查 table_registry access_mode。
         // pushdown 模式的表不能通过视图查询（会拉全表），必须用 postgres_query 下推。
         let ws_path = self.ws.path.clone();
@@ -188,9 +194,26 @@ impl Tool for ExecuteQueryTool {
                     out.push_str("(结果已截断，仅返回前 50 行)\n");
                 }
                 let payload = serde_json::to_value(&res).ok();
-                emit_tool_result(
+                let meta = serde_json::json!({
+                    "sql": sql_executed,
+                    "sqlOriginal": sql,
+                    "rows": n,
+                    "truncated": res.truncated,
+                    "errorClass": serde_json::Value::Null,
+                });
+                let ws_log = self.ws.path.clone();
+                let task_log = self.task_id.clone();
+                tracing::info!(
+                    category = "sql",
+                    workspace = ws_log.as_str(),
+                    task_id = task_log.as_str(),
+                    detail = ?meta,
+                    "execute_query 成功，返回 {} 行（{} ms）",
+                    n, elapsed,
+                );
+                emit_tool_result_with_meta(
                     &self.window, &self.task_id, &call_id, "ok",
-                    summary, Some(sql.to_string()), payload, Some(elapsed), None,
+                    summary, Some(sql.to_string()), payload, Some(elapsed), None, Some(meta),
                 );
                 Ok(out)
             }
@@ -198,6 +221,7 @@ impl Tool for ExecuteQueryTool {
                 // 查询失败时更新 table_registry 的表状态（status 真源在 SQLite）。
                 let ws_path = self.ws.path.clone();
                 let err_msg = err.0.clone();
+                let err_class = super::classify_sql_error_class(&err_msg);
                 let sql_clone = sql.to_string();
                 let _ = tokio::task::spawn_blocking(move || {
                     if let Some(table_name) = extract_table_from_sql(&sql_clone) {
@@ -205,9 +229,26 @@ impl Tool for ExecuteQueryTool {
                         let _ = crate::db::update_table_registry_status(&ws_path, &table_name, &status, Some(&reason));
                     }
                 }).await;
-                emit_tool_result(
+                let meta = serde_json::json!({
+                    "sql": sql_executed,
+                    "sqlOriginal": sql,
+                    "rows": 0,
+                    "truncated": false,
+                    "errorClass": err_class,
+                });
+                let ws_log = self.ws.path.clone();
+                let task_log = self.task_id.clone();
+                tracing::error!(
+                    category = "sql",
+                    workspace = ws_log.as_str(),
+                    task_id = task_log.as_str(),
+                    detail = ?meta,
+                    "execute_query 失败({}): {}",
+                    err_class, err.0,
+                );
+                emit_tool_result_with_meta(
                     &self.window, &self.task_id, &call_id, "error",
-                    err.0.clone(), Some(sql.to_string()), None, Some(elapsed), None,
+                    err.0.clone(), Some(sql.to_string()), None, Some(elapsed), None, Some(meta),
                 );
                 Err(err)
             }

@@ -51,6 +51,11 @@ pub enum Segment {
         elapsed_ms: Option<u64>,
         #[serde(skip_serializing_if = "Option::is_none")]
         result: Option<String>,
+        /// Compact structured audit fields (e.g. the *executed* SQL for the
+        /// SQL tools). Persisted with the transcript so 历史排查 / agent 调优 can
+        /// consume it without string-parsing summaries.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        meta: Option<serde_json::Value>,
     },
     /// Visible answer text (Markdown). Accumulated from text deltas.
     Text { id: String, text: String },

@@ -106,6 +106,7 @@ pub(crate) fn emit_tool_call(
             payload: None,
             elapsed_ms: None,
             result: None,
+            meta: None,
         }),
     );
 }
@@ -123,6 +124,26 @@ pub(crate) fn emit_tool_result(
     elapsed_ms: Option<u64>,
     result: Option<String>,
 ) {
+    emit_tool_result_with_meta(
+        window, task_id, id, status, summary, detail, payload, elapsed_ms, result, None,
+    );
+}
+
+/// [`emit_tool_result`] plus a compact structured `meta` object attached to the
+/// tool segment. SQL tools use it to persist audit fields (the *executed* SQL,
+/// row counts, error class) in the transcript jsonl without bloating summaries.
+pub(crate) fn emit_tool_result_with_meta(
+    window: &tauri::Window,
+    task_id: &str,
+    id: &str,
+    status: &str, // "ok" | "error"
+    summary: String,
+    detail: Option<String>,
+    payload: Option<serde_json::Value>,
+    elapsed_ms: Option<u64>,
+    result: Option<String>,
+    meta: Option<serde_json::Value>,
+) {
     emit_event(
         window,
         task_id,
@@ -138,6 +159,7 @@ pub(crate) fn emit_tool_result(
             payload,
             elapsed_ms,
             result,
+            meta,
         }),
     );
 }
@@ -168,6 +190,7 @@ pub(crate) fn emit_tool_awaiting(
             payload: None,
             elapsed_ms: None,
             result: None,
+            meta: None,
         }),
     );
 }

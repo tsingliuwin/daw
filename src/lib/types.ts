@@ -18,7 +18,8 @@ export type LogCategory =
   | "system"
   | "ui"
   | "link"
-  | "oa";
+  | "oa"
+  | "sql";
 
 /** 一条统一日志。对应 SQLite `logs` 表的一行，也是 `app-log` 事件的 payload。
  * `detail` 是按类别而异的结构化字段。 */
@@ -75,6 +76,8 @@ export type Segment =
       startTime?: number;
       /** 工具执行结果的纯文本描述（error 时通常是错误信息）。 */
       result?: string;
+      /** 紧凑结构化审计字段（SQL 工具记录实际执行 SQL / 行数 / errorClass 等）。 */
+      meta?: unknown;
     }
   | { type: "text"; id: string; text: string }
   | {

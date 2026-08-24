@@ -4,7 +4,7 @@ use serde_json::json;
 use rig_core::{completion::ToolDefinition, tool::Tool};
 
 use super::super::super::agent::error::ToolError;
-use super::super::super::agent::events::{emit_chart, emit_tool_call, emit_tool_result, next_tool_id};
+use super::super::super::agent::events::{emit_chart, emit_tool_call, emit_tool_result, emit_tool_result_with_meta, next_tool_id};
 use super::super::super::duckdb::{execute, QUERY_HARD_TIMEOUT_SECS};
 use super::super::super::model::SqlResult;
 use super::super::super::state::AppState;
@@ -112,32 +112,65 @@ impl Tool for RenderChartTool {
         let ih = wsc.interrupt_handle.lock().ok().map(|g| g.clone());
 
         let sql_string = sql.to_string();
+        // 实际落 DuckDB 的语句（行数包装），日志与 transcript meta 用。
+        let sql_executed = execute::wrap_query(&sql_string, Some(200));
         let hard_secs = QUERY_HARD_TIMEOUT_SECS;
         let blocking_fut = tokio::task::spawn_blocking(move || -> Result<SqlResult, String> {
             let guard = conn.blocking_lock();
             execute::run_query(&guard, &sql_string, Some(200)).map_err(|e| e.to_string())
         });
-        let res: SqlResult = if hard_secs > 0 {
+        let run_res = if hard_secs > 0 {
             match tokio::time::timeout(std::time::Duration::from_secs(hard_secs), blocking_fut).await {
-                Ok(r) => r
-                    .map_err(|e| ToolError(format!("线程生成失败: {e}")))
-                    .and_then(|v| v.map_err(ToolError))?,
+                Ok(r) => r.map_err(|e| format!("线程生成失败: {e}")).and_then(|v| v),
                 Err(_) => {
                     if let Some(ih) = ih {
                         ih.interrupt();
                     }
-                    return Err(ToolError(format!("图表查询已达到最大等待时间（{} 秒）被强制终止", hard_secs)));
+                    Err(format!("图表查询已达到最大等待时间（{} 秒）被强制终止", hard_secs))
                 }
             }
         } else {
-            blocking_fut.await
-                .map_err(|e| ToolError(format!("线程生成失败: {e}")))
-                .and_then(|v| v.map_err(ToolError))?
+            blocking_fut.await.map_err(|e| format!("线程生成失败: {e}")).and_then(|v| v)
+        };
+        let res: SqlResult = match run_res {
+            Ok(v) => v,
+            Err(msg) => {
+                let err_class = super::classify_sql_error_class(&msg);
+                let meta = serde_json::json!({
+                    "sql": sql_executed,
+                    "sqlOriginal": sql,
+                    "rows": 0,
+                    "truncated": false,
+                    "errorClass": err_class,
+                });
+                let ws_log = self.ws.path.clone();
+                let task_log = self.task_id.clone();
+                tracing::error!(
+                    category = "sql",
+                    workspace = ws_log.as_str(),
+                    task_id = task_log.as_str(),
+                    detail = ?meta,
+                    "render_chart 失败({}): {}",
+                    err_class, msg,
+                );
+                emit_tool_result_with_meta(
+                    &self.window, &self.task_id, &call_id, "error",
+                    msg.clone(), None, None, None, None, Some(meta),
+                );
+                return Err(ToolError(msg));
+            }
         };
 
         let elapsed = start.elapsed().as_millis() as u64;
         {
             let row_count = res.row_count;
+            let meta = serde_json::json!({
+                "sql": sql_executed,
+                "sqlOriginal": sql,
+                "rows": row_count,
+                "truncated": res.truncated,
+                "errorClass": serde_json::Value::Null,
+            });
             // Emit the chart segment — frontend renders it inline.
             emit_chart(
                 &self.window, &self.task_id, &call_id,
@@ -150,9 +183,19 @@ impl Tool for RenderChartTool {
                 res,
             );
             let user_summary = format!("已生成{}图，共 {} 个数据点", chart_type_cn(&args.chart_type), row_count);
-            emit_tool_result(
+            let ws_log = self.ws.path.clone();
+            let task_log = self.task_id.clone();
+            tracing::info!(
+                category = "sql",
+                workspace = ws_log.as_str(),
+                task_id = task_log.as_str(),
+                detail = ?meta,
+                "render_chart 成功，{} 个数据点（{} ms）",
+                row_count, elapsed,
+            );
+            emit_tool_result_with_meta(
                 &self.window, &self.task_id, &call_id, "ok",
-                user_summary.clone(), None, None, Some(elapsed), None,
+                user_summary.clone(), None, None, Some(elapsed), None, Some(meta),
             );
             // {{chart:<id>}} marker lets the model reference this chart in
             // its final text summary; the frontend matches id == call_id.

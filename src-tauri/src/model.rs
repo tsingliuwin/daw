@@ -127,7 +127,7 @@ impl LogLevel {
 /// `link` stay relevant. New buckets can be appended freely — old rows still
 /// parse, and the frontend filters on whatever category strings it sees.
 #[allow(dead_code)]
-pub const LOG_CATEGORIES: &[&str] = &["agent", "system", "ui", "link", "oa"];
+pub const LOG_CATEGORIES: &[&str] = &["agent", "system", "ui", "link", "oa", "sql"];
 
 /// One row of the unified `logs` table. The wire format mirrored 1:1 by
 /// `src/lib/types.ts` `UnifiedLog`. `detail` is a free-form JSON object for

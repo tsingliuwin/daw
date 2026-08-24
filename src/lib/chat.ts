@@ -93,6 +93,7 @@ export function mergeToolResult(
     payload?: unknown;
     elapsedMs?: number;
     result?: string;
+    meta?: unknown;
   },
 ): Segment[] {
   const idx = segments.findIndex(
@@ -110,6 +111,7 @@ export function mergeToolResult(
     payload: result.payload ?? cur.payload,
     elapsedMs: result.elapsedMs ?? cur.elapsedMs,
     result: result.result ?? cur.result,
+    meta: result.meta ?? cur.meta,
   };
   return next;
 }

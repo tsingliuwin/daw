@@ -3,7 +3,7 @@ use serde_json::json;
 use rig_core::{completion::ToolDefinition, tool::Tool};
 
 use super::super::super::agent::error::ToolError;
-use super::super::super::agent::events::{emit_tool_call, emit_tool_result, next_tool_id};
+use super::super::super::agent::events::{emit_tool_call, emit_tool_result, emit_tool_result_with_meta, next_tool_id};
 use super::super::super::duckdb::execute;
 use super::super::super::duckdb::attach::workspace_attach_alias;
 use super::super::super::state::AppState;
@@ -96,6 +96,8 @@ impl Tool for SampleDataTool {
             _ => format!("SELECT * FROM \"{}\" LIMIT 5", table_name.replace('"', "\"\"")),
         };
         let sql_for_query = sql.clone();
+        // 实际落 DuckDB 的语句（行数包装），日志与 transcript meta 用。
+        let sql_executed = execute::wrap_query(&sql_for_query, Some(5));
 
         let blocking_fut = tokio::task::spawn_blocking(move || -> Result<crate::model::SqlResult, String> {
             let guard = conn.blocking_lock();
@@ -125,18 +127,53 @@ impl Tool for SampleDataTool {
                 let summary = format!("完成采样（access_mode={}），获取到 {} 行样例数据", access_mode, n);
                 let detail = sql.clone();
                 let payload = serde_json::to_value(&res).ok();
-                emit_tool_result(&self.window, &self.task_id, &call_id, "ok", summary, Some(detail), payload, Some(elapsed), None);
+                let meta = serde_json::json!({
+                    "sql": sql_executed,
+                    "sqlOriginal": serde_json::Value::Null,
+                    "rows": n,
+                    "truncated": res.truncated,
+                    "errorClass": serde_json::Value::Null,
+                });
+                let ws_log = self.ws.path.clone();
+                let task_log = self.task_id.clone();
+                tracing::info!(
+                    category = "sql",
+                    workspace = ws_log.as_str(),
+                    task_id = task_log.as_str(),
+                    detail = ?meta,
+                    "sample_data 成功，{} 行（{} ms）",
+                    n, elapsed,
+                );
+                emit_tool_result_with_meta(&self.window, &self.task_id, &call_id, "ok", summary, Some(detail), payload, Some(elapsed), None, Some(meta));
                 Ok(format!("表 {} 的前 {} 行样例数据已展示在结果表格中。", table_name, n))
             }
             Err(err) => {
                 let ws_dir = self.ws.dir.to_string_lossy().to_string();
                 let err_msg = err.0.clone();
+                let err_class = super::classify_sql_error_class(&err_msg);
                 let table_name_clone2 = table_name.clone();
                 let _ = tokio::task::spawn_blocking(move || {
                     let (status, reason) = classify_sample_error(&err_msg);
                     let _ = crate::db::update_table_registry_status(&ws_dir, &table_name_clone2, &status, Some(&reason));
                 }).await;
-                emit_tool_result(&self.window, &self.task_id, &call_id, "error", err.0.clone(), None, None, Some(elapsed), None);
+                let meta = serde_json::json!({
+                    "sql": sql_executed,
+                    "sqlOriginal": serde_json::Value::Null,
+                    "rows": 0,
+                    "truncated": false,
+                    "errorClass": err_class,
+                });
+                let ws_log = self.ws.path.clone();
+                let task_log = self.task_id.clone();
+                tracing::error!(
+                    category = "sql",
+                    workspace = ws_log.as_str(),
+                    task_id = task_log.as_str(),
+                    detail = ?meta,
+                    "sample_data 失败({}): {}",
+                    err_class, err.0,
+                );
+                emit_tool_result_with_meta(&self.window, &self.task_id, &call_id, "error", err.0.clone(), None, None, Some(elapsed), None, Some(meta));
                 Err(err)
             }
         }
