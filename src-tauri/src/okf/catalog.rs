@@ -9,6 +9,7 @@ use std::path::Path;
 use crate::duckdb::attach::workspace_attach_alias;
 use crate::model::TableRegistryEntry;
 use crate::okf::markdown;
+use crate::okf::frontmatter::Frontmatter;
 use crate::okf::model::{Scope, SearchHit, TableStatus};
 use crate::okf::paths::OkfPaths;
 use crate::okf::similarity;
@@ -44,6 +45,7 @@ pub fn summary(paths: &OkfPaths, ws: &str, table_entries: &[TableRegistryEntry])
 
     // ===== 工作区知识 =====
     let selections = render_selections(paths, ws, SUMMARY_SELECTIONS_BUDGET);
+    let playbooks = list_with_desc(&paths.workspace_okf_dir(ws).join("playbooks"));
     let views = list_with_desc(&paths.workspace_okf_dir(ws).join("views"));
     let sources = list_with_desc(&paths.workspace_okf_dir(ws).join("sources"));
     let recipes = list_with_desc(
@@ -52,7 +54,7 @@ pub fn summary(paths: &OkfPaths, ws: &str, table_entries: &[TableRegistryEntry])
             .join("pipelines")
             .join("specific"),
     );
-    if !table_entries.is_empty() || !views.is_empty() || !sources.is_empty() || !recipes.is_empty() || !selections.is_empty() {
+    if !table_entries.is_empty() || !views.is_empty() || !sources.is_empty() || !recipes.is_empty() || !selections.is_empty() || !playbooks.is_empty() {
         if !out.is_empty() {
             out.push('\n');
         } else {
@@ -61,6 +63,12 @@ pub fn summary(paths: &OkfPaths, ws: &str, table_entries: &[TableRegistryEntry])
         out.push_str("## 工作区知识\n");
         if !selections.is_empty() {
             out.push_str(&selections);
+        }
+        if !playbooks.is_empty() {
+            out.push_str(&format!("### 任务协议 (playbooks/) · {}\n", playbooks.len()));
+            for (name, desc) in &playbooks {
+                push_item(&mut out, name, desc.as_deref());
+            }
         }
         if !table_entries.is_empty() {
             out.push_str(&render_registered_tables(paths, ws, table_entries, SUMMARY_TABLES_BUDGET));
@@ -365,10 +373,27 @@ fn list_with_desc(dir: &Path) -> Vec<(String, Option<String>)> {
             if stem.is_empty() {
                 continue;
             }
-            let desc = fs::read_to_string(&p)
-                .ok()
-                .and_then(|c| crate::okf::frontmatter::split_document(&c).0)
-                .and_then(|fm| fm.get("description").filter(|s| !s.is_empty()).map(|s| s.to_string()));
+            let content = fs::read_to_string(&p).ok();
+            let fm = content
+                .as_deref()
+                .and_then(|c| crate::okf::frontmatter::split_document(c).0);
+            let is_superseded = fm
+                .as_ref()
+                .and_then(|f| f.get("status"))
+                .map(|s| s.eq_ignore_ascii_case("superseded"))
+                .unwrap_or(false);
+            let desc = fm
+                .as_ref()
+                .and_then(|f| f.get("description").filter(|s| !s.is_empty()).map(|s| s.to_string()));
+            // 作废条目在大纲里显式标注：不再是现行权威，但名字仍在便于追溯。
+            let desc = if is_superseded {
+                Some(match desc {
+                    Some(d) => format!("⚠️已作废 — {d}"),
+                    None => "⚠️已作废".to_string(),
+                })
+            } else {
+                desc
+            };
             items.push((stem.to_string(), desc));
         }
     }
@@ -571,11 +596,18 @@ fn list_with_headings(dir: &Path, level: usize) -> Vec<(String, Vec<String>)> {
             if stem.is_empty() {
                 continue;
             }
-            let headings = fs::read_to_string(&p)
-                .ok()
-                .map(|c| markdown::extract_headings(&c, level))
-                .unwrap_or_default();
-            items.push((stem.to_string(), headings));
+            let content = fs::read_to_string(&p).ok().unwrap_or_default();
+            let headings = markdown::extract_headings(&content, level);
+            let superseded = crate::okf::frontmatter::split_document(&content)
+                .0
+                .and_then(|fm| fm.get("status").map(|s| s.eq_ignore_ascii_case("superseded")))
+                .unwrap_or(false);
+            let name = if superseded {
+                format!("{stem}（已作废）")
+            } else {
+                stem.to_string()
+            };
+            items.push((name, headings));
         }
     }
     items.sort_by(|a, b| a.0.cmp(&b.0));
@@ -698,6 +730,25 @@ mod tests {
         assert!(s.contains("### 已注册表 · 1"));
         assert!(s.contains("✅ `v_orders` (别名 db_myshop)"));
         assert!(s.contains("订单编号"));
+    }
+
+    #[test]
+    fn summary_renders_playbooks_and_superseded_markers() {
+        let tmp = tempfile::tempdir().unwrap();
+        let paths = OkfPaths::new(tmp.path().to_path_buf());
+        let ver: Arc<dyn crate::okf::Versioner> = Arc::new(NoopVersioner);
+        // 任务协议段
+        store::write(&paths, ver.as_ref(), &FixedClock, "ws", Category::Playbook, "yoy_table", "交付结构", "结论先行", Some("两期同比对比表协议")).unwrap();
+        // 普通条目 + 作废条目（同目录）
+        store::write(&paths, ver.as_ref(), &FixedClock, "ws", Category::Selection, "new_sel", "适用问题", "当前经验", Some("现行选表经验")).unwrap();
+        store::write(&paths, ver.as_ref(), &FixedClock, "ws", Category::Selection, "old_sel", "适用问题", "旧经验", Some("已过时的选表经验")).unwrap();
+        store::update_metadata(&paths, ver.as_ref(), &FixedClock, "ws", Category::Selection, "old_sel", &[("status".into(), "superseded".into())]).unwrap();
+
+        let s = summary(&paths, "ws", &[]);
+        assert!(s.contains("### 任务协议 (playbooks/) · 1"), "got: {s}");
+        assert!(s.contains("yoy_table — 两期同比对比表协议"));
+        assert!(s.contains("old_sel — ⚠️已作废 — 已过时的选表经验"), "got: {s}");
+        assert!(s.contains("new_sel — 现行选表经验"));
     }
 
     #[test]

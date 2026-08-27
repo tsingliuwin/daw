@@ -26,6 +26,12 @@ from datetime import datetime
 
 SLOW_MS = 5000
 
+# 用户纠正/拍板/偏好的句式特征（复盘时提示沉淀为 users/concepts 的原料）。
+PATTERNS = [
+    "没有这么高", "不是这样", "没有这么", "其实", "你们", "我们", "应该", "不对",
+    "主要是", "基本上", "平时", "习惯", "以后", "下次", "我想要", "我要的是", "注意",
+]
+
 
 def find_latest(n=1):
     home = os.path.expanduser("~/.daw")
@@ -122,6 +128,21 @@ def review(path, full=False):
     print(f"  reasoning 整段重复（ReasoningDelta+Reasoning 双写特征）: {dup_reasoning} 段")
     print("  同窗对账：人工比对 execute_query 里相同时间窗的 firstRow 是否一致")
     print("  （引擎级异常实证案例见 AGENTS.md「用-查-改-用」一节，2026-08-27）")
+
+    print("\n# 用户纠正候选（建议沉淀为 users/concepts 的原料）")
+    print("  匹配用户消息里纠正/拍板/偏好的句式，逐字原文列出；确认后可把条目") 
+    print("  写进 users 用户画像（沟通偏好/纠错记录）或对应 concepts 口径知识。")
+    found = False
+    for m in users:
+        for s in m.get("segments") or []:
+            t = (s.get("text") or "").strip()
+            if not t:
+                continue
+            if any(k in t for k in PATTERNS):
+                found = True
+                print(f"  - {t[:160]}")
+    if not found:
+        print("  （本轮无明显纠正句式）")
 
 
 def main():

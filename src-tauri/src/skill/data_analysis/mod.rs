@@ -183,6 +183,8 @@ mod tests {
             "tables",
             "views",
             "selections",
+            "playbooks",
+            "users",
             "db_",               // 连接别名前缀
             "demo",
             "db_demo",           // 示例连接别名

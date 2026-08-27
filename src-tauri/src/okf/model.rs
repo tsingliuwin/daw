@@ -28,6 +28,7 @@ pub enum Category {
     Source,
     Recipe,
     Selection,
+    Playbook,
 }
 
 impl Category {
@@ -48,6 +49,7 @@ impl Category {
             Category::Source => "sources",
             Category::Recipe => "pipelines/specific",
             Category::Selection => "selections",
+            Category::Playbook => "playbooks",
         }
     }
     /// frontmatter `type` 字段值。
@@ -60,6 +62,7 @@ impl Category {
             Category::Source => "Data Source",
             Category::Recipe => "Recipe",
             Category::Selection => "Table Selection",
+            Category::Playbook => "Task Playbook",
         }
     }
     /// 从工具层字符串解析（容错：未知 → None）。
@@ -72,6 +75,7 @@ impl Category {
             "sources" => Some(Category::Source),
             "pipelines/specific" | "pipelines" => Some(Category::Recipe),
             "selections" => Some(Category::Selection),
+            "playbooks" => Some(Category::Playbook),
             _ => None,
         }
     }
@@ -82,7 +86,7 @@ impl Category {
     /// 新增类别时自动带全。历史上手写枚举漏过 selections/users，导致 preamble
     /// 要求写选表经验、schema 里却没有该类别可选。
     pub fn prompt_list() -> String {
-        "concepts, users, tables, views, sources, selections, pipelines/specific".to_string()
+        "concepts, users, tables, views, sources, selections, playbooks, pipelines/specific".to_string()
     }
 }
 
@@ -283,6 +287,7 @@ mod tests {
         assert_eq!(Category::from_str("pipelines/specific"), Some(Category::Recipe));
         assert_eq!(Category::from_str("  views "), Some(Category::View));
         assert_eq!(Category::from_str("selections"), Some(Category::Selection));
+        assert_eq!(Category::from_str("playbooks"), Some(Category::Playbook));
         assert_eq!(Category::from_str("nope"), None);
     }
 
@@ -300,6 +305,7 @@ mod tests {
             Category::Source,
             Category::Recipe,
             Category::Selection,
+            Category::Playbook,
         ] {
             assert!(
                 list.contains(cat.dir()),

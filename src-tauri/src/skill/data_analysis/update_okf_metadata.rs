@@ -14,6 +14,8 @@ pub struct UpdateOkfMetadataArgs {
     title: Option<String>,
     #[serde(default)]
     description: Option<String>,
+    #[serde(default)]
+    status: Option<String>,
 }
 
 pub struct UpdateOkfMetadataTool {
@@ -33,14 +35,15 @@ impl Tool for UpdateOkfMetadataTool {
     async fn definition(&self, _prompt: String) -> ToolDefinition {
         ToolDefinition {
             name: "update_okf_metadata".to_string(),
-            description: "修改某条知识的元数据（title/description），不改正文。精炼标题或补充一句话描述时用；updated_at 自动刷新。至少提供 title 或 description 之一。".to_string(),
+            description: "修改某条知识的元数据（title/description/status），不改正文。精炼标题或补充一句话描述时用；新结论推翻旧知识时，把旧文件 status 置为 superseded（大纲会标注「已作废」，不再当现行权威）。updated_at 自动刷新。至少提供三者之一。".to_string(),
             parameters: json!({
                 "type": "object",
                 "properties": {
                     "category": { "type": "string", "description": format!("OKF 类别：{}", crate::okf::model::Category::prompt_list()) },
                     "name": { "type": "string", "description": "文件名（不含 .md 后缀）" },
                     "title": { "type": "string", "description": "（可选）新的标题" },
-                    "description": { "type": "string", "description": "（可选）新的一句话描述" }
+                    "description": { "type": "string", "description": "（可选）新的一句话描述" },
+                    "status": { "type": "string", "enum": ["active", "superseded"], "description": "（可选）生命周期状态：superseded=已被新知取代（大纲标注已作废）；active=恢复为现行" }
                 },
                 "required": ["category", "name"]
             }),
@@ -52,6 +55,7 @@ impl Tool for UpdateOkfMetadataTool {
         emit_tool_call(&self.window, &self.task_id, &call_id, "update_okf_metadata", json!({
             "category": &args.category, "name": &args.name,
             "title": &args.title, "description": &args.description,
+            "status": &args.status,
         }));
 
         let start = std::time::Instant::now();
@@ -62,6 +66,7 @@ impl Tool for UpdateOkfMetadataTool {
         let name = args.name.clone();
         let title = args.title.clone();
         let description = args.description.clone();
+        let status = args.status.clone();
         let result = tokio::task::spawn_blocking(move || -> Result<Vec<String>, String> {
             let mut fields: Vec<(String, String)> = Vec::new();
             let mut changed: Vec<String> = Vec::new();
@@ -73,8 +78,15 @@ impl Tool for UpdateOkfMetadataTool {
                 fields.push(("description".into(), d));
                 changed.push("description".into());
             }
+            if let Some(s) = status {
+                if s != "active" && s != "superseded" {
+                    return Err("status 只能为 active 或 superseded".to_string());
+                }
+                changed.push(format!("status={s}"));
+                fields.push(("status".into(), s));
+            }
             if fields.is_empty() {
-                return Err("至少提供 title 或 description 之一".to_string());
+                return Err("至少提供 title、description 或 status 之一".to_string());
             }
             crate::okf::Okf::production().update_metadata(&ws_path, cat, &name, &fields)?;
             Ok(changed)
