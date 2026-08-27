@@ -28,6 +28,30 @@ pub fn extract_block(content: &str, heading: &str) -> Option<String> {
     }
 }
 
+/// 收集文件里所有标题行文本（任意级别，跳过 frontmatter 区）。
+/// 供 load 工具的标题模糊匹配兜底：模型凭记忆写标题时漏括号尾巴等，
+/// 返回候选清单比「未找到」更有用（2026-08-27 复盘：连错两次才回退 all）。
+pub fn extract_all_headings(content: &str) -> Vec<String> {
+    let mut headings = Vec::new();
+    let mut in_frontmatter = content.starts_with("---");
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if in_frontmatter {
+            if trimmed == "---" {
+                in_frontmatter = false;
+            }
+            continue;
+        }
+        if trimmed.starts_with('#') {
+            let text = trimmed.trim_start_matches('#').trim();
+            if !text.is_empty() {
+                headings.push(text.to_string());
+            }
+        }
+    }
+    headings
+}
+
 /// 提取指定级别（如 2 → `## `）的标题文本，跳过 frontmatter。
 pub fn extract_headings(content: &str, level: usize) -> Vec<String> {
     let prefix = "#".repeat(level) + " ";
@@ -165,6 +189,19 @@ mod tests {
         let block = extract_block(doc, "A").unwrap();
         assert!(block.contains("line1"));
         assert!(!block.contains("line3"));
+    }
+
+    #[test]
+    fn extract_all_headings_skips_frontmatter_and_collects_every_level() {
+        let doc = "---\ntitle: t\n---\n# 一级\n## 二级（带尾巴）\n### 三级\n文本\n## 另一节\nx";
+        let hs = extract_all_headings(doc);
+        assert_eq!(hs, vec!["一级", "二级（带尾巴）", "三级", "另一节"]);
+    }
+
+    #[test]
+    fn extract_all_headings_no_frontmatter() {
+        let doc = "# A\nx\n## B \ny";
+        assert_eq!(extract_all_headings(doc), vec!["A", "B"]);
     }
 
     #[test]

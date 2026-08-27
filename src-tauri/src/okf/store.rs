@@ -59,17 +59,51 @@ pub fn read(
         return Err(format!("文件不存在: {}", file.display()));
     }
     let content = fs::read_to_string(&file).map_err(|e| format!("读取文件失败: {e}"))?;
+    // 精确匹配失败时做两级模糊兜底（2026-08-27 复盘：模型记忆标题常漏
+    // 「（…）」尾巴，连错两次才回退 all）。唯一命中直接采用，多个候选或
+    // 无候选时返回候选清单供模型选择。
     let body = if heading.eq_ignore_ascii_case("all") || heading.trim().is_empty() {
         content
+    } else if let Some(b) = markdown::extract_block(&content, heading) {
+        b
     } else {
-        markdown::extract_block(&content, heading)
-            .ok_or_else(|| format!("未找到标题为 '{heading}' 的板块"))?
+        let all = markdown::extract_all_headings(&content);
+        let prefix_hits: Vec<&String> =
+            all.iter().filter(|h| h.starts_with(heading)).collect();
+        let contains_hits: Vec<&String> = if prefix_hits.is_empty() {
+            all.iter().filter(|h| h.contains(heading)).collect()
+        } else {
+            Vec::new()
+        };
+        let unique = |hits: &[&String]| hits.len() == 1;
+        if unique(&prefix_hits) {
+            markdown::extract_block(&content, prefix_hits[0])
+                .unwrap_or_else(|| heading_help(&content, heading, &all))
+        } else if prefix_hits.is_empty() && unique(&contains_hits) {
+            markdown::extract_block(&content, contains_hits[0])
+                .unwrap_or_else(|| heading_help(&content, heading, &all))
+        } else {
+            heading_help(&content, heading, &all)
+        }
     };
     Ok(OkfReadOutcome {
         scope: category.scope(),
         file_path: file,
         content: body,
     })
+}
+
+/// 未唯一命中的兜底：返回文件全部标题清单，模型可重试选择。
+fn heading_help(content: &str, heading: &str, all: &[String]) -> String {
+    let list = all
+        .iter()
+        .take(12)
+        .map(|h| format!("- {h}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!(
+        "未找到标题为 '{heading}' 的板块，该文件现有以下板块标题：\n{list}\n请重新调用本工具并传准确的标题（或 heading=all 读全文）。"
+    )
 }
 
 // ---------- 写 ----------
@@ -746,6 +780,30 @@ mod tests {
         write(&paths, ver.as_ref(), clock.as_ref(), "ws", Category::Concept, "c", "业务描述", "the-desc", None).unwrap();
         let o = read(&paths, "ws", Category::Concept, "c", "业务描述").unwrap();
         assert_eq!(o.content, "the-desc");
+    }
+
+    // 标题模糊兜底（2026-08-27 复盘：模型漏标题「（…）」尾巴连错两次）。
+    #[test]
+    fn read_heading_prefix_fuzzy_matches_unique() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (paths, ver, clock) = okf(tmp.path());
+        write(&paths, ver.as_ref(), clock.as_ref(), "ws", Category::Concept, "c", "管理抓手弹药库（2026-08-27 实测，口径=…）", "arms", None).unwrap();
+        let _ = write(&paths, ver.as_ref(), clock.as_ref(), "ws", Category::Concept, "c", "另一个板块", "other", None);
+        let o = read(&paths, "ws", Category::Concept, "c", "管理抓手弹药库").unwrap();
+        assert_eq!(o.content, "arms");
+    }
+
+    #[test]
+    fn read_heading_ambiguous_returns_candidates() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (paths, ver, clock) = okf(tmp.path());
+        let _ = write(&paths, ver.as_ref(), clock.as_ref(), "ws", Category::Concept, "c", "归因（2026-08-27 实测）", "a", None);
+        let _ = write(&paths, ver.as_ref(), clock.as_ref(), "ws", Category::Concept, "c", "归因（2026-08-25 用户确认）", "b", None);
+        let o = read(&paths, "ws", Category::Concept, "c", "归因").unwrap();
+        // 多候选：返回候选清单而非内容
+        assert!(o.content.contains("归因（2026-08-27 实测）"));
+        assert!(o.content.contains("归因（2026-08-25 用户确认）"));
+        assert!(o.content.contains("heading=all"));
     }
 
     #[test]
