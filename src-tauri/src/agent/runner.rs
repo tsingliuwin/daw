@@ -110,6 +110,9 @@ enum RunOutcome {
     /// Carries the last rate-limit error string so that when retries are
     /// exhausted the caller can surface *why*.
     RateLimited(String),
+    /// 恢复性的网络/网关故障（连接被对端中断、网关 5xx/InternalError），且发生
+    /// 在任何内容输出之前——重建流重试是安全的。与 RateLimited 共用退避重试。
+    Transient(String),
 }
 
 /// Classify a provider error string into one of three buckets so the runner
@@ -166,6 +169,70 @@ fn classify_rate_limit_error(msg: &str) -> RateLimitKind {
     }
 
     RateLimitKind::No
+}
+
+/// Detect transient stream/network failures worth retrying when they arrive
+/// *before* any content was emitted. 网关上游断连的典型形态：火山网关回
+/// `{"code":"InternalError","message":"peer closed connection without sending
+/// complete message body (incomplete chunked read)"}`，rig 把这个错误体当流式
+/// 事件解析，对外表现为 `Failed to parse JSON: missing field ...`——靠 body
+/// 里的标记识别，而不是靠解析错误的表象。另覆盖连接重置与 5xx 状态体。
+fn is_transient_stream_error(msg: &str) -> bool {
+    let m = msg.to_lowercase();
+    const MARKERS: &[&str] = &[
+        "peer closed connection",
+        "incomplete chunked read",
+        "connection reset",
+        "broken pipe",
+        "connection closed before message completed",
+        "incompletemessage",
+        "internalerror",
+        "internal server error",
+        "bad gateway",
+        "service unavailable",
+        "gateway timeout",
+        "error decoding response body",
+    ];
+    if MARKERS.iter().any(|k| m.contains(k)) {
+        return true;
+    }
+    ["status code 500", "status code 502", "status code 503", "status code 504"]
+        .iter()
+        .any(|k| m.contains(k))
+}
+
+/// 把已识别的流错误根因翻译成用户可归因的中文诊断。rig 的 SSE 层把
+/// reqwest/hyper 根因展平成了字符串（`ProviderError(String)` 不保留
+/// source 链），只能靠标记识别；返回 None 表示无法归类，只展示原始错误。
+fn diagnose_stream_error(msg: &str) -> Option<&'static str> {
+    let m = msg.to_lowercase();
+    if m.contains("peer closed connection")
+        || m.contains("incomplete chunked read")
+        || m.contains("error decoding response body")
+        || m.contains("connection closed before message completed")
+        || m.contains("incompletemessage")
+    {
+        return Some(
+            "服务端在流式传输中途断开了连接（响应体不完整）。常见原因：网络波动、\
+             代理/VPN 掐断长连接、模型服务或网关过载超时",
+        );
+    }
+    if m.contains("connection reset") || m.contains("broken pipe") {
+        return Some("TCP 连接被重置。常见原因：网络切换、防火墙/代理干预、服务端过载");
+    }
+    if m.contains("internalerror")
+        || m.contains("internal server error")
+        || m.contains("bad gateway")
+        || m.contains("service unavailable")
+        || m.contains("gateway timeout")
+        || m.contains("status code 50")
+    {
+        return Some("模型服务端/网关内部错误（5xx 类），多为服务端瞬时故障");
+    }
+    if m.contains("timed out") || m.contains("timeout") || m.contains("timedout") {
+        return Some("请求超时。可能网络延迟过大，或服务端排队过长");
+    }
+    None
 }
 
 /// Detect provider-side rejections of model-emitted tool calls that don't
@@ -273,6 +340,33 @@ async fn run_stream_loop<R>(
                 let mut msg = e.to_string();
                 if !emitted_any && classify_rate_limit_error(&msg) == RateLimitKind::Retriable {
                     return RunOutcome::RateLimited(msg.clone());
+                }
+                if !emitted_any && is_transient_stream_error(&msg) {
+                    return RunOutcome::Transient(msg.clone());
+                }
+                // 未走重试的流错误：附上根因诊断 + 中断位置（阶段/token/耗时），
+                // 并落结构化日志（daw.db logs 表，category=agent）便于事后归因。
+                let stage_cn = if emitted_any { "流式输出过程中" } else { "请求建立阶段" };
+                let approx_out = run_output_tokens + usage::estimate_tokens(&output_buf);
+                let elapsed_secs = run_start.elapsed().as_secs();
+                tracing::warn!(
+                    category = "agent",
+                    task_id = task_id.as_str(),
+                    detail = serde_json::to_string(&serde_json::json!({
+                        "stage": if emitted_any { "mid_stream" } else { "before_output" },
+                        "elapsedSecs": elapsed_secs,
+                        "outputTokensApprox": approx_out,
+                        "diagnosis": diagnose_stream_error(&msg),
+                        "raw": msg.clone(),
+                    })).unwrap_or_default(),
+                    "LLM 流式中断（{stage_cn}，已输出约 {approx_out} tokens，{elapsed_secs}s）"
+                );
+                if let Some(d) = diagnose_stream_error(&msg) {
+                    msg.push_str(&format!(
+                        "\n\n【原因】{d}。\n【位置】{stage_cn}（已输出约 {approx_out} tokens，耗时 {elapsed_secs} 秒）{}。",
+                        if emitted_any { "；已生成的部分内容已保留" } else { "" }
+                    ));
+                    msg.push_str("\n可稍后重发继续；频繁出现请检查网络/代理，或更换模型端点。");
                 }
                 if is_unknown_tool_call_error(&msg) {
                     msg.push_str(
@@ -768,7 +862,7 @@ pub(crate) async fn run_agent_task_stream(
 
         match outcome {
             RunOutcome::Done => break,
-            RunOutcome::RateLimited(_) if attempt <= MAX_RETRIES => {
+            RunOutcome::RateLimited(_) | RunOutcome::Transient(_) if attempt <= MAX_RETRIES => {
                 let delay = BASE_DELAY_SECS * (1 << (attempt - 1));
                 emit_retry_notice(
                     &window,
@@ -787,6 +881,21 @@ pub(crate) async fn run_agent_task_stream(
                     "error",
                     Some(format!(
                         "已自动重试 {MAX_RETRIES} 次仍被速率限制（429），请稍候降低请求频率或更换模型后重试。\n{last}"
+                    )),
+                    None,
+                );
+                break;
+            }
+            RunOutcome::Transient(last) => {
+                let cause = diagnose_stream_error(&last)
+                    .map(|d| format!("：{d}"))
+                    .unwrap_or_default();
+                emit_event(
+                    &window,
+                    &task_id,
+                    "error",
+                    Some(format!(
+                        "网络或服务端连接中断{cause}。已自动重试 {MAX_RETRIES} 次仍失败，请稍后重发或更换模型。\n{last}"
                     )),
                     None,
                 );
@@ -825,5 +934,63 @@ mod tests_rate_limit_classify {
     fn auth_error_is_not_rate_limit() {
         let msg = "Invalid status code 401 Unauthorized with message: Invalid API key";
         assert_eq!(classify_rate_limit_error(msg), RateLimitKind::No);
+    }
+
+    #[test]
+    fn volcano_gateway_internalerror_is_transient() {
+        // 火山网关上游断连：错误体被 rig 当流式事件解析成 missing field，标记在 body 里。
+        let msg = "CompletionError: ResponseError: Failed to parse JSON: missing field `type` at line 1 column 175 (Data: {\"request_id\":\"3497554d-655c-4f19-8941-5bd5471982da\",\"code\":\"InternalError\",\"message\":\"peer closed connection without sending complete message body (incomplete chunked read)\"})";
+        assert!(is_transient_stream_error(msg));
+    }
+
+    #[test]
+    fn connection_drop_markers_are_transient() {
+        assert!(is_transient_stream_error(
+            "reqwest error: error sending request for url: connection reset by peer"
+        ));
+        assert!(is_transient_stream_error("hyper::Error(IncompleteMessage)"));
+        assert!(is_transient_stream_error(
+            "Invalid status code 503 Service Unavailable with message: upstream busy"
+        ));
+        assert!(is_transient_stream_error(
+            "Invalid status code 502 Bad Gateway with message: bad gateway"
+        ));
+    }
+
+    #[test]
+    fn quota_and_auth_errors_are_not_transient() {
+        assert!(!is_transient_stream_error(
+            "Invalid status code 429 with message: insufficient_quota"
+        ));
+        assert!(!is_transient_stream_error(
+            "Invalid status code 401 Unauthorized with message: Invalid API key"
+        ));
+        // 无瞬态标记的纯解析错误不重试（可能是 schema 变更，重试无意义）。
+        assert!(!is_transient_stream_error(
+            "Failed to parse JSON: missing field `type` at line 1 column 175"
+        ));
+    }
+
+    #[test]
+    fn diagnose_translates_known_root_causes() {
+        // 用户实际遇到的两种形态：网关 InternalError 断连、流式 body 中断。
+        let d = diagnose_stream_error(
+            "CompletionError: ProviderError: SSE Error: Http client error: error decoding response body",
+        );
+        assert!(d.unwrap().contains("流式传输中途断开"));
+        let d = diagnose_stream_error(
+            "CompletionError: ResponseError: Failed to parse JSON: missing field `type` (Data: {\"code\":\"InternalError\",\"message\":\"peer closed connection without sending complete message body (incomplete chunked read)\"})",
+        );
+        assert!(d.unwrap().contains("流式传输中途断开"));
+        let d = diagnose_stream_error("reqwest error: connection reset by peer");
+        assert!(d.unwrap().contains("TCP 连接被重置"));
+        let d = diagnose_stream_error("Invalid status code 502 Bad Gateway with message: x");
+        assert!(d.unwrap().contains("5xx"));
+        let d = diagnose_stream_error("operation timed out");
+        assert!(d.unwrap().contains("超时"));
+        // 无法归类/不该归类的返回 None：配额、认证、纯解析错误。
+        assert_eq!(diagnose_stream_error("Invalid status code 429 with message: insufficient_quota"), None);
+        assert_eq!(diagnose_stream_error("Invalid status code 401 Unauthorized"), None);
+        assert_eq!(diagnose_stream_error("Failed to parse JSON: missing field `type`"), None);
     }
 }
