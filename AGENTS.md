@@ -1,5 +1,41 @@
 # AGENTS.md — 项目开发经验记录
 
+## 用-查-改-用复盘循环（2026-08-27 首轮确立）
+
+真实使用 → `tools/review_transcript.py` 复盘 → 修复（配测试）→ 再用验证。首轮复盘（郑州 8 月归因一单）修出的问题，全部有复盘实证：
+
+- **守卫的解析器必须吃 LLM 真实输出形状**：pushdown 守卫的表名提取用字面 `" FROM"`（空格）匹配，而模型写的是多行 SQL（FROM 前是换行符），守卫全数漏检——一单 15 次 24–45s 全表拉取、2 次 pg_namespace 报错全部绕过。同文件里第二个提取器（错误路径状态更新）同样从未生效。教训：**凡对 LLM 输出做解析的守卫，测试用例必须来自真实翻车的 SQL 原文**（多行/缩进/CTE/中文过滤值），不能只测单行理想形状。
+- **reasoning 双写**：rig 流同时给 `ReasoningDelta`（增量）与 `Reasoning`（完整），都当增量发则思考段逐字翻倍。完整事件必须对增量缓冲做前缀去重只补余量。
+- **禁词守卫用词边界，不用子串**：`contains("DELETE")` 会误伤 `is_deleted` 列名，把模型逼向更差的 SQL；先抹字符串字面量再词边界匹配，引号未闭合时退回保守子串（宁误拦不漏放）。
+- **引擎级不确定性的实锤与缓解**：同一时间窗、同一视图，FILTER 聚合写法与 WHERE 写法返回过不同数字（310/793.8 万 vs 334/861.1 万，jsonl payload 实证，非模型抄错）。疑因 timestamptz 字面量在两条执行路径的时区解释不一致，**未根因定位，待立项复现**（同视图两写法 + EXPLAIN + 显式 `+00` 字面量对照）。缓解：preamble 要求跨窗对比优先 WHERE 写法、关键数字换写法复核；SQL 审计 meta 增加 firstRow 结果指纹，事后可对账。
+- **知识沉淀要「修正优先于并存」**：复盘发现知识库里时区纪律、业绩口径的新旧版本并存，下次会话模型被迫当仲裁（「以最新为准」），既耗推理又易选错。已写入 preamble 第五步。
+- **大纲徽标必须自带行为指令**：`[pushdown]` 被模型读反成「视图已下推、直接查」，改 `[下推表·禁直查]`。徽标/标记是给模型看的 UI，语义自解释比术语精确更重要。
+- 排查手法：jsonl 工具段的 `payload` 字段存结构化 SqlResult（columns/rows），复盘对账以它为准；`logs` 表（category=sql）只有摘要，别指望它回放结果。
+
+## 提示词工程纪律（借鉴 deepseek-harness，2026-08-27 落地）
+
+**静态/动态分离，system prompt 必须字节稳定**：
+
+- system prompt（`usage.rs` 两个 preamble）只放**静态纪律**：品牌名注入后跨轮/跨会话字节不变，provider 前缀缓存才能持续命中。**禁止把每轮变化的事实（时间、OKF 大纲）拼进 preamble**——此前每写一条知识，下一轮整个 system prompt 缓存前缀就被击穿（数据分析核心循环恰恰鼓励每轮写知识）。
+- 每轮变化的事实由 runner 以 `<runtime_context>` 快照 prepend 到本次用户消息（`llm_prompt`）：不进 system prompt、不写持久化历史（前端只存用户原文），下一轮自动被新快照取代。preamble 里只描述该块语义（「# 运行时上下文」段），不承载内容。
+
+**每个事实只有一个 owner**：
+
+- 同一规则只在一处权威定义、其余一行引用：`postgres_query` 下推规则的 owner 是 preamble 第三步（sample_data 提示与 execute_query 描述只一句话引用）；错误处置的 owner 是 preamble「错误处置」决策树（register_table 运行时文案同口径复述，运行时文案允许重复——它带上下文且便宜）。
+- 工具参数里的 OKF 类别枚举必须从 `Category::prompt_list()`（`okf/model.rs`）派生，不要手写字符串——手写漏过 selections/users，导致 preamble 要求写选表经验、schema 里却无该类别可选。
+
+**fail-loud 防漂移测试**（`skill/data_analysis/mod.rs` / `usage.rs` / `okf/model.rs`）：
+
+- preamble 里反引号 snake_case 标识符必须是真实工具 `NAME` 常量或在 allowlist（防臆造工具名——历史上模型臆造工具名会被火山端点整请求拒绝）。新增/改名工具、或在 preamble 新写反引号标识符时测试失败，强制显式归类。
+- 品牌替换后不允许残留 `{app_name}`；`prompt_list` 必须覆盖全部类别 `dir()`。
+
+**具体教训**：
+
+- 权限/不存在/存储层级错误对同表是**终局**：不重试、不换写法绕行、不静默跳过。三处指引（preamble 第一步「跳过换表」/ 纪律「停下等用户」/ register_table 文案「建议跳过」）曾互相打架，已统一为决策树：分析不依赖该表 → 继续其余 + 结论注明；依赖 → 列选项停下等用户。
+- preamble 引用大纲段落名必须与 `okf/catalog.rs` 实际渲染标题一致（曾引用不存在的 `# 工作区数据记忆`）；改 catalog 渲染标题时同步 preamble。
+- 工具描述与实现对齐：execute_query 禁词含 TRUNCATE/ATTACH/DETACH、50 行截断；render_chart 200 行截断——描述写漏会让模型带着错误预期干活。
+- preamble 勿写死工具数量（「你有两个工具」）——工具集变化会静默失真；时间真源统一为 runtime_context 注入（`get_current_time` 仅用于时分秒精度核实）。
+
 ## 布局尺寸纪律：壳层只用纯 CSS 百分比（三轮教训）
 
 根容器/壳层尺寸**禁止内联像素校准**（b404fe9 引入、903d6a8 加固、4b1fedd 彻底移除）：

@@ -75,6 +75,15 @@ impl Category {
             _ => None,
         }
     }
+
+    /// 工具参数描述里的类别清单（单一真相源）。
+    ///
+    /// 各 OKF 工具的 category 参数描述必须引用此清单，而不是手写字符串——
+    /// 新增类别时自动带全。历史上手写枚举漏过 selections/users，导致 preamble
+    /// 要求写选表经验、schema 里却没有该类别可选。
+    pub fn prompt_list() -> String {
+        "concepts, users, tables, views, sources, selections, pipelines/specific".to_string()
+    }
 }
 
 /// 一张表的列信息（物理画像用）。`(字段名, 物理类型, 是否允许空)`。
@@ -275,6 +284,30 @@ mod tests {
         assert_eq!(Category::from_str("  views "), Some(Category::View));
         assert_eq!(Category::from_str("selections"), Some(Category::Selection));
         assert_eq!(Category::from_str("nope"), None);
+    }
+
+    /// prompt_list 是工具参数描述的单一真相源：每个类别的目录名都必须在
+    /// 清单里，新增类别漏更清单会在这里失败（历史上手写枚举漏过
+    /// selections/users）。
+    #[test]
+    fn prompt_list_covers_all_category_dirs() {
+        let list = Category::prompt_list();
+        for cat in [
+            Category::Concept,
+            Category::User,
+            Category::Table,
+            Category::View,
+            Category::Source,
+            Category::Recipe,
+            Category::Selection,
+        ] {
+            assert!(
+                list.contains(cat.dir()),
+                "Category::prompt_list 缺少 {}（dir={}）",
+                std::format!("{:?}", cat),
+                cat.dir()
+            );
+        }
     }
 
     #[test]

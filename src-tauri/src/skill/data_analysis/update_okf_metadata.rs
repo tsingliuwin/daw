@@ -37,7 +37,7 @@ impl Tool for UpdateOkfMetadataTool {
             parameters: json!({
                 "type": "object",
                 "properties": {
-                    "category": { "type": "string", "description": "OKF 类别：concepts/tables/views/sources/pipelines/specific" },
+                    "category": { "type": "string", "description": format!("OKF 类别：{}", crate::okf::model::Category::prompt_list()) },
                     "name": { "type": "string", "description": "文件名（不含 .md 后缀）" },
                     "title": { "type": "string", "description": "（可选）新的标题" },
                     "description": { "type": "string", "description": "（可选）新的一句话描述" }

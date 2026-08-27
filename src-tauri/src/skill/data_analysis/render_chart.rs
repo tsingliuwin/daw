@@ -54,7 +54,7 @@ impl Tool for RenderChartTool {
     async fn definition(&self, _prompt: String) -> ToolDefinition {
         ToolDefinition {
             name: "render_chart".to_string(),
-            description: "用图表可视化查询结果。先写好 SELECT 语句（和 execute_query 一样），指定图表类型和轴映射。适合趋势（折线 line）、对比（柱状 bar）、占比（饼图 pie）、相关性（散点 scatter）。图表会展示在对话中，用户可切换图表类型。".to_string(),
+            description: "用图表可视化查询结果。先写好 SELECT 语句（和 execute_query 一样），指定图表类型和轴映射。适合趋势（折线 line）、对比（柱状 bar）、占比（饼图 pie）、相关性（散点 scatter）。数据超过 200 行只取前 200 行——数据点多时先在 SQL 里聚合或过滤。图表会展示在对话中，用户可切换图表类型。".to_string(),
             parameters: json!({
                 "type": "object",
                 "properties": {
@@ -73,12 +73,8 @@ impl Tool for RenderChartTool {
 
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
         let sql = args.sql.trim();
-        let sql_upper = sql.to_uppercase();
-        let forbidden = ["DROP", "DELETE", "UPDATE", "INSERT", "ALTER", "TRUNCATE", "ATTACH", "DETACH"];
-        for kw in &forbidden {
-            if sql_upper.contains(kw) {
-                return Err(ToolError(format!("出于安全考虑，禁止执行包含 {} 操作的 SQL 语句。", kw)));
-            }
+        if let Some(kw) = super::sql_forbidden_keyword(sql) {
+            return Err(ToolError(format!("出于安全考虑，禁止执行包含 {} 操作的 SQL 语句。", kw)));
         }
 
         let valid_types = ["bar", "line", "pie", "scatter", "funnel", "gauge"];

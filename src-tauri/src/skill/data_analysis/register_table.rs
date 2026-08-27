@@ -247,7 +247,7 @@ impl Tool for RegisterTableTool {
                 let msg = e.to_string();
                 let lower = msg.to_lowercase();
                 if lower.contains("permission denied") || lower.contains("access denied") || lower.contains("does not exist") {
-                    format!("注册失败，当前用户可能没有表 {table_name_clone} 的查询权限，或表不存在。错误: {msg}\n建议：跳过此表，用 list_remote_tables 查看其他可用表。")
+                    format!("注册失败，当前用户可能没有表 {table_name_clone} 的查询权限，或表不存在。错误: {msg}\n该表对本会话视为不可用：不要重试同一张表。若分析不依赖此表，继续其余工作并在结论中注明该表未覆盖及原因；若依赖此表，列出选项（换表 / 申请权限后重试 / 调整分析目标）后停下等用户决定。")
                 } else {
                     format!("注册失败: {msg}")
                 }

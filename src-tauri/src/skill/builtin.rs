@@ -33,7 +33,7 @@ impl Tool for GetCurrentTimeTool {
     async fn definition(&self, _prompt: String) -> ToolDefinition {
         ToolDefinition {
             name: "get_current_time".to_string(),
-            description: "获取当前日期和时间（含星期）。当用户提问涉及相对时间（「今天」「本周」「下周一」「本月」「上周」等）时，**必须先调用本工具**确认当前时间，再据此计算时间范围。绝不能凭印象猜测当前日期。".to_string(),
+            description: "获取当前日期和时间（含星期与时分秒）。系统已在用户消息开头的 <runtime_context> 块注入当前日期，相对时间计算一般直接使用即可；需要时分秒精度或核对时间时再调用本工具。".to_string(),
             parameters: json!({
                 "type": "object",
                 "properties": {}

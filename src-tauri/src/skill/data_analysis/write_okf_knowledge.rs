@@ -35,11 +35,11 @@ impl Tool for WriteOkfKnowledgeTool {
     async fn definition(&self, _prompt: String) -> ToolDefinition {
         ToolDefinition {
             name: "write_okf_knowledge".to_string(),
-            description: "向本地 OKF 知识库写入或更新业务知识。当用户补充了字段释义、关联关系、排障经验时必须立即调用。类别选择：concepts=全局业务概念/公司背景；tables/views=单表字段释义/关联；pipelines/specific=清洗配方/排障。首次写入某个文件时建议提供 description（一句话用途说明）。新建文件时自动做相似度检测：若返回「疑似重复」候选，同一主题必须改用既有 name 写入既有文件；确属不同知识才传 confirm_new=true。".to_string(),
+            description: "向本地 OKF 知识库写入或更新业务知识。当用户补充了字段释义、关联关系、排障经验，或一次分析确立/修正了业务认知时必须立即调用。类别选择：concepts=全局业务概念/公司背景；users=用户背景；tables/views=单表字段释义/关联；sources=数据源知识；selections=选表经验（哪类问题用哪些表）；pipelines/specific=清洗配方/排障。首次写入某个文件时建议提供 description（一句话用途说明）。新建文件时自动做相似度检测：若返回「疑似重复」候选，同一主题必须改用既有 name 写入既有文件；确属不同知识才传 confirm_new=true。".to_string(),
             parameters: json!({
                 "type": "object",
                 "properties": {
-                    "category": { "type": "string", "description": "OKF 目录类别：tables, views, concepts, pipelines/specific" },
+                    "category": { "type": "string", "description": format!("OKF 目录类别：{}", crate::okf::model::Category::prompt_list()) },
                     "name": { "type": "string", "description": "文件名（不含 .md 后缀）。优先复用知识库大纲中已有的同主题文件名" },
                     "heading": { "type": "string", "description": "要写入的标题，如：关联关系、异常排障记录、业务描述" },
                     "content": { "type": "string", "description": "要写入的内容（Markdown 格式）" },

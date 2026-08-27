@@ -33,7 +33,7 @@ impl Tool for ReadOkfMetadataTool {
             parameters: json!({
                 "type": "object",
                 "properties": {
-                    "category": { "type": "string", "description": "OKF 类别：concepts/tables/views/sources/pipelines/specific" },
+                    "category": { "type": "string", "description": format!("OKF 类别：{}", crate::okf::model::Category::prompt_list()) },
                     "name": { "type": "string", "description": "文件名（不含 .md 后缀）" }
                 },
                 "required": ["category", "name"]

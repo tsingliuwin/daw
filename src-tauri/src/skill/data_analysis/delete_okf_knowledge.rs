@@ -35,7 +35,7 @@ impl Tool for DeleteOkfKnowledgeTool {
             parameters: json!({
                 "type": "object",
                 "properties": {
-                    "category": { "type": "string", "description": "OKF 类别：concepts/tables/views/sources/pipelines/specific" },
+                    "category": { "type": "string", "description": format!("OKF 类别：{}", crate::okf::model::Category::prompt_list()) },
                     "name": { "type": "string", "description": "要删除的文件名（不含 .md 后缀）" },
                     "merge_into": { "type": "string", "description": "（可选）合并去重时保留的文件名：删除前把全库 [[本文件]] 内链改写为 [[保留文件]]" }
                 },

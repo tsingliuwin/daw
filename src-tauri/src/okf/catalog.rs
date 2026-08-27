@@ -104,10 +104,12 @@ pub fn summary(paths: &OkfPaths, ws: &str, table_entries: &[TableRegistryEntry])
 /// 当前 31 张注册表的完整大纲约 900 tokens，预算 1000 留有余量且封顶增长。
 const SUMMARY_TABLES_BUDGET: u64 = 1000;
 
-/// 单张表的状态行：`- ✅ \`v_xxx\` (别名 db_xxx) [pushdown] — 不可用原因`。
+/// 单张表的状态行：`- ✅ \`v_xxx\` (别名 db_xxx) [下推表·禁直查] — 不可用原因`。
+/// 徽标必须自带行为指令——曾用 [pushdown] 时模型把它读反成「视图已下推、
+/// 可直接查」，导致 15 次 24–45s 的全表拉取慢查询（2026-08-27 复盘）。
 fn entry_status_line(e: &TableRegistryEntry) -> String {
     let icon = TableStatus::from_str(&e.status).icon();
-    let mode = if e.access_mode == "pushdown" { " [pushdown]" } else { "" };
+    let mode = if e.access_mode == "pushdown" { " [下推表·禁直查]" } else { "" };
     let reason = if e.status != "available" {
         e.unavailable_reason
             .as_ref()

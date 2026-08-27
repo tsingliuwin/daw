@@ -34,7 +34,7 @@ impl Tool for RenameOkfKnowledgeTool {
             parameters: json!({
                 "type": "object",
                 "properties": {
-                    "category": { "type": "string", "description": "OKF 类别：concepts/tables/views/sources/pipelines/specific" },
+                    "category": { "type": "string", "description": format!("OKF 类别：{}", crate::okf::model::Category::prompt_list()) },
                     "old_name": { "type": "string", "description": "现有文件名（不含 .md 后缀）" },
                     "new_name": { "type": "string", "description": "新文件名（不含 .md 后缀，不能与同类目已有文件重名）" }
                 },

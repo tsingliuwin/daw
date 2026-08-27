@@ -30,11 +30,11 @@ impl Tool for LoadOkfKnowledgeTool {
     async fn definition(&self, _prompt: String) -> ToolDefinition {
         ToolDefinition {
             name: "load_okf_knowledge".to_string(),
-            description: "读取本地 OKF 知识库某条知识的细节。可读某文件下指定标题（精简读取以省 token），或用 heading=all 读整篇全文。会话开场已注入大纲，按需精读具体条目即可。".to_string(),
+            description: "读取本地 OKF 知识库某条知识的细节。可读某文件下指定标题（精简读取以省 token），或用 heading=all 读整篇全文。运行时上下文已注入大纲，按需精读具体条目即可。".to_string(),
             parameters: json!({
                 "type": "object",
                 "properties": {
-                    "category": { "type": "string", "description": "OKF 类别：concepts（全局业务背景）、tables（表字段释义/关联）、views（视图）、sources（数据源）、pipelines/specific（排障配方）" },
+                    "category": { "type": "string", "description": format!("OKF 类别：{}", crate::okf::model::Category::prompt_list()) },
                     "name": { "type": "string", "description": "文件名（不含 .md 后缀），如 concepts 的 company_profile、表的 v_orders" },
                     "heading": { "type": "string", "description": "要读取的标题，如：业务描述、关联关系、异常排障记录。填 all（或留空）返回整个文件全文（文件存在即成功）" }
                 },

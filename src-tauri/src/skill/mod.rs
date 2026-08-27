@@ -1,29 +1,22 @@
-//! Skill 机制：标准化的可插拔能力包。
+//! Skill 场景机制：按任务场景（Scenario）组织工具集与系统提示词。
 //!
-//! 一个 Skill = 领域 preamble + 元数据（id/name）。该 skill 的 Tool 在 runner 的
-//! `build_tools` 里用具体类型构造（rig 的 `Tool` trait 不是 dyn-compatible，
-//! 无法用 `Box<dyn Tool>` 统一收集，因此工具注册用编译期代码，
-//! preamble 拼装用运行时 SkillRegistry）。
+//! rig 的 `Tool` trait 不是 dyn-compatible，无法 `Box<dyn Tool>` 统一收集，
+//! 因此 runner 按 `Scenario` 在编译期构造各场景的具体工具元组；系统提示词
+//! 分两层组装（借鉴 deepseek-harness 的静态/动态分离）：静态 preamble 在
+//! `usage.rs` 按场景二选一，每轮变化的事实（时间、OKF 大纲）由 runner 以
+//! `<runtime_context>` 快照随用户消息下发。早期的运行时 SkillRegistry
+//! preamble 拼装方案已移除——它从未接线，且与 runner 的实际组装并存易致漂移。
 //!
-//! ## 基座 vs Skill
+//! ## 基座 vs 场景
 //!
 //! - **基座内置**：agent runner、wire 协议、workspace/task 管理、LLM 配置。
-//!   基座内置工具：get_current_time（时间解析）、确认/中止机制。
-//! - **Skill**：领域特化能力，可插拔。每个 skill 自带领域 preamble，
-//!   其工具在 runner 里按 skill id 条件构造。
-//!
-//! ## 扩展方式
-//!
-//! 新增一个 skill 的步骤：
-//! 1. 实现 `Skill` trait（提供 id/name/preamble）
-//! 2. 在 runner 的 `build_tools` 里加 `match skill_id` 分支，构造该 skill 的工具
-//! 3. 在 `SkillRegistry::default()` 里 `register()` 该 skill
-//! 未来可从 `~/.daw/skills/` 动态扫描 preamble，工具构造用 trait 泛型或 WASM。
+//!   基座内置工具：get_current_time（时间解析）、search（联网搜索）。
+//! - **场景**：领域特化能力（当前为数据分析 data_analysis），自带领域
+//!   preamble 与工具集，在 runner 里按 Scenario 条件构造。
 
 pub mod builtin;
 pub mod context;
 pub mod data_analysis;
-pub mod registry;
 pub mod search;
 
 /// Per-task workspace pointer injected into data-analysis tools.
@@ -38,20 +31,6 @@ pub struct WorkspaceRef {
     pub path: String,
     /// Absolute workspace directory `~/.daw/<path>`.
     pub dir: std::path::PathBuf,
-}
-
-/// 一个可插拔的能力包。
-///
-/// Skill 自带领域 preamble（注入 LLM 的领域指令），工具在 runner 里按
-/// skill id 条件构造（rig Tool trait 非 dyn-compatible）。
-#[allow(dead_code)]
-pub trait Skill: Send + Sync {
-    /// Skill 唯一标识（如 `"oa"`、`"finance"`）。
-    fn id(&self) -> &str;
-    /// Skill 显示名（如 `"OA 办公"`）。
-    fn name(&self) -> &str;
-    /// 领域 preamble（注入 LLM，拼接在通用基座 preamble 之后）。
-    fn preamble(&self) -> &str;
 }
 
 /// 任务场景。在任务创建时绑定（存 task.kind），决定 preamble、工具集、交互模式。

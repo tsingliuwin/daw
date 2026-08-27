@@ -113,7 +113,6 @@ pub fn run() {
             commands::set_app_config,
             commands::load_settings_json,
             commands::save_settings_json,
-            commands::get_system_preamble,
             commands::get_brand_config,
             commands::get_brand_logo,
             commands::read_directory,

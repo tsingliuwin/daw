@@ -269,6 +269,10 @@ async fn run_stream_loop<R>(
     let mut first_final = true;
     let mut output_buf = String::new();
     let mut emitted_any = false;
+    // 本条消息内已通过 ReasoningDelta 发出的思考文本。完整 Reasoning 事件
+    // 到达时用它做前缀去重——两者都当增量发会把思考段逐字翻倍（UI 与 jsonl
+    // 双写，2026-08-27 复盘实证每段 reasoning 存了两遍）。
+    let mut reasoning_delta_buf = String::new();
 
     // Check the abort flag before processing each chunk.
     {
@@ -302,6 +306,7 @@ async fn run_stream_loop<R>(
             Ok(MultiTurnStreamItem::StreamAssistantItem(StreamedAssistantContent::ReasoningDelta { reasoning, .. })) => {
                 emitted_any = true;
                 output_buf.push_str(&reasoning);
+                reasoning_delta_buf.push_str(&reasoning);
                 emit_delta(&window, &task_id, "reasoning", &reasoning);
                 let completion_est = run_output_tokens + usage::estimate_tokens(&output_buf);
                 emit_usage_estimate(&window, &task_id, input_tokens_est, completion_est, preamble_raw, tools_raw);
@@ -309,8 +314,12 @@ async fn run_stream_loop<R>(
             Ok(MultiTurnStreamItem::StreamAssistantItem(StreamedAssistantContent::Reasoning(reasoning_struct))) => {
                 emitted_any = true;
                 let t = reasoning_struct.display_text();
-                output_buf.push_str(&t);
-                emit_delta(&window, &task_id, "reasoning", &t);
+                // 增量已发过的部分只补发余量；无增量路径（非流式思考）发全文。
+                // 前缀对不上（如服务端终稿与增量不一致）时保守发全文。
+                let already = std::mem::take(&mut reasoning_delta_buf);
+                let remainder = t.strip_prefix(&already).unwrap_or(&t).to_string();
+                output_buf.push_str(&remainder);
+                emit_delta(&window, &task_id, "reasoning", &remainder);
                 let completion_est = run_output_tokens + usage::estimate_tokens(&output_buf);
                 emit_usage_estimate(&window, &task_id, input_tokens_est, completion_est, preamble_raw, tools_raw);
             }
@@ -333,6 +342,7 @@ async fn run_stream_loop<R>(
                 };
                 emit_usage_real(&window, &task_id, n, k_sample, run_output_tokens, preamble_raw, tools_raw);
                 output_buf.clear();
+                reasoning_delta_buf.clear();
             }
             // Tool calls arrive here too, but the tools emit their own events.
             Ok(_) => { emitted_any = true; }
@@ -613,6 +623,18 @@ pub(crate) async fn run_agent_task_stream(
     };
     let tools_json = serde_json::to_string(&tool_defs).unwrap_or_default();
 
+    // Brand name from ~/.daw/brand.json shapes the agent's self-identity in
+    // the preamble (defaults to "Daw").
+    let app_name = crate::brand::load_brand().app_name;
+    // system prompt 只放静态纪律：品牌名注入后跨轮/跨会话字节稳定，provider
+    // 的前缀缓存才能持续命中。每轮变化的事实（当前时间、OKF 大纲）走下方
+    // runtime_context 快照——此前它们拼在 preamble 里，每写一条知识，下一轮
+    // 整个 system prompt 前缀缓存就被击穿。
+    let combined_preamble = match scenario {
+        Scenario::General => usage::general_preamble(&app_name),
+        Scenario::DataAnalysis => usage::data_analysis_preamble(&app_name),
+    };
+
     // Inject the current date/time so the agent can resolve relative time
     // expressions like "本月" / "今天" / "下周一" without guessing.
     let now_line = format!(
@@ -621,31 +643,26 @@ pub(crate) async fn run_agent_task_stream(
         weekday_cn()
     );
 
-    // Brand name from ~/.daw/brand.json shapes the agent's self-identity in
-    // the preamble (defaults to "Daw").
-    let app_name = crate::brand::load_brand().app_name;
-    let base_preamble = match scenario {
-        Scenario::General => usage::general_preamble(&app_name),
-        Scenario::DataAnalysis => usage::data_analysis_preamble(&app_name),
-    };
-
-    // 数据分析场景注入工作区 OKF memory summary。
-    let memory_summary = match scenario {
+    // 运行时上下文快照：随本次用户消息下发，不进 system prompt、不写进持久
+    // 化历史（前端只存用户原文），下一轮自然被新快照取代。模型看到的布局：
+    // <runtime_context> 块 + 用户原文。
+    let runtime_context = match scenario {
         Scenario::DataAnalysis => {
             let entries = crate::db::list_table_registry(&ws_path).unwrap_or_default();
-            crate::okf::Okf::production().catalog_summary(&ws_path, &entries)
+            let outline = crate::okf::Okf::production().catalog_summary(&ws_path, &entries);
+            if outline.is_empty() {
+                now_line
+            } else {
+                format!("{now_line}\n\n{outline}")
+            }
         }
-        Scenario::General => String::new(),
+        Scenario::General => now_line,
     };
+    let llm_prompt = format!("<runtime_context>\n{runtime_context}\n</runtime_context>\n\n{prompt}");
 
-    let combined_preamble = if memory_summary.is_empty() {
-        format!("{}\n\n{}", base_preamble, now_line)
-    } else {
-        format!("{}\n\n{}\n\n{}", base_preamble, now_line, memory_summary)
-    };
     let preamble_raw = usage::estimate_tokens(&combined_preamble);
     let tools_raw = usage::estimate_tokens(&tools_json);
-    let prompt_t = usage::estimate_tokens(&prompt);
+    let prompt_t = usage::estimate_tokens(&llm_prompt);
     let history_t: u64 = rig_history
         .iter()
         .map(|m| usage::estimate_tokens(&format!("{:?}", m)))
@@ -683,7 +700,7 @@ pub(crate) async fn run_agent_task_stream(
                     agent_builder = agent_builder.additional_params(json!({"reasoning_effort": effort}));
                     let agent = agent_builder.build();
                     let stream = agent
-                        .stream_chat(prompt.clone(), rig_history.clone())
+                        .stream_chat(llm_prompt.clone(), rig_history.clone())
                         .multi_turn(100)
                         .await;
                     run_stream_loop(window.clone(), task_id.clone(), &app_state, stream, input_est, &provider.api_format, preamble_raw, tools_raw).await
@@ -703,7 +720,7 @@ pub(crate) async fn run_agent_task_stream(
                     agent_builder = agent_builder.additional_params(json!({"reasoning_effort": effort}));
                     let agent = agent_builder.build();
                     let stream = agent
-                        .stream_chat(prompt.clone(), rig_history.clone())
+                        .stream_chat(llm_prompt.clone(), rig_history.clone())
                         .multi_turn(100)
                         .await;
                     run_stream_loop(window.clone(), task_id.clone(), &app_state, stream, input_est, &provider.api_format, preamble_raw, tools_raw).await
@@ -726,7 +743,7 @@ pub(crate) async fn run_agent_task_stream(
                     }
                     let agent = agent_builder.build();
                     let stream = agent
-                        .stream_chat(prompt.clone(), rig_history.clone())
+                        .stream_chat(llm_prompt.clone(), rig_history.clone())
                         .multi_turn(100)
                         .await;
                     run_stream_loop(window.clone(), task_id.clone(), &app_state, stream, input_est, &provider.api_format, preamble_raw, tools_raw).await
@@ -771,7 +788,7 @@ pub(crate) async fn run_agent_task_stream(
                     agent_builder = agent_builder.additional_params(json!({"reasoning_effort": effort}));
                     let agent = agent_builder.build();
                     let stream = agent
-                        .stream_chat(prompt.clone(), rig_history.clone())
+                        .stream_chat(llm_prompt.clone(), rig_history.clone())
                         .multi_turn(100)
                         .await;
                     run_stream_loop(window.clone(), task_id.clone(), &app_state, stream, input_est, &provider.api_format, preamble_raw, tools_raw).await
@@ -809,7 +826,7 @@ pub(crate) async fn run_agent_task_stream(
                     agent_builder = agent_builder.additional_params(json!({"reasoning_effort": effort}));
                     let agent = agent_builder.build();
                     let stream = agent
-                        .stream_chat(prompt.clone(), rig_history.clone())
+                        .stream_chat(llm_prompt.clone(), rig_history.clone())
                         .multi_turn(100)
                         .await;
                     run_stream_loop(window.clone(), task_id.clone(), &app_state, stream, input_est, &provider.api_format, preamble_raw, tools_raw).await
@@ -850,7 +867,7 @@ pub(crate) async fn run_agent_task_stream(
                     }
                     let agent = agent_builder.build();
                     let stream = agent
-                        .stream_chat(prompt.clone(), rig_history.clone())
+                        .stream_chat(llm_prompt.clone(), rig_history.clone())
                         .multi_turn(100)
                         .await;
                     run_stream_loop(window.clone(), task_id.clone(), &app_state, stream, input_est, &provider.api_format, preamble_raw, tools_raw).await

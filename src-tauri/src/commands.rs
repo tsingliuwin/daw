@@ -55,15 +55,6 @@ pub async fn save_settings_json(json: String) -> Result<(), String> {
     std::fs::write(path, json).map_err(|e| format!("保存配置文件失败: {e}"))
 }
 
-/// Return the system prompt the agent receives (brand-resolved). Read-only —
-/// exposes it so users can inspect what the agent is told.
-#[tauri::command]
-pub async fn get_system_preamble() -> Result<String, String> {
-    Ok(crate::usage::general_preamble(
-        &crate::brand::load_brand().app_name,
-    ))
-}
-
 /// Effective brand config from `~/.daw/brand.json` (Daw defaults otherwise).
 #[tauri::command]
 pub async fn get_brand_config() -> Result<crate::brand::BrandConfig, String> {
