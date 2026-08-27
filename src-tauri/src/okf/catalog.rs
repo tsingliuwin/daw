@@ -43,6 +43,7 @@ pub fn summary(paths: &OkfPaths, ws: &str, table_entries: &[TableRegistryEntry])
     }
 
     // ===== 工作区知识 =====
+    let selections = render_selections(paths, ws, SUMMARY_SELECTIONS_BUDGET);
     let views = list_with_desc(&paths.workspace_okf_dir(ws).join("views"));
     let sources = list_with_desc(&paths.workspace_okf_dir(ws).join("sources"));
     let recipes = list_with_desc(
@@ -51,13 +52,16 @@ pub fn summary(paths: &OkfPaths, ws: &str, table_entries: &[TableRegistryEntry])
             .join("pipelines")
             .join("specific"),
     );
-    if !table_entries.is_empty() || !views.is_empty() || !sources.is_empty() || !recipes.is_empty() {
+    if !table_entries.is_empty() || !views.is_empty() || !sources.is_empty() || !recipes.is_empty() || !selections.is_empty() {
         if !out.is_empty() {
             out.push('\n');
         } else {
             out.push_str("# 知识库大纲\n\n");
         }
         out.push_str("## 工作区知识\n");
+        if !selections.is_empty() {
+            out.push_str(&selections);
+        }
         if !table_entries.is_empty() {
             out.push_str(&render_registered_tables(paths, ws, table_entries, SUMMARY_TABLES_BUDGET));
         }
@@ -184,6 +188,115 @@ fn push_item(out: &mut String, name: &str, desc: Option<&str>) {
         Some(d) if !d.is_empty() => out.push_str(&format!("- {name} — {d}\n")),
         _ => out.push_str(&format!("- {name}\n")),
     }
+}
+
+/// 注入 preamble 的"选表经验"小节的 token 预算。
+/// 经验条目通常个位数，但随主题积累无上限；超预算降级为名称清单，
+/// 与已注册表小节同模式，防止 preamble 随知识积累无上限膨胀。
+const SUMMARY_SELECTIONS_BUDGET: u64 = 400;
+
+/// 渲染"选表经验"小节（selections/）：每条一行摘要——
+/// `- 销量分析 — 首选 [[v_orders_daily]]；交叉验证 [[v_orders_detail]]`。
+/// 表名来自正文 `## 首选表` / `## 交叉验证表` 块的列表行；两块都缺失时降级为
+/// `- name — description`。至少保证第一条完整输出；超预算降级为名称行，
+/// 积压超过 6 条时折叠为一行提示。无经验文件返回空串。
+fn render_selections(paths: &OkfPaths, ws: &str, budget: u64) -> String {
+    let dir = paths.workspace_okf_dir(ws).join("selections");
+    let items = list_with_desc(&dir);
+    if items.is_empty() {
+        return String::new();
+    }
+    let mut out = format!("### 选表经验 (selections/) · {}\n", items.len());
+    let mut used = crate::usage::estimate_tokens(&out);
+    let mut emitted_full = false;
+    let mut name_only: Vec<&(String, Option<String>)> = Vec::new();
+    for item in &items {
+        let (name, desc) = item;
+        let content = fs::read_to_string(dir.join(format!("{name}.md"))).unwrap_or_default();
+        let first = block_table_tokens(&content, "首选表");
+        let cross = block_table_tokens(&content, "交叉验证表");
+        let mut parts: Vec<String> = Vec::new();
+        if !first.is_empty() {
+            parts.push(format!(
+                "首选 {}",
+                first.iter().map(|t| format!("[[{t}]]")).collect::<Vec<_>>().join("、")
+            ));
+        }
+        if !cross.is_empty() {
+            parts.push(format!(
+                "交叉验证 {}",
+                cross.iter().map(|t| format!("[[{t}]]")).collect::<Vec<_>>().join("、")
+            ));
+        }
+        let line = if parts.is_empty() {
+            match desc.as_deref() {
+                Some(d) if !d.is_empty() => format!("- {name} — {d}\n"),
+                _ => format!("- {name}\n"),
+            }
+        } else {
+            format!("- {name} — {}\n", parts.join("；"))
+        };
+        let cost = crate::usage::estimate_tokens(&line);
+        if emitted_full && used + cost > budget {
+            name_only.push(item);
+        } else {
+            out.push_str(&line);
+            used += cost;
+            emitted_full = true;
+        }
+    }
+    match name_only.len() {
+        0 => {}
+        n if n <= 6 => {
+            for (name, desc) in &name_only {
+                push_item(&mut out, name, desc.as_deref());
+            }
+        }
+        _ => {
+            let preview: Vec<&str> = name_only.iter().take(4).map(|(n, _)| n.as_str()).collect();
+            out.push_str(&format!(
+                "- （另有 {} 条选表经验：{}…，需要时用 list_okf_knowledge / search_okf_knowledge 查看）\n",
+                name_only.len(),
+                preview.join("、")
+            ));
+        }
+    }
+    out
+}
+
+/// 提取指定标题块中列表行的表名 token（[[内链]] 或 `代码` 标记），最多 3 个。
+fn block_table_tokens(content: &str, heading: &str) -> Vec<String> {
+    let Some(block) = markdown::extract_block(content, heading) else {
+        return Vec::new();
+    };
+    let mut tokens: Vec<String> = Vec::new();
+    for line in block.lines() {
+        if let Some(tok) = list_table_token(line) {
+            if !tokens.contains(&tok) {
+                tokens.push(tok);
+            }
+        }
+        if tokens.len() >= 3 {
+            break;
+        }
+    }
+    tokens
+}
+
+/// 从 `- ...` 列表行提取第一个 `[[内链]]` 或 `` `代码` `` 标记的表名。
+fn list_table_token(line: &str) -> Option<String> {
+    let t = line.trim().strip_prefix("- ")?;
+    for (open, close) in [("[[", "]]"), ("`", "`")] {
+        if let Some(rest) = t.trim_start().strip_prefix(open) {
+            if let Some(end) = rest.find(close) {
+                let tok = rest[..end].trim();
+                if !tok.is_empty() {
+                    return Some(tok.to_string());
+                }
+            }
+        }
+    }
+    None
 }
 
 /// 渲染字段释义行（`  字段释义: \`col\`: comment; ...`），空则空串。
@@ -318,19 +431,23 @@ pub fn outline(paths: &OkfPaths, ws: &str, table_entries: &[TableRegistryEntry])
     }
 
     // ===== 工作区知识 =====
+    let selections = list_with_metadata(&paths.workspace_okf_dir(ws).join("selections"), None);
     let views = list_with_metadata(&paths.workspace_okf_dir(ws).join("views"), None);
     let sources = list_with_metadata(&paths.workspace_okf_dir(ws).join("sources"), None);
     let recipes = list_with_metadata(
         &paths.workspace_okf_dir(ws).join("pipelines").join("specific"),
         None,
     );
-    if !table_entries.is_empty() || !views.is_empty() || !sources.is_empty() || !recipes.is_empty() {
+    if !table_entries.is_empty() || !views.is_empty() || !sources.is_empty() || !recipes.is_empty() || !selections.is_empty() {
         if started {
             out.push('\n');
         } else {
             out.push_str("# 知识库大纲\n\n");
         }
         out.push_str("## 工作区知识\n");
+        if !selections.is_empty() {
+            push_metadata_section(&mut out, "选表经验 (selections/)", &selections, false);
+        }
         if !table_entries.is_empty() {
             out.push_str(&format!("### 已注册表 · {}\n", table_entries.len()));
             for e in table_entries {
@@ -384,6 +501,7 @@ fn duplicate_section(paths: &OkfPaths, ws: &str) -> String {
     for (label, dir) in [
         ("concepts", global.join("concepts")),
         ("users", global.join("users")),
+        ("selections", wksp.join("selections")),
         ("views", wksp.join("views")),
         ("sources", wksp.join("sources")),
         ("recipes", wksp.join("pipelines").join("specific")),
@@ -681,6 +799,48 @@ mod tests {
         assert!(out.contains("v_t1、v_t10、v_t11、v_t12"));    // 预览列冷表名（按名排序）
         assert!(!out.contains("v_t13"));                       // 超出预览的不再逐个列出
         // 折叠行体积有上限：总输出远小于 21 × 完整条目。
+        assert!(crate::usage::estimate_tokens(&out) < 150);
+    }
+
+    #[test]
+    fn summary_renders_selections_with_tables() {
+        let tmp = tempfile::tempdir().unwrap();
+        let paths = OkfPaths::new(tmp.path().to_path_buf());
+        let ver: Arc<dyn crate::okf::Versioner> = Arc::new(NoopVersioner);
+        store::write(&paths, ver.as_ref(), &FixedClock, "ws", Category::Selection, "sales_analysis", "首选表", "- [[v_orders_daily]] @demo — 订单日汇总，口径稳定\n- [[v_orders_sum]] @demo — 品牌口径汇总", None).unwrap();
+        store::write(&paths, ver.as_ref(), &FixedClock, "ws", Category::Selection, "sales_analysis", "交叉验证表", "- [[v_orders_detail]] @demo — 明细互证", None).unwrap();
+
+        let s = summary(&paths, "ws", &[]);
+        assert!(s.contains("### 选表经验 (selections/) · 1"));
+        assert!(s.contains("- sales_analysis — 首选 [[v_orders_daily]]、[[v_orders_sum]]；交叉验证 [[v_orders_detail]]"));
+    }
+
+    #[test]
+    fn selections_without_blocks_fall_back_to_desc() {
+        let tmp = tempfile::tempdir().unwrap();
+        let paths = OkfPaths::new(tmp.path().to_path_buf());
+        let ver: Arc<dyn crate::okf::Versioner> = Arc::new(NoopVersioner);
+        store::write(&paths, ver.as_ref(), &FixedClock, "ws", Category::Selection, "draft", "适用问题", "还没填表的草稿", Some("占位经验")).unwrap();
+
+        let s = summary(&paths, "ws", &[]);
+        assert!(s.contains("### 选表经验 (selections/) · 1"));
+        assert!(s.contains("- draft — 占位经验"));
+        assert!(!s.contains("首选 ["));
+    }
+
+    #[test]
+    fn selections_respect_token_budget() {
+        let tmp = tempfile::tempdir().unwrap();
+        let paths = OkfPaths::new(tmp.path().to_path_buf());
+        let ver: Arc<dyn crate::okf::Versioner> = Arc::new(NoopVersioner);
+        for n in 0..10 {
+            let name = format!("topic_{n:02}");
+            store::write(&paths, ver.as_ref(), &FixedClock, "ws", Category::Selection, &name, "首选表", &format!("- [[v_some_rather_long_table_name_{n}]] @demo — 说明文字较长会消耗预算"), None).unwrap();
+        }
+        let out = render_selections(&paths, "ws", 20);
+        // 第一条完整输出；其余 9 条超出折叠阈值 6，收敛为一行提示。
+        assert!(out.contains("首选 [[v_some_rather_long_table_name_0]]"));
+        assert!(out.contains("另有 9 条选表经验"));
         assert!(crate::usage::estimate_tokens(&out) < 150);
     }
 }

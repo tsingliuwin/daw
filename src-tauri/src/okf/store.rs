@@ -39,7 +39,7 @@ pub fn init_global(paths: &OkfPaths) -> Result<(), String> {
 
 pub fn init_workspace(paths: &OkfPaths, ws: &str) -> Result<(), String> {
     let w = paths.workspace_okf_dir(ws);
-    for sub in ["tables", "views", "sources", "concepts", "pipelines/specific"] {
+    for sub in ["tables", "views", "sources", "concepts", "pipelines/specific", "selections"] {
         fs::create_dir_all(w.join(sub)).map_err(|e| format!("创建目录失败: {e}"))?;
     }
     Ok(())

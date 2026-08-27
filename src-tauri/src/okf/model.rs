@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-/// 知识作用域。concepts/users 默认全局；tables/views/sources/recipes 工作区。
+/// 知识作用域。concepts/users 默认全局；tables/views/sources/recipes/selections 工作区。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Scope {
     Global,
@@ -27,6 +27,7 @@ pub enum Category {
     View,
     Source,
     Recipe,
+    Selection,
 }
 
 impl Category {
@@ -46,6 +47,7 @@ impl Category {
             Category::View => "views",
             Category::Source => "sources",
             Category::Recipe => "pipelines/specific",
+            Category::Selection => "selections",
         }
     }
     /// frontmatter `type` 字段值。
@@ -57,6 +59,7 @@ impl Category {
             Category::View => "DuckDB View",
             Category::Source => "Data Source",
             Category::Recipe => "Recipe",
+            Category::Selection => "Table Selection",
         }
     }
     /// 从工具层字符串解析（容错：未知 → None）。
@@ -68,6 +71,7 @@ impl Category {
             "views" => Some(Category::View),
             "sources" => Some(Category::Source),
             "pipelines/specific" | "pipelines" => Some(Category::Recipe),
+            "selections" => Some(Category::Selection),
             _ => None,
         }
     }
@@ -256,7 +260,10 @@ mod tests {
         assert_eq!(Category::User.scope(), Scope::Global);
         assert_eq!(Category::Table.scope(), Scope::Workspace);
         assert_eq!(Category::Recipe.scope(), Scope::Workspace);
+        assert_eq!(Category::Selection.scope(), Scope::Workspace);
         assert_eq!(Category::Recipe.dir(), "pipelines/specific");
+        assert_eq!(Category::Selection.dir(), "selections");
+        assert_eq!(Category::Selection.doc_type(), "Table Selection");
         assert_eq!(Category::View.doc_type(), "DuckDB View");
     }
 
@@ -266,6 +273,7 @@ mod tests {
         assert_eq!(Category::from_str("users/default"), Some(Category::User));
         assert_eq!(Category::from_str("pipelines/specific"), Some(Category::Recipe));
         assert_eq!(Category::from_str("  views "), Some(Category::View));
+        assert_eq!(Category::from_str("selections"), Some(Category::Selection));
         assert_eq!(Category::from_str("nope"), None);
     }
 
