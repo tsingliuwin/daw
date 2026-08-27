@@ -185,6 +185,15 @@ fn create_workspace_conn(ws_path: &str, ws_dir: &Path) -> Result<duckdb::Connect
     let conn = duckdb::Connection::open_in_memory()
         .map_err(|e| format!("DuckDB 打开失败: {e}"))?;
     let _ = conn.execute_batch("PRAGMA memory_limit='4GB';\nPRAGMA threads=1;");
+    // 钉死会话时区（P0-B 根因修复，2026-08-27）：timestamptz 列与朴素字面量
+    // 比较时，解释权在「求值方的会话时区」——DuckDB 在 ICU 扩展加载前默认
+    // UTC，一旦 SQL 出现 `AT TIME ZONE 'Asia/Shanghai'` 触发 ICU 自动加载，
+    // 会话时区翻转为系统 locale(+08)，同一条 SQL 前后两次执行结果会差出
+    // 一个边界时段（实测同窗 310 单 vs 334 单）；而 postgres_query 内层字面
+    // 量始终由远端（Hologres，+08）解释。显式固定为北京时间后：视图路径与
+    // 下推路径对朴素字面量的解释一致（都按北京墙钟），且不再受 ICU 加载
+    // 时机影响。配套约定：模型直接写北京墙钟窗口字面量，不做 -8h 换算。
+    let _ = conn.execute_batch("SET TimeZone='Asia/Shanghai';");
 
     // ducklake + sqlite extensions; DuckLake is the persistent catalog backend.
     crate::duckdb::lake::ensure_ducklake_loaded(&conn)?;
