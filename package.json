@@ -1,6 +1,6 @@
 {
   "name": "daw",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "description": "Daw — Data Agent Workstation: a customizable conversational workbench for data and tasks",
   "type": "module",
   "scripts": {
