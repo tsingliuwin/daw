@@ -1,23 +1,23 @@
 {
-  "version": "0.1.8",
-  "notes": "### 新增\n\n- **选表经验知识类别（selections/）**：数据分析 Agent 选表前先查阅已沉淀的「选表经验」——哪类业务问题用哪些表（首选表、交叉验证表、慎用/排除）。命中直接按经验选表、跳过探索；分析中确立的表选择偏好（用户纠正、验证过的映射）也会立即沉淀，下次同类问题不再重复探索。知识库大纲与提示词同步纳入该类别。\n- **list_remote_tables 注释/行数/filter**：探查数据源时 postgres 表现在附带表注释和行数估算（如 ≈1.2M 行），表多时可传 `filter` 按业务关键词缩小范围；富查询失败自动回退纯名单，兼容系统目录有差异的库。\n- **流式瞬态故障自动重试**：输出开始前发生的网关断连、5xx、连接重置等瞬态错误，按限流同款退避策略自动重试；重试耗尽或不可重试的流错误附中文根因诊断（阶段/已输出 token/耗时），原始错误落 logs 表便于事后归因。\n- **SQL 执行历史审计**：Agent 执行的查询落 logs 表（category=sql）并记入 jsonl 工具段 meta，便于事后追溯。",
-  "pubdate": "2026-08-27T02:54:20.225Z",
+  "version": "0.1.9",
+  "notes": "### 新增\n\n- **系统提示词体系重构（借鉴 deepseek-harness）**：静态纪律与动态事实分离——当前时间与知识库大纲改以 `<runtime_context>` 快照随用户消息下发，system prompt 跨会话字节稳定，provider 前缀缓存不再随知识写入被击穿；错误处置统一决策树（权限/不存在/存储层级错误终局，不重试不绕行不静默跳过）；防漂移测试（提示词提及的工具名必须真实存在、占位符无残留、OKF 类别枚举单一真相源）。\n- **用户画像（users 类别激活）**：用户表达偏好/习惯/纠错即沉淀五板块画像（角色与关注点/沟通与交付偏好/常用口径与基准/已拍板决策/纠错记录），开场随大纲注入——Agent 越用越懂用户。\n- **任务协议（playbooks 类别）**：把用户确认过的交付格式沉淀为协议（适用问题+数据源+交付结构+验证清单），大纲注入、命中即按协议交付，不再临场发挥。首条协议：两期同比对比表。\n- **知识生命周期（status）**：`update_okf_metadata` 支持 status=active/superseded，大纲对作废条目标记「⚠️已作废」，新旧知识打架有完整治理链。\n- **会话复盘工具 `tools/review_transcript.py`**：工具时间线/慢查询/错误/一致性体检/用户纠正候选一键输出，「用-查-改-用」循环的固定入口。\n\n### 修复\n\n- **下推守卫被换行符绕过（根修）**：pushdown 表守卫的表名提取用字面空格匹配，多行 SQL 的 `\\nFROM` 全数漏检——一单 15 次 24~45s 全表拉取慢查询；改词边界解析后守卫全生效。\n- **同窗不同数（P0-B 根修）**：timestamptz 朴素字面量的解释随会话时区变化（ICU 扩展加载触发 UTC→+08 翻转）且与下推路径（远端恒 +08）劈叉，同一时间窗两次查询差出边界时段订单；连接创建时钉死 `TimeZone='Asia/Shanghai'`，双路径数字验证一致，时间过滤统一直接北京墙钟。\n- **reasoning 整段双写**：rig 流 `ReasoningDelta` 与完整 `Reasoning` 事件均按增量发送，思考段翻倍显示；完整事件改为前缀去重只补发余量。\n- **SQL 禁词误伤 is_deleted**：`contains(\"DELETE\")` 误拦合法列名；改词边界+字符串字面量抹除匹配。\n- **COPY binary 错误剥壳**：postgres 扩展错误把根因埋在整段内层 SQL 之后，模型靠猜；剥壳后权限/表不存在/CAST 失败直指根因，错误文案含修复指引。\n- **load_okf_knowledge 标题模糊匹配**：标题漏「（…）」尾巴时不再只回「未找到」——前缀/包含唯一命中直接返回，多候选列清单。\n- 大纲徽标 `[pushdown]` → `[下推表·禁直查]`（曾致模型读反规则）；select 类小修复若干。\n\n### 变更\n\n- 工具描述与实现对齐（禁词表、行数截断、OKF 类别全枚举）；清理死代码（`get_system_preamble` 命令、未接线的 `SkillRegistry`）。\n- SQL 审计 meta 增加 firstRow 结果指纹，事后可对账。",
+  "pubdate": "2026-08-27T11:10:58.027Z",
   "platforms": {
     "linux-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTSGFaT3VTLzhlcUtIalNxV05CMGx0azc5cWxSWjhhUjlzT0FPcGRNMXdjbDZLUmFSMFRRTlJ5TlpxNEFRZHdHUG5iL01RaDBFUWZvaGprbVRiaXlrSFZGYUwwR01GL3dZPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg3Nzk4Njk2CWZpbGU6RGF3XzAuMS44X2FtZDY0LkFwcEltYWdlCkpPVm5KdEU5NE45OFlMRTlQUkJSMG9TZ1hWWGthVmswdzB3TWc4M1l4OGlSMjVTYWswRzdhTzRUTlVOTDlyYUFYU0thTHpxNTYySXRMeTY1N3Q0a0N3PT0K",
-      "url": "https://github.com/tsingliuwin/daw/releases/download/v0.1.8/Daw_0.1.8_amd64.AppImage"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTSGFaT3VTLzhlcU1YL2doemlNeFVvU1JBK2FDVTZqbnkvT2svc2NkWEV6dGFQYWx1d3Z5bzV0WFVjNmlBYU5oY2piam1BaURIUHdRZ00zVEJhQXQ5bTFlSDZ2ZldraXc0PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg3ODI4OTU3CWZpbGU6RGF3XzAuMS45X2FtZDY0LkFwcEltYWdlCjNONEVTMHpYL1RxV1R4b1dqRFRoYmZPOXhaTjdUdWordTcxTDVBUGVYNUlaQUZ5QkJ1UlBVWnBOSEN0dldodC91RDVMNE5hWWFjeWFwWWNhbUpXU0NBPT0K",
+      "url": "https://github.com/tsingliuwin/daw/releases/download/v0.1.9/Daw_0.1.9_amd64.AppImage"
     },
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTSGFaT3VTLzhlcUh2U2dWUERrRTFmS1haZDF5Nko2eDZsanBGUDJuTm5HRjkyVE5zYlF6VXVwSzdTMHp2WG05S1BsV2NldjFKSlZRdDhpREtjRldVcUhmVHJaSlNGSHdrPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg3Nzk5MTg2CWZpbGU6RGF3XzAuMS44X3g2NC1zZXR1cC5leGUKRzNkNmZuOVJOclF6Tm85eS9GKzYrWkl4TWJkT2w3UzIrQ09zTTdPZDVEN1N0T1RPMVhCdFEvYjI0c0Q4VmRJMEx2enl5YmFvSmNMWWt5USswQlJ6Q0E9PQo=",
-      "url": "https://github.com/tsingliuwin/daw/releases/download/v0.1.8/Daw_0.1.8_x64-setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTSGFaT3VTLzhlcURrNkJXNDVnWFdydTlBeDMxTjNKRFEwU1dZOXd4TGNaclVpRUtXTFN2UkpCUDdxRHBqdGZxUHhOQTliOW1RamN6L0IyQXNQcUM5QThXVGpQeU5QUHdnPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg3ODI4OTcwCWZpbGU6RGF3XzAuMS45X3g2NC1zZXR1cC5leGUKUnVHRHl0cE9PbGJxRUJ6aXlNd2FhcXdRWWZNbXM0dVNnUC9qU3J2b2pJUkNPUUF3eERCUmxMYWREWTk5cUtGTkFnbDczQ1VUQVpYNml5Sm15R2VMQmc9PQo=",
+      "url": "https://github.com/tsingliuwin/daw/releases/download/v0.1.9/Daw_0.1.9_x64-setup.exe"
     },
     "darwin-aarch64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTSGFaT3VTLzhlcUE4VGhXdkVRZzdreTNYR25sRjJoUXMwL2YzWXpLTWNQVDRsOVNJaTkrbHAyWVQzZWdvdlh5aWhzV3lyVDdBS09qL0Y3NTZVQzFMeG11MVU2alQyb3djPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg3Nzk4MzM2CWZpbGU6RGF3LmFwcC50YXIuZ3oKRXo0Y0pFT2ErSFViVkp0WDIxSlFBTS9DRXhSR1dkYlp3L3JZWEJxTkVtNlFYUzBNZG9DOVo0Ujh4U2N5K0kvbktnSXNxN2RhcUtXcDZndVBQU2phQ1E9PQo=",
-      "url": "https://github.com/tsingliuwin/daw/releases/download/v0.1.8/Daw_aarch64.app.tar.gz"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTSGFaT3VTLzhlcU1UaExIYXVtUTBIbEtSTEpqMHJtcDVlRWRFZWNxMEZOZUdObGU2Y1NHbUp1ejdBOWxXTU1ITkVua3FyaXhGZnAwOTZsNStHbUh3aXVzcUxQRFVRK2dJPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg3ODI4NTg2CWZpbGU6RGF3LmFwcC50YXIuZ3oKWHJaWkxXcmpkVHVNcTlPR0dlWWJ3THY2c1dsTXhOWitUVHM1NVVRWlVFNFRSUEdKejJpUDFuSDBLZlc4bHRPRE1OMVEva2w4YTFPckF1bzdiZ2N1Q0E9PQo=",
+      "url": "https://github.com/tsingliuwin/daw/releases/download/v0.1.9/Daw_aarch64.app.tar.gz"
     },
     "darwin-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTSGFaT3VTLzhlcU1uOW5UU2dNclVRbkxXMi9TdDJZUEpsYnQrTitkNXJxOXdWYTdGQzg5Q0Z1NDErOG00RkxFYlk1anFEQ3kzT3RmVUxsYnFBQWhyMnhvWTVoSXZCdHc4PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg3Nzk4MTkyCWZpbGU6RGF3LmFwcC50YXIuZ3oKTGN0eVFrN2xad2JJcmZOaC9GMnRYQWtpWld2ZEU4NGVsdmxSRzB0WlRPOEViL29CaWg2YTZ1eG9RakV0UzFqS2JSVWFkMkl5alMrNFovVGh4ZDd0QkE9PQo=",
-      "url": "https://github.com/tsingliuwin/daw/releases/download/v0.1.8/Daw_x64.app.tar.gz"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTSGFaT3VTLzhlcU8zTXVZR1lRYTY5VlM2NmZzRDBmUFJENEc2YkF6L0tTdG0xZDdQUVhXZENIUGRDNnR2bUlLekJPWUp5ekRzRkp1WlZLS1NKVTVyc0h2WkhERUN5YndRPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg3ODI4NDQ0CWZpbGU6RGF3LmFwcC50YXIuZ3oKWGU5TlNReGpqZGpNVHZYVzJZazNMYjVLbGhHVVlWU2k4RTVPa21ORExHYi9VY3MzQzRucEFyRW51ZkJ4bkRzYW1zQndoTStXejBJZ1RNT0M4ME5DQ1E9PQo=",
+      "url": "https://github.com/tsingliuwin/daw/releases/download/v0.1.9/Daw_x64.app.tar.gz"
     }
   }
 }
