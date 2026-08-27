@@ -140,10 +140,17 @@ impl Tool for ExecuteQueryTool {
         let blocking_fut = tokio::task::spawn_blocking(move || -> Result<SqlResult, String> {
             let guard = conn.blocking_lock();
             execute::run_query(&guard, &sql_string, Some(50)).map_err(|e| {
-                let msg = e.to_string();
+                // 先剥 COPY binary 包装：postgres 扩展的报错把根因埋在整段
+                // 内层 SQL 之后，不剥则模型和分类器都要靠猜。
+                let msg = super::decapsulate_copy_error(&e.to_string());
                 let lower = msg.to_lowercase();
-                if lower.contains("permission denied") || lower.contains("access denied") {
-                    format!("查询失败：当前用户没有查询权限。错误: {msg}\n建议：检查数据源连接的用户是否有该表的查询权限，或换一张表。")
+                if lower.contains("permission denied")
+                    || lower.contains("access denied")
+                    || lower.contains("check permission")
+                {
+                    format!("查询失败：当前用户没有查询权限（含 MaxCompute 外表权限，属终局，不要重试此表）。错误: {msg}\n建议：检查数据源连接的用户是否有该表的查询权限，或换一张表。")
+                } else if lower.contains("invalid input syntax") {
+                    format!("查询失败：类型转换失败（字符串内容与目标类型不符）。错误: {msg}\n建议：远端(Hologres)字符串列转数值用 ::FLOAT8 或 ::numeric——AS INT 遇 \"2000.0\" 这类带小数的文本会失败，AS DOUBLE 不被远端支持；先用明细采样确认原始值再转换。")
                 } else if (lower.contains("does not exist") || lower.contains("not found")) && lower.contains("column") {
                     // 远端列名写错（如 pay_time 应为 payment_time）：不要包装成
                     // "表或视图不存在"，否则会诱导 agent 重新注册已存在的表。
@@ -279,11 +286,18 @@ fn extract_table_from_sql(sql: &str) -> Option<String> {
 /// 根据查询错误判定可用性等级。
 fn classify_query_error(err: &str) -> (String, String) {
     let lower = err.to_lowercase();
-    if lower.contains("storage tier") || lower.contains("lower meta") || lower.contains("odps") {
+    if lower.contains("storage tier")
+        || lower.contains("lower meta")
+        || lower.contains("odps")
+        || lower.contains("maxcompute")
+    {
         ("unavailable_permanent".to_string(), "MaxCompute 非标准存储，Hologres 不支持访问".to_string())
     } else if lower.contains("unsupported type") {
         ("unavailable_permanent".to_string(), "列类型不兼容".to_string())
-    } else if lower.contains("permission denied") || lower.contains("access denied") {
+    } else if lower.contains("permission denied")
+        || lower.contains("access denied")
+        || lower.contains("check permission")
+    {
         ("unavailable_temporary".to_string(), "权限不足".to_string())
     } else if lower.contains("timeout") || lower.contains("connection") {
         ("unavailable_temporary".to_string(), "连接超时".to_string())

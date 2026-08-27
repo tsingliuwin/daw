@@ -113,7 +113,7 @@ impl Tool for RenderChartTool {
         let hard_secs = QUERY_HARD_TIMEOUT_SECS;
         let blocking_fut = tokio::task::spawn_blocking(move || -> Result<SqlResult, String> {
             let guard = conn.blocking_lock();
-            execute::run_query(&guard, &sql_string, Some(200)).map_err(|e| e.to_string())
+            execute::run_query(&guard, &sql_string, Some(200)).map_err(|e| super::decapsulate_copy_error(&e.to_string()))
         });
         let run_res = if hard_secs > 0 {
             match tokio::time::timeout(std::time::Duration::from_secs(hard_secs), blocking_fut).await {

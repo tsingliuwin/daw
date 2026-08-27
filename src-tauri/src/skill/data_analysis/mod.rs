@@ -23,11 +23,46 @@ pub mod search_okf_knowledge;
 pub mod update_okf_metadata;
 pub mod write_okf_knowledge;
 
+/// 剥掉 postgres 扩展 COPY binary 协议的错误包装，暴露真实根因。
+///
+/// postgres_query 取数走 `COPY (…) TO STDOUT (FORMAT binary)`，出错时 DuckDB
+/// 报 `Failed to prepare COPY "<整段内层SQL>";": <真实错误>`——根因（权限/
+/// 表不存在/类型转换失败）被一大段 SQL 前缀淹没，模型只能靠猜（2026-08-27
+/// 复盘：6 次此类报错全部需要模型反复试错解读）。剥壳规则：截取 COPY 语句
+/// 结束标记 `;": ` 之后的文本；`Failed to fetch header for COPY` 同理；
+/// 都不匹配则原样返回。
+pub(crate) fn decapsulate_copy_error(err: &str) -> String {
+    let strip_lead = |s: &str| -> String {
+        let mut s = s.trim_start();
+        // COPY 错误尾格式有 `;": ERROR:  xxx` 与 `: ERROR:  xxx` 两种，
+        // 剥掉可选的冒号后再剥 ERROR: 标签。
+        if let Some(r) = s.strip_prefix(':') {
+            s = r.trim_start();
+        }
+        s.strip_prefix("ERROR:")
+            .map(|r| r.trim_start().to_string())
+            .unwrap_or_else(|| s.to_string())
+    };
+    if let Some(pos) = err.rfind(";\": ") {
+        // 确认这是 COPY 包装（防误伤恰好含该序列的普通错误）
+        if err.contains("Failed to prepare COPY \"") {
+            return strip_lead(&err[pos + 4..]);
+        }
+    }
+    if let Some(rest) = err.split_once("Failed to fetch header for COPY") {
+        return strip_lead(rest.1);
+    }
+    err.to_string()
+}
+
 /// 归并 SQL 执行错误到 compact class，供 logs 表与 transcript meta 共用。
 /// 值域固定，后续 agent 调优 / 历史排查可直接按此维度过滤。
 pub(crate) fn classify_sql_error_class(err: &str) -> &'static str {
     let lower = err.to_lowercase();
-    if lower.contains("permission denied") || lower.contains("access denied") {
+    if lower.contains("permission denied")
+        || lower.contains("access denied")
+        || lower.contains("check permission")
+    {
         "permission"
     } else if lower.contains("timeout") || lower.contains("interrupt") || lower.contains("已自动中断") {
         "timeout"
@@ -37,6 +72,8 @@ pub(crate) fn classify_sql_error_class(err: &str) -> &'static str {
         "column_missing"
     } else if lower.contains("does not exist") || lower.contains("not found") {
         "table_missing"
+    } else if lower.contains("invalid input syntax") || lower.contains("cast") {
+        "cast_error"
     } else if lower.contains("syntax") || lower.contains("parser") || lower.contains("binder") {
         "syntax"
     } else {
@@ -99,6 +136,8 @@ pub(crate) fn sql_forbidden_keyword(sql: &str) -> Option<&'static str> {
 
 #[cfg(test)]
 mod tests {
+    use super::{classify_sql_error_class, decapsulate_copy_error};
+
     /// 防漂移（fail-loud，借鉴 deepseek-harness「提示词与工具注册表对齐」）：
     /// preamble 里反引号提及的 snake_case 标识符，要么是真实注册的工具名，
     /// 要么在 allowlist 里（非工具标识符：SQL 函数 / 参数名 / OKF 类别名 /
@@ -196,5 +235,45 @@ mod tests {
                 );
             }
         }
+    }
+
+    // ------------------------------------------------------------------
+    // COPY binary 错误剥壳（2026-08-27 复盘：6 次报错根因被内层 SQL 淹没）。
+    // 用例取自当次会话的真实错误原文。
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn decapsulates_prepare_copy_relation_error() {
+        let raw = r#"Invalid Error: Failed to prepare COPY "COPY (SELECT "msg_type", "cost_sum" FROM (SELECT msg_type, SUM(total_cost) AS cost_sum FROM "default"."dws_account_total_cost_tag" GROUP BY msg_type) AS __unnamed_subquery  LIMIT 50) TO STDOUT (FORMAT "binary");": ERROR:  relation "default.dws_account_total_cost_tag" does not exist"#;
+        let out = decapsulate_copy_error(raw);
+        assert!(out.contains("relation") && out.contains("does not exist"), "got: {out}");
+        assert!(!out.contains("COPY (SELECT"), "内层 SQL 应被剥掉: {out}");
+        assert_eq!(classify_sql_error_class(&out), "table_missing");
+    }
+
+    #[test]
+    fn decapsulates_prepare_copy_permission_error() {
+        let raw = r#"Invalid Error: Failed to prepare COPY "COPY (SELECT "cnt" FROM (SELECT COUNT(*) AS cnt FROM "default"."dim_hotel_camping_cost_item") AS __unnamed_subquery  LIMIT 50) TO STDOUT (FORMAT "binary");": ERROR:  check permission for foreign table scan failed: failed to check permission:MaxCompute"#;
+        let out = decapsulate_copy_error(raw);
+        assert!(out.contains("check permission"), "got: {out}");
+        assert!(!out.contains("COPY (SELECT"));
+        assert_eq!(classify_sql_error_class(&out), "permission");
+    }
+
+    #[test]
+    fn decapsulates_fetch_header_cast_error() {
+        let raw = r#"IO Error: Failed to fetch header for COPY: ERROR:  invalid input syntax for integer: "2000.0" CONTEXT:  [query_id:1002017781610729626]"#;
+        let out = decapsulate_copy_error(raw);
+        assert!(out.starts_with("invalid input syntax for integer"), "got: {out}");
+        assert_eq!(classify_sql_error_class(&out), "cast_error");
+    }
+
+    #[test]
+    fn plain_errors_pass_through_unchanged() {
+        let raw = "Binder Error: Failed to find column: pay_time";
+        assert_eq!(decapsulate_copy_error(raw), raw);
+        // 普通错误恰好含 `";": ` 序列但无 COPY 前缀时不误剥
+        let tricky = "some error \";\": looks like terminator";
+        assert_eq!(decapsulate_copy_error(tricky), tricky);
     }
 }
