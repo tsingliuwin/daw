@@ -167,6 +167,7 @@ def okf_health():
     home = os.path.expanduser("~/.daw")
     roots = [os.path.join(home, "okf")] + glob.glob(os.path.join(home, "*", "okf"))
     loss, debris = [], 0
+    dup_norm = []  # 仅空格差异的疑似重复板块（修正优先于并存违规候选）
     for root in roots:
         for dirpath, _, files in os.walk(root):
             for fn in files:
@@ -180,12 +181,15 @@ def okf_health():
                         if lines[i].strip() == "---":
                             lines = lines[i + 1:]
                             break
+                seen_norm = {}
                 i = 0
                 while i < len(lines):
                     t = lines[i].strip()
                     if not t.startswith("#"):
                         i += 1
                         continue
+                    key = "".join(t.lstrip("#").split()).lower()
+                    seen_norm.setdefault(key, []).append(t)
                     j = i + 1
                     while j < len(lines) and not lines[j].strip():
                         j += 1
@@ -201,6 +205,9 @@ def okf_health():
                         i = j
                         continue
                     i += 1
+                for key, heads in seen_norm.items():
+                    if len(heads) > 1:
+                        dup_norm.append(f"{os.path.relpath(p, home)} | " + " ⟂ ".join(h[:36] for h in heads))
     print("\n# 知识库体检（OKF 空标题板块）")
     if loss:
         print("  ⚠️ 疑似静默丢正文（空标题直达 EOF 或同名对撞），应从会话回执 detail 恢复：")
@@ -208,6 +215,10 @@ def okf_health():
             print("    - " + x)
     else:
         print("  真损失（EOF/同名对撞型空标题）: 0")
+    if dup_norm:
+        print("  ⚠️ 仅空格差异的重复板块（修正优先于并存违规候选，应合并留权威版）：")
+        for x in dup_norm:
+            print("    - " + x)
     print(f"  无害残桩（正文在模型自带标题下，择机清理）: {debris} 个")
     okf_git_audit()
 

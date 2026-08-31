@@ -86,6 +86,14 @@ pub fn extract_headings(content: &str, level: usize) -> Vec<String> {
     headings
 }
 
+/// 标题归一化：去全部空白 + 小写。模型手打标题常有空格漂移（「2026 年」
+/// vs「2026年」），写入路径的匹配必须与读路径的模糊兜底同宽，否则同一板块
+/// 会复制出仅空格差异的近似重复（2026-08-31 复盘实锤：收口实测板块新旧
+/// 两份并存，且旧份是被新份显式「取代」的过时口径）。
+fn norm_heading(h: &str) -> String {
+    h.split_whitespace().collect::<String>().to_lowercase()
+}
+
 /// content 首个非空行若是与 heading 同名的标题行（模型回显参数，常见习惯），
 /// 剥掉它：不剥会与 upsert 写入的标题构成同名重复，被 `deduplicate` 当作重复
 /// 板块连同其后正文一起静默吞掉——工具却照样报「已写入」（2026-08-31 复盘
@@ -99,7 +107,7 @@ fn strip_echoed_heading(content: &str, heading: &str) -> String {
         }
         if t.starts_with('#') {
             let ht = t.trim_start_matches('#').trim();
-            if ht.eq_ignore_ascii_case(heading) {
+            if norm_heading(ht) == norm_heading(heading) {
                 let rest: Vec<&str> = lines.collect();
                 return rest.join("\n");
             }
@@ -109,10 +117,12 @@ fn strip_echoed_heading(content: &str, heading: &str) -> String {
     content.to_string()
 }
 
-/// 在 body 里替换或追加标题板块。heading 匹配（大小写不敏感）则替换其内容
-/// （到下一个 `#` 标题前）；不存在则末尾追加 level 级新标题 + content。
+/// 在 body 里替换或追加标题板块。heading 匹配（归一化空白与大小写后相同）
+/// 则替换其内容（到下一个 `#` 标题前），保留既有标题行原文；不存在则末尾
+/// 追加 level 级新标题 + content。
 pub fn upsert_block(body: &str, heading: &str, content: &str, level: usize) -> String {
     let content = strip_echoed_heading(content, heading);
+    let norm = norm_heading(heading);
     let lines: Vec<&str> = body.lines().collect();
     let mut out: Vec<String> = Vec::new();
     let mut skipping = false;
@@ -124,7 +134,7 @@ pub fn upsert_block(body: &str, heading: &str, content: &str, level: usize) -> S
             if skipping {
                 skipping = false;
             }
-            if ht.eq_ignore_ascii_case(heading) {
+            if norm_heading(ht) == norm {
                 out.push(line.to_string());
                 out.push(content.to_string());
                 skipping = true;
@@ -343,5 +353,27 @@ mod tests {
         assert!(out.contains("（8/1-29）"));
         assert!(out.contains("（8/31 查询）"));
         assert!(out.contains("口径与数字"));
+    }
+
+    #[test]
+    fn upsert_matches_heading_ignoring_whitespace() {
+        // 2026-08-31 复盘实锤：模型标题手抖少打空格，写入路径精确匹配失灵，
+        // 同一板块复制出仅空格差异的近似重复（旧份还被新份显式「取代」）。
+        // 归一化后应原位更新既有板块并保留其标题行原文。
+        let body = "## 2026 年 8 月收口实测（8/31 查询）\n- 旧表述";
+        let out = upsert_block(body, "2026年8月收口实测（8/31 查询）", "- 新表述（取代旧）", 2);
+        assert!(out.contains("新表述"));
+        assert!(!out.contains("旧表述"));
+        assert_eq!(out.matches("收口实测").count(), 1);
+        assert!(out.contains("## 2026 年 8 月收口实测（8/31 查询）"));
+    }
+
+    #[test]
+    fn strip_echoed_heading_ignores_whitespace() {
+        let body = "";
+        let content = "## 2026年8月收口实测（8/31 查询）\n- 正文";
+        let out = upsert_block(body, "2026 年 8 月收口实测（8/31 查询）", content, 2);
+        assert_eq!(out.matches("收口实测").count(), 1);
+        assert!(out.contains("- 正文"));
     }
 }
