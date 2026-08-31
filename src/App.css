@@ -4557,6 +4557,22 @@ button.lm-select-trigger:hover:not(:disabled) {
   user-select: none;
 }
 
+/* 消息尾部统计 pill（借鉴 dsh turn stat pills）：与时间同级的弱化文本，缺
+ * 事实不渲染。 */
+.chat-msg__pill {
+  font-size: 11px;
+  color: var(--text-dim);
+  user-select: none;
+  cursor: default;
+}
+
+/* 最新一条消息的操作行常显（借鉴 dsh 的按新近度 reveal 门控）：刚完成的
+ * 轮次用量/用时/复制一眼可见，历史消息维持 hover 才显示。 */
+.chat-msg--assistant:last-child .chat-msg__actions {
+  opacity: 1;
+  pointer-events: auto;
+}
+
 .chat-msg__copy-btn {
   background: transparent;
   border: none;
@@ -4949,6 +4965,42 @@ button.lm-select-trigger:hover:not(:disabled) {
   overflow-y: auto;
   border-left: 1px solid var(--border-faint);
   margin-left: 6px;
+}
+
+/* --- 过程折叠（借鉴 dsh turn-process folding）--- */
+
+.chat-proc {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 0;
+  cursor: pointer;
+  user-select: none;
+  font-size: 12px;
+  color: var(--text-dim);
+  transition: opacity 0.12s;
+  border-bottom: 1px solid var(--border-faint);
+}
+.chat-proc:hover {
+  opacity: 0.8;
+}
+.chat-proc__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+}
+.chat-proc__label {
+  font-weight: 500;
+}
+.chat-proc__collapse {
+  font-size: 11px;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+.chat-proc:hover .chat-proc__collapse {
+  opacity: 1;
 }
 
 /* --- 终端/助手执行错误 --- */

@@ -438,6 +438,22 @@ export default function App() {
             try {
               const evt = JSON.parse(payload.text);
               updated = { ...updated, tokenUsage: mergeUsage(updated.tokenUsage ?? null, evt) };
+              // turnComplete 汇总（每轮一次，先于 done 事件到达）：把本轮用量
+              // 挂到本次 run 的 assistant 消息上，随消息持久化，驱动消息尾部的
+              // 用量/用时统计 pill。后端保证先发汇总再发 done，这里的消息变更
+              // 会被 done 分支的 saveTaskBackend 一并落盘。
+              if (evt.turnComplete) {
+                // 只改 lastMsg：链尾的 `messages[last] = { ...lastMsg, segments }`
+                // 会把带 turnUsage 的消息写回数组。
+                lastMsg = {
+                  ...lastMsg,
+                  turnUsage: {
+                    outputTokens: evt.runOutputTokens,
+                    elapsedMs: evt.runElapsedMs,
+                    tokPerSec: evt.tokPerSec,
+                  },
+                };
+              }
             } catch { /* ignore parse error */ }
           } else if (kind === "error") {
             segments = [

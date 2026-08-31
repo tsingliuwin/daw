@@ -1,7 +1,8 @@
 import { Index, For, Show, Switch, Match, createSignal, createEffect, createMemo, onMount, onCleanup, untrack } from "solid-js";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { ChatMessage, Segment, TokenUsage, ModelOption, RetryNotice } from "../lib/types";
-import { derivePanelMetrics, fmtCap, fmtPct } from "../lib/metrics";
+import { derivePanelMetrics, fmtCap, fmtNum, fmtPct } from "../lib/metrics";
+import { deriveTurnProcess, type TurnProcess } from "../lib/chat";
 import MarkdownRenderer from "./MarkdownRenderer";
 import ToolSegment from "./ToolSegment";
 import ChartSegment from "./ChartSegment";
@@ -130,6 +131,9 @@ export default function ChatView(props: {
   const [manualReasoningIds, setManualReasoningIds] = createSignal<Set<string>>(new Set());
   const [expandedToolIds, setExpandedToolIds] = createSignal<Set<string>>(new Set());
   const [manualToolIds, setManualToolIds] = createSignal<Set<string>>(new Set());
+  // 历史轮次过程折叠：手动展开的 assistant 消息 id 集合（默认折叠，会话级
+  // 状态不持久化——与 reasoning/tool 段自身的折叠状态同一生命周期）。
+  const [expandedProcIds, setExpandedProcIds] = createSignal<Set<string>>(new Set());
 
   function toggleReasoning(segId: string) {
     setManualReasoningIds((prev) => new Set(prev).add(segId));
@@ -145,6 +149,15 @@ export default function ChatView(props: {
     setExpandedToolIds((prev) => {
       const next = new Set(prev);
       if (next.has(segId)) next.delete(segId); else next.add(segId);
+      return next;
+    });
+  }
+
+  /** 展开/收起一条消息的过程组（默认收起）。 */
+  function toggleProc(msgId: string) {
+    setExpandedProcIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(msgId)) next.delete(msgId); else next.add(msgId);
       return next;
     });
   }
@@ -300,6 +313,7 @@ export default function ChatView(props: {
     setExpandedToolIds(new Set<string>());
     setManualReasoningIds(new Set<string>());
     setManualToolIds(new Set<string>());
+    setExpandedProcIds(new Set<string>());
     setStickToBottom(true);
     stickScrollToBottom();
   });
@@ -467,7 +481,33 @@ export default function ChatView(props: {
             fallback={<div class="chat-empty">开始任务，用自然语言完成请假、报销、审批等办公流程。</div>}
           >
             <Index each={props.messages}>
-              {(msg) => (
+              {(msg) => {
+                // 过程折叠（借鉴 dsh turn-process folding）：完成的 assistant
+                // 轮次把结论前的 reasoning/tool/中间文本折成一行摘要；正在流式
+                // 的最后一条绝不折叠。
+                const isStreamingMsg = createMemo(() =>
+                  isStreaming() && msg().id === props.messages[props.messages.length - 1]?.id
+                );
+                const turnProc = createMemo(() => deriveTurnProcess(msg().segments, isStreamingMsg()));
+                const procOpen = createMemo(() => expandedProcIds().has(msg().id));
+                // 消息尾部统计 pill（借鉴 dsh turn stat pills）：缺事实省略，
+                // 全缺不渲染；流式期间 actions 行本就不渲染，done 后随行显示。
+                const usagePill = createMemo(() => {
+                  if (msg().role !== "assistant") return undefined;
+                  const tu = msg().turnUsage;
+                  if (!tu || (tu.outputTokens ?? 0) <= 0) return undefined;
+                  const tps = tu.tokPerSec != null && tu.tokPerSec > 0 ? Math.round(tu.tokPerSec) : 0;
+                  return {
+                    tokens: tu.outputTokens!,
+                    title: `本轮输出 ${fmtNum(tu.outputTokens ?? 0)} tokens${tps > 0 ? ` · ${tps} tok/s` : ""}`,
+                  };
+                });
+                const durPill = createMemo(() => {
+                  if (msg().role !== "assistant") return undefined;
+                  const ms = msg().turnUsage?.elapsedMs;
+                  return ms != null && ms > 0 ? ms : undefined;
+                });
+                return (
                 <div class={`chat-msg chat-msg--${msg().role}`}>
                   <div class="chat-msg__body">
                     <Index each={msg().segments}>
@@ -492,8 +532,26 @@ export default function ChatView(props: {
                           }
                           return rs()?.elapsedMs;
                         });
+                        // 本段是否处于折叠集合（折叠时整段不渲染——真正的 DOM
+                        // 消失，而不是 hidden）；控件锚在过程组第一段的槽位。
+                        const isFolded = createMemo(() => {
+                          const p = turnProc();
+                          return p !== null && !procOpen() && p.foldedIds.has(seg().id);
+                        });
+                        const anchorHere = createMemo(() => turnProc()?.anchorId === seg().id);
                         return (
-                          <Switch>
+                          <Show
+                            when={!isFolded()}
+                            fallback={
+                              <Show when={anchorHere()}>
+                                <TurnProcessControl proc={turnProc()} open={procOpen()} onToggle={() => toggleProc(msg().id)} />
+                              </Show>
+                            }
+                          >
+                            <Show when={anchorHere()}>
+                              <TurnProcessControl proc={turnProc()} open={procOpen()} onToggle={() => toggleProc(msg().id)} />
+                            </Show>
+                            <Switch>
                             <Match when={seg().type === "error" && es()}>
                               <div class="chat-terminal-error">
                                 <span class="chat-terminal-error__icon">
@@ -562,11 +620,24 @@ export default function ChatView(props: {
                               </div>
                             </Match>
                           </Switch>
+                            </Show>
                         );
                       }}
                     </Index>
                     <Show when={!(msg().role === "assistant" && isStreaming() && msg().id === props.messages[props.messages.length - 1]?.id)}>
                       <div class="chat-msg__actions">
+                        <Show when={usagePill()}>
+                          {(u) => (
+                            <span class="chat-msg__pill" title={u().title}>
+                              用量 {fmtCap(u().tokens)} tok
+                            </span>
+                          )}
+                        </Show>
+                        <Show when={durPill()}>
+                          {(d) => (
+                            <span class="chat-msg__pill" title="本轮墙钟用时">用时 {fmtDur(d())}</span>
+                          )}
+                        </Show>
                         <span class="chat-msg__time">{formatTime(msg().ts)}</span>
                         <button
                           class="chat-msg__copy-btn"
@@ -591,7 +662,8 @@ export default function ChatView(props: {
                     </Show>
                   </div>
                 </div>
-              )}
+                );
+              }}
             </Index>
 
             {/* Busy / streaming indicator */}
@@ -836,6 +908,54 @@ function LiveMarkdown(props: { text: string }) {
 function fmtMs(ms: number): string {
   if (ms < 1000) return `${ms}ms`;
   return `${(ms / 1000).toFixed(1)}s`;
+}
+
+/** 人类可读时长：亚秒 0.8 秒，短于 1 分钟 12.5 秒，更长 2 分 5 秒。 */
+function fmtDur(ms: number): string {
+  if (ms < 1000) return `${(ms / 1000).toFixed(1)} 秒`;
+  if (ms < 60_000) return `${(ms / 1000).toFixed(ms < 10_000 ? 1 : 0)} 秒`;
+  const total = Math.round(ms / 1000);
+  return `${Math.floor(total / 60)} 分 ${total % 60} 秒`;
+}
+
+/**
+ * 过程折叠控件（借鉴 dsh turn-process folding 的过程摘要行）：收起时是过程组
+ * 的唯一 DOM，展开时固定在过程组顶部，点击在两种状态间切换。摘要分段拼装，
+ * 全零（旧数据无计时）时回退「已思考」——省略零值部分，不显示占位。
+ */
+function TurnProcessControl(props: { proc?: TurnProcess | null; open?: boolean; onToggle?: () => void }) {
+  return (
+    <Show when={props.proc}>
+      {(p) => {
+        const summary = () => {
+          const parts: string[] = [];
+          if (p().reasoningMs != null) parts.push(`已思考 ${fmtDur(p().reasoningMs!)}`);
+          if (p().toolCount > 0) parts.push(`${p().toolCount} 次工具调用`);
+          if (parts.length === 0) parts.push("已思考");
+          return parts.join(" · ");
+        };
+        return (
+          <div class="chat-proc" onClick={() => props.onToggle?.()}>
+            <span class="chat-proc__icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="width: 13px; height: 13px;">
+                <path d="M9.5 2A2.5 2.5 0 0 1 12 4.5v15a2.5 2.5 0 0 1-4.96-.44 2.5 2.5 0 0 1 0-3.12 3 3 0 0 1 0-4.88 2.5 2.5 0 0 1 0-3.12A2.5 2.5 0 0 1 9.5 2Z" />
+                <path d="M14.5 2A2.5 2.5 0 0 0 12 4.5v15a2.5 2.5 0 0 0 4.96-.44 2.5 2.5 0 0 0 0-3.12 3 3 0 0 0 0-4.88 2.5 2.5 0 0 0 0-3.12A2.5 2.5 0 0 0 14.5 2Z" />
+              </svg>
+            </span>
+            <span class="chat-proc__label">{summary()}</span>
+            <Show when={props.open}>
+              <span class="chat-proc__collapse">收起</span>
+            </Show>
+            <span class="chat-reasoning__toggle" classList={{ "chat-reasoning__toggle--open": !!props.open }}>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="width: 10px; height: 10px; transition: transform 0.15s ease;">
+                <polyline points="9 18 15 12 9 6"></polyline>
+              </svg>
+            </span>
+          </div>
+        );
+      }}
+    </Show>
+  );
 }
 
 /**

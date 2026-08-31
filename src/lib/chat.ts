@@ -1,4 +1,4 @@
-import type { ChatMessage, Segment } from "./types";
+import type { ChatMessage, Segment, TurnUsage } from "./types";
 /**
  * Chat transcript helpers. An assistant message is an ordered `Segment[]`
  * (reasoning → tool → … → text). These helpers mutate/produce segment arrays
@@ -131,6 +131,7 @@ export function normalizeMessage(raw: any): ChatMessage {
       role: raw.role === "user" ? "user" : "assistant",
       segments: raw.segments as Segment[],
       ts: Number(raw.ts ?? Date.now()),
+      ...(raw.turnUsage != null ? { turnUsage: raw.turnUsage as TurnUsage } : {}),
     };
   }
 
@@ -150,5 +151,86 @@ export function normalizeMessage(raw: any): ChatMessage {
     role: raw?.role === "user" ? "user" : "assistant",
     segments,
     ts: Number(raw?.ts ?? Date.now()),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// 历史轮次过程折叠（借鉴 deepseek-harness web turn-process folding）
+//
+// 一条完成的 assistant 消息里，最终结论之前的 reasoning/tool/中间文本都属于
+// 「过程」：默认折叠成一行摘要控件，结论与图表/错误保持可见。折叠的段落
+// 不再渲染（返回 null），长对话的 DOM 与内存随历史轮次线性下降——这是借鉴
+// 的主要动机之一（daw 的渲染债前科）。
+// ---------------------------------------------------------------------------
+
+/** 一条 assistant 消息的过程折叠判定结果。 */
+export interface TurnProcess {
+  /** 折叠控件的锚点段 id（过程组第一段的 id，控件渲染在它的槽位）。 */
+  anchorId: string;
+  /** 应折叠的段 id 集合（reasoning/tool/边界前的中间文本）。 */
+  foldedIds: Set<string>;
+  /** 推理总耗时（毫秒）。任一段缺 elapsedMs 时为 undefined（旧数据），不显示时间部分。 */
+  reasoningMs?: number;
+  /** 工具调用次数。 */
+  toolCount: number;
+}
+
+/**
+ * 判定一条 assistant 消息是否可折叠，并算出折叠集合与摘要数字。
+ *
+ * 折叠条件（缺一不可）：
+ *  - 不是正在流式输出的消息（`streaming` 为真）；
+ *  - 存在最终结论段（最后一个 text 段 = 边界）——没有结论的轮次（以错误/
+ *    工具段收尾）保留全部过程证据，绝不折叠；
+ *  - 边界之前至少有一段 reasoning/tool。
+ *
+ * 图表段是交付物、错误段是终态证据，始终可见，不进折叠集合。
+ */
+export function deriveTurnProcess(
+  segments: Segment[],
+  streaming: boolean,
+): TurnProcess | null {
+  if (streaming || segments.length === 0) return null;
+
+  // 边界 = 最后一个 text 段。
+  let boundaryIdx = -1;
+  for (let i = segments.length - 1; i >= 0; i--) {
+    if (segments[i].type === "text") {
+      boundaryIdx = i;
+      break;
+    }
+  }
+  if (boundaryIdx < 0) return null;
+
+  const foldedIds = new Set<string>();
+  let anchorId: string | undefined;
+  let reasoningMs: number | undefined;
+  let msKnown = true;
+  let toolCount = 0;
+  for (let i = 0; i < boundaryIdx; i++) {
+    const s = segments[i];
+    if (s.type === "chart" || s.type === "error") continue;
+    if (s.type === "reasoning" || s.type === "tool" || s.type === "text") {
+      foldedIds.add(s.id);
+      if (anchorId === undefined) anchorId = s.id;
+      if (s.type === "reasoning") {
+        if (typeof s.elapsedMs === "number" && reasoningMs !== undefined) {
+          reasoningMs += s.elapsedMs;
+        } else if (typeof s.elapsedMs === "number") {
+          reasoningMs = s.elapsedMs;
+        } else {
+          msKnown = false;
+        }
+      }
+      if (s.type === "tool") toolCount += 1;
+    }
+  }
+  if (anchorId === undefined) return null;
+
+  return {
+    anchorId,
+    foldedIds,
+    ...(msKnown && reasoningMs !== undefined ? { reasoningMs } : {}),
+    toolCount,
   };
 }

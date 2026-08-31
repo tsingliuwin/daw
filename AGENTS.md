@@ -45,6 +45,14 @@ dsh 的「越用越懂」由三条闭环组成——技能/决策沉淀、会话
 - preamble 引用大纲段落名必须与 `okf/catalog.rs` 实际渲染标题一致（曾引用不存在的 `# 工作区数据记忆`）；改 catalog 渲染标题时同步 preamble。
 - 工具描述与实现对齐：execute_query 禁词含 TRUNCATE/ATTACH/DETACH、50 行截断；render_chart 200 行截断——描述写漏会让模型带着错误预期干活。
 - preamble 勿写死工具数量（「你有两个工具」）——工具集变化会静默失真；时间真源统一为 runtime_context 注入（`get_current_time` 仅用于时分秒精度核实）。
+- **提示词里的示例必须通过真实 schema 校验**（借鉴 dsh issue #3204，2026-08-31）：dsh 的 PTC SDK 声明含无条件渲染的 bash 示例，模型绕过 `run_code` 直接调了未注册的 bash。修复两件事：显式声明「声明≠可直接调用」；示例只在真实 schema 能逐字接受示例参数（required/const/enum 全核对）时才渲染。daw 的 fail-loud 标识符测试只保工具名存在；**凡在 preamble/工具描述里写调用示例，参数形状必须与 schema 逐字对得上**，对不上就不写示例。
+
+## 借鉴 deepseek-harness：turn 过程折叠 + turn 统计（2026-08-31 落地）
+
+dsh web 的两个聊天 UI 机制移植进 ChatView（对照基线 dsh-v0.1.2-alpha.2）：
+
+- **历史轮次过程折叠**：完成的 assistant 消息把结论前的 reasoning/tool/中间文本折成一行「已思考 X 秒 · N 次工具调用」（`deriveTurnProcess` 纯函数判定，折叠段**不渲染**而非 hidden——长对话 DOM 随历史线性下降，这是 daw 渲染债的延伸防线）；图表/错误段始终可见，无结论的轮次（错误收尾）绝不折叠，正在流式的消息绝不折叠。
+- **turn 统计 pill**：后端 `emit_usage_run_summary`（turnComplete 事件，先于 done 到达）的 `runOutputTokens/runElapsedMs/tokPerSec` 挂到本次 run 的 assistant 消息（`ChatMessage.turnUsage`，随消息持久化），done 后在消息操作行显示「用量 X tok / 用时 X 秒」；缺事实省略不渲染占位。最新一条消息的操作行 CSS 常显（`:last-child`），历史消息维持 hover 显示。
 
 ## 布局尺寸纪律：壳层只用纯 CSS 百分比（三轮教训）
 

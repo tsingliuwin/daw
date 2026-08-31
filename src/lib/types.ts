@@ -93,6 +93,19 @@ export type Segment =
     }
   | { type: "error"; id: string; text: string };
 
+/** 一次已完成 agent run（turn）的用量汇总。来自后端 turnComplete usage 事件
+ *  （runOutputTokens / runElapsedMs / tokPerSec），挂在本次 run 的 assistant
+ *  消息上，随消息持久化。历史消息（该字段出现之前）没有此数据——展示层对
+ *  undefined 一律省略，不显示占位。 */
+export interface TurnUsage {
+  /** 本轮真实输出 tokens（所有 LLM 调用累计）。 */
+  outputTokens?: number;
+  /** 本轮墙钟用时（毫秒，run 开始到 run summary 发出）。 */
+  elapsedMs?: number;
+  /** 本轮生成速度（tok/s）。 */
+  tokPerSec?: number;
+}
+
 /** 一条对话消息。assistant 消息由有序 Segment 构成。 */
 export interface ChatMessage {
   id: string;
@@ -100,6 +113,8 @@ export interface ChatMessage {
   /** 有序产物段（user 消息为单个 text 段）。 */
   segments: Segment[];
   ts: number;
+  /** 本轮用量汇总（仅 assistant 消息，turnComplete 事件到达后填充）。 */
+  turnUsage?: TurnUsage;
 }
 
 /**
