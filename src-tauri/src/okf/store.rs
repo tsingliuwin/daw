@@ -122,6 +122,14 @@ pub fn write(
 ) -> Result<OkfWriteOutcome, String> {
     let dir = category_dir(paths, ws, category);
     fs::create_dir_all(&dir).map_err(|e| format!("创建目录失败: {e}"))?;
+    if heading.trim().eq_ignore_ascii_case("all") {
+        // fail-loud："all" 是读取全文的约定（read/load 的 heading 参数值），
+        // 不是板块名——模型误传会在文件里落一个字面的「all」垃圾标题
+        //（2026-08-31 复盘实锤）。当场拒绝并指路。
+        return Err(
+            "heading 不能用 \"all\"（那是读取全文时的约定值，不是板块名）。请换成具体的板块标题，如「纠错记录」「口径与出处」。".to_string(),
+        );
+    }
     if new_content.trim().is_empty() {
         // fail-loud：空 content 会生成只有标题没有正文的板块，大纲照常展示、
         // 下次会话却读不到知识——复盘曾实锤这类空板块静默存在。这里拒绝并让
@@ -1082,6 +1090,18 @@ mod tests {
         // 纯空白同样拒绝。
         assert!(write(&paths, ver.as_ref(), clock.as_ref(), "ws", Category::Concept, "a", "h", "  \n\t", None).is_err());
         // 拒绝后文件不应被创建（不留半成品）。
+        assert!(!doc_file(&paths, "ws", Category::Concept, "a").exists());
+    }
+
+    #[test]
+    fn write_rejects_heading_all() {
+        // "all" 是读约定，误传给 write 会落字面的「all」垃圾标题（复盘实锤）。
+        let tmp = tempfile::tempdir().unwrap();
+        let (paths, ver, clock) = okf(tmp.path());
+        let err = write(&paths, ver.as_ref(), clock.as_ref(), "ws", Category::Concept, "a", "all", "内容", None)
+            .unwrap_err();
+        assert!(err.contains("heading 不能用"));
+        // 文件不应被创建。
         assert!(!doc_file(&paths, "ws", Category::Concept, "a").exists());
     }
 
