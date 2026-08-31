@@ -43,6 +43,7 @@ npm run tauri build
 
 - 下载安装包：[GitHub Releases](https://github.com/tsingliuwin/daw/releases)
 - 发版流程与密钥管理见 **[docs/RELEASE.md](docs/RELEASE.md)**
+- 产品方法论（数据 agent 设计原则）见 **[docs/DESIGN-PRINCIPLES.md](docs/DESIGN-PRINCIPLES.md)**
 
 ## 品牌定制：brand.json
 
