@@ -230,6 +230,13 @@ def okf_health():
                         loss.append(f"{disp_path(p, home)} | {t[:50]} | 直达EOF")
                         break
                     if lines[j].strip().startswith("#"):
+                        # 空标题后跟更深层标题 = 容器标题（组织子节），合法结构
+                        # 不算残桩；同级或更浅才是悬空残桩。
+                        lvl_cur = len(t) - len(t.lstrip("#"))
+                        lvl_next = len(lines[j].strip()) - len(lines[j].strip().lstrip("#"))
+                        if lvl_next > lvl_cur:
+                            i = j
+                            continue
                         same = t.lstrip("#").strip().lower() == lines[j].strip().lstrip("#").strip().lower()
                         if same:
                             loss.append(f"{disp_path(p, home)} | {t[:50]} | 同名对撞")
