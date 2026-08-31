@@ -305,11 +305,20 @@ impl Okf {
 // 生产实现依赖：git 版本 + UTC 时间戳（无 chrono）
 // ===========================================================================
 
-/// 在 `okf_dir` 仓库内提交 `file_path`（首次自动 git init + 换行配置）。失败静默。
+/// 在 `okf_dir` 仓库内提交 `file_path`（首次自动 git init + 换行配置）。
+///
+/// 失败不再静默：git 提交是知识库变更追溯的根基（复盘实锤，静默失败曾让
+/// 80+ 表骨架从未入库，历史断档无人知晓），失败必须进日志。git 的
+/// `add`/`commit` 撞 `index.lock` 会整步失败——骨架生成常连发几十次提交，
+/// 进程内用互斥锁串行化（复盘脚本对仓库只读，跨进程冲突可忽略）。
 fn run_git_commit(okf_dir: &Path, file_path: &Path, commit_msg: &str) {
     use std::process::Command;
+    use std::sync::Mutex;
     #[cfg(target_os = "windows")]
     use std::os::windows::process::CommandExt;
+
+    static GIT_LOCK: Mutex<()> = Mutex::new(());
+    let _guard = GIT_LOCK.lock();
 
     let git_dir = okf_dir.join(".git");
     if !git_dir.exists() {
@@ -342,7 +351,7 @@ fn run_git_commit(okf_dir: &Path, file_path: &Path, commit_msg: &str) {
         {
             cmd.creation_flags(0x08000000);
         }
-        let _ = cmd.status();
+        let add_ok = cmd.status().map(|s| s.success()).unwrap_or(false);
 
         let mut cmd = Command::new("git");
         cmd.arg("commit").arg("-m").arg(commit_msg).current_dir(okf_dir);
@@ -350,8 +359,28 @@ fn run_git_commit(okf_dir: &Path, file_path: &Path, commit_msg: &str) {
         {
             cmd.creation_flags(0x08000000);
         }
-        let _ = cmd.status();
+        let commit_ok = cmd.status().map(|s| s.success()).unwrap_or(false);
+        // 「nothing to commit」（内容与上次完全一致的幂等写）不算失败：提交
+        // 失败且工作区已干净 = 本来就没有需要落库的差异。
+        if !add_ok || (!commit_ok && !git_worktree_clean(okf_dir)) {
+            tracing::warn!(
+                category = "system",
+                "OKF git 提交未生效（add={add_ok} commit={commit_ok}），知识变更历史断档风险：{commit_msg}"
+            );
+        }
     }
+}
+
+/// 工作区是否干净（`git status --porcelain` 无输出）。用于把幂等写的
+/// 「nothing to commit」从失败里区分出来。
+fn git_worktree_clean(okf_dir: &Path) -> bool {
+    use std::process::Command;
+    Command::new("git")
+        .args(["status", "--porcelain"])
+        .current_dir(okf_dir)
+        .output()
+        .map(|o| o.stdout.is_empty())
+        .unwrap_or(false)
 }
 
 /// 当前 UTC 时间戳 `YYYY-MM-DDTHH:MM:SSZ`（手写日期换算，不依赖 chrono）。
