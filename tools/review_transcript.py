@@ -156,6 +156,39 @@ def review(path, full=False):
         print("  （本轮无明显纠正句式）")
 
 
+def disp_path(p, home):
+    """相对 ~/.daw 显示；跨盘符（如工作区在 E:）relpath 会抛 ValueError，
+    退回完整路径。"""
+    try:
+        return os.path.relpath(p, home)
+    except ValueError:
+        return p
+
+
+def okf_roots(home):
+    """枚举全部 okf 目录：全局 ~/.daw/okf + daw.db 里登记的每个工作区的
+    <工作区路径>/okf（工作区可在磁盘任意位置，只扫 ~/.daw 会留盲区——
+    2026-08-31 复盘实锤：E:\\demo\\task 的选表知识体检/审计都看不见）。"""
+    roots = [os.path.join(home, "okf")]
+    try:
+        import sqlite3
+        conn = sqlite3.connect(os.path.join(home, "daw.db"))
+        for (ws_path,) in conn.execute("SELECT path FROM workspaces"):
+            roots.append(os.path.join(ws_path, "okf"))
+        conn.close()
+    except Exception:
+        pass  # daw.db 打不开就退化为只扫 ~/.daw 下的 glob
+    roots += glob.glob(os.path.join(home, "*", "okf"))
+    # 去重保序
+    seen, uniq = set(), []
+    for r in roots:
+        r = os.path.normpath(r)
+        if r not in seen and os.path.isdir(r):
+            seen.add(r)
+            uniq.append(r)
+    return uniq
+
+
 def okf_health():
     """知识库体检：扫 OKF 全部 md 的「空标题板块」。
 
@@ -165,7 +198,7 @@ def okf_health():
     提示择机清理，不属于数据丢失。
     """
     home = os.path.expanduser("~/.daw")
-    roots = [os.path.join(home, "okf")] + glob.glob(os.path.join(home, "*", "okf"))
+    roots = okf_roots(home)
     loss, debris = [], 0
     dup_norm = []  # 仅空格差异的疑似重复板块（修正优先于并存违规候选）
     for root in roots:
@@ -194,12 +227,12 @@ def okf_health():
                     while j < len(lines) and not lines[j].strip():
                         j += 1
                     if j >= len(lines):
-                        loss.append(f"{os.path.relpath(p, home)} | {t[:50]} | 直达EOF")
+                        loss.append(f"{disp_path(p, home)} | {t[:50]} | 直达EOF")
                         break
                     if lines[j].strip().startswith("#"):
                         same = t.lstrip("#").strip().lower() == lines[j].strip().lstrip("#").strip().lower()
                         if same:
-                            loss.append(f"{os.path.relpath(p, home)} | {t[:50]} | 同名对撞")
+                            loss.append(f"{disp_path(p, home)} | {t[:50]} | 同名对撞")
                         else:
                             debris += 1
                         i = j
@@ -207,7 +240,7 @@ def okf_health():
                     i += 1
                 for key, heads in seen_norm.items():
                     if len(heads) > 1:
-                        dup_norm.append(f"{os.path.relpath(p, home)} | " + " ⟂ ".join(h[:36] for h in heads))
+                        dup_norm.append(f"{disp_path(p, home)} | " + " ⟂ ".join(h[:36] for h in heads))
     print("\n# 知识库体检（OKF 空标题板块）")
     if loss:
         print("  ⚠️ 疑似静默丢正文（空标题直达 EOF 或同名对撞），应从会话回执 detail 恢复：")
@@ -228,11 +261,11 @@ def okf_git_audit():
     （提交信息含板块名与 +N −M 行变更）。复盘把它摆到面前——改了哪几行、
     最近谁在动知识、有没有未提交的手工改动导致历史断档。"""
     home = os.path.expanduser("~/.daw")
-    repos = [os.path.join(home, "okf")] + glob.glob(os.path.join(home, "*", "okf"))
+    repos = okf_roots(home)
     for repo in repos:
         if not os.path.isdir(os.path.join(repo, ".git")):
             continue
-        label = os.path.relpath(repo, home)
+        label = disp_path(repo, home)
         print(f"  git 审计（{label}，最近 6 次知识变更）：")
         try:
             log = subprocess.run(

@@ -192,6 +192,7 @@ mod tests {
             "v_orders",
             "right_y_fields",    // render_chart 参数名
             "y_field_labels",
+            "name",              // load/write_okf_knowledge 等的条目名参数
         ]
         .into();
 
