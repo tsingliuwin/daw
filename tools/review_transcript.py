@@ -32,10 +32,13 @@ SLOW_MS = 5000
 #   出来」）→ "估算/只要能/也可以"这类词要覆盖；
 # - 人称词（我们/你们）在普通需求句里太常见（「我们看一下全程班…」），
 #   是纯噪音，不进词表——纠正信号由「没有这么高」等具体短语承载。
+# 2026-08-31 第三次校准：重复纠正常带「已经说过多次了」「没有 X 这种叫法」
+# 句式（苏州系纠错当轮漏报，模型却纠正成功——词表不能比模型迟钝）。
 PATTERNS = [
     "没有这么高", "不是这样", "没有这么", "其实", "应该", "不对",
     "主要是", "基本上", "平时", "习惯", "以后", "下次", "我想要", "我要的是", "注意",
     "估算", "只要能", "也可以", "多一些", "少一点", "就够", "也行", "没问题", "挺好",
+    "已经说过", "说过多次", "这种叫法",
 ]
 
 
@@ -134,9 +137,10 @@ def review(path, full=False):
     print(f"  reasoning 整段重复（ReasoningDelta+Reasoning 双写特征）: {dup_reasoning} 段")
     print("  同窗对账：人工比对 execute_query 里相同时间窗的 firstRow 是否一致")
     print("  （引擎级异常实证案例见 AGENTS.md「用-查-改-用」一节，2026-08-27）")
+    okf_health()
 
     print("\n# 用户纠正候选（建议沉淀为 users/concepts 的原料）")
-    print("  匹配用户消息里纠正/拍板/偏好的句式，逐字原文列出；确认后可把条目") 
+    print("  匹配用户消息里纠正/拍板/偏好的句式，逐字原文列出；确认后可把条目")
     print("  写进 users 用户画像（沟通偏好/纠错记录）或对应 concepts 口径知识。")
     found = False
     for m in users:
@@ -149,6 +153,61 @@ def review(path, full=False):
                 print(f"  - {t[:160]}")
     if not found:
         print("  （本轮无明显纠正句式）")
+
+
+def okf_health():
+    """知识库体检：扫 OKF 全部 md 的「空标题板块」。
+
+    真损失特征（2026-08-31 实锤的 write 静默吞正文 bug）：空标题直达 EOF，
+    或空标题后紧跟同名标题（dedup 把第二次出现的标题连同正文吃掉）。
+    无害残桩：空标题后紧跟不同名标题（正文在模型自己带的标题下）——只计数，
+    提示择机清理，不属于数据丢失。
+    """
+    home = os.path.expanduser("~/.daw")
+    roots = [os.path.join(home, "okf")] + glob.glob(os.path.join(home, "*", "okf"))
+    loss, debris = [], 0
+    for root in roots:
+        for dirpath, _, files in os.walk(root):
+            for fn in files:
+                if not fn.endswith(".md"):
+                    continue
+                p = os.path.join(dirpath, fn)
+                with open(p, encoding="utf-8") as f:
+                    lines = f.read().splitlines()
+                if lines and lines[0].strip() == "---":  # 跳过 frontmatter
+                    for i in range(1, len(lines)):
+                        if lines[i].strip() == "---":
+                            lines = lines[i + 1:]
+                            break
+                i = 0
+                while i < len(lines):
+                    t = lines[i].strip()
+                    if not t.startswith("#"):
+                        i += 1
+                        continue
+                    j = i + 1
+                    while j < len(lines) and not lines[j].strip():
+                        j += 1
+                    if j >= len(lines):
+                        loss.append(f"{os.path.relpath(p, home)} | {t[:50]} | 直达EOF")
+                        break
+                    if lines[j].strip().startswith("#"):
+                        same = t.lstrip("#").strip().lower() == lines[j].strip().lstrip("#").strip().lower()
+                        if same:
+                            loss.append(f"{os.path.relpath(p, home)} | {t[:50]} | 同名对撞")
+                        else:
+                            debris += 1
+                        i = j
+                        continue
+                    i += 1
+    print("\n# 知识库体检（OKF 空标题板块）")
+    if loss:
+        print("  ⚠️ 疑似静默丢正文（空标题直达 EOF 或同名对撞），应从会话回执 detail 恢复：")
+        for x in loss:
+            print("    - " + x)
+    else:
+        print("  真损失（EOF/同名对撞型空标题）: 0")
+    print(f"  无害残桩（正文在模型自带标题下，择机清理）: {debris} 个")
 
 
 def main():

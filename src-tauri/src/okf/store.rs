@@ -122,6 +122,14 @@ pub fn write(
 ) -> Result<OkfWriteOutcome, String> {
     let dir = category_dir(paths, ws, category);
     fs::create_dir_all(&dir).map_err(|e| format!("创建目录失败: {e}"))?;
+    if new_content.trim().is_empty() {
+        // fail-loud：空 content 会生成只有标题没有正文的板块，大纲照常展示、
+        // 下次会话却读不到知识——复盘曾实锤这类空板块静默存在。这里拒绝并让
+        // 模型当场重试，而不是落一个看似成功的空知识。
+        return Err(
+            "content 为空，拒绝写入：会产生只有标题没有正文的空板块。请把要沉淀的正文写进 content 再调用；若只想调整标题或标记作废，用 update_okf_metadata。".to_string(),
+        );
+    }
     let file = dir.join(format!("{name}.md"));
     let ts = clock.now_ts();
     let created = !file.exists();
@@ -1028,5 +1036,21 @@ mod tests {
         assert!(rename_doc(&paths, ver.as_ref(), clock.as_ref(), "ws", Category::Concept, "a", "a").is_err());
         assert!(rename_doc(&paths, ver.as_ref(), clock.as_ref(), "ws", Category::Concept, "nope", "x").is_err());
         assert!(rename_doc(&paths, ver.as_ref(), clock.as_ref(), "ws", Category::Concept, "a", "b").is_err());
+    }
+
+    #[test]
+    fn write_rejects_empty_content() {
+        // 2026-08-31 复盘：空 content 会落成只有标题的空板块且报成功，下次
+        // 会话读不到知识。fail-loud 拒绝，错误要能指导模型重试。
+        let tmp = tempfile::tempdir().unwrap();
+        let (paths, ver, clock) = okf(tmp.path());
+        let err = write(&paths, ver.as_ref(), clock.as_ref(), "ws", Category::Concept, "a", "h", "", None)
+            .unwrap_err();
+        assert!(err.contains("content 为空"));
+        assert!(err.contains("update_okf_metadata"));
+        // 纯空白同样拒绝。
+        assert!(write(&paths, ver.as_ref(), clock.as_ref(), "ws", Category::Concept, "a", "h", "  \n\t", None).is_err());
+        // 拒绝后文件不应被创建（不留半成品）。
+        assert!(!doc_file(&paths, "ws", Category::Concept, "a").exists());
     }
 }

@@ -86,9 +86,33 @@ pub fn extract_headings(content: &str, level: usize) -> Vec<String> {
     headings
 }
 
+/// content 首个非空行若是与 heading 同名的标题行（模型回显参数，常见习惯），
+/// 剥掉它：不剥会与 upsert 写入的标题构成同名重复，被 `deduplicate` 当作重复
+/// 板块连同其后正文一起静默吞掉——工具却照样报「已写入」（2026-08-31 复盘
+/// 实锤的静默丢知识 bug，两处权威口径因此只剩空标题）。
+fn strip_echoed_heading(content: &str, heading: &str) -> String {
+    let mut lines = content.lines();
+    for line in lines.by_ref() {
+        let t = line.trim();
+        if t.is_empty() {
+            continue;
+        }
+        if t.starts_with('#') {
+            let ht = t.trim_start_matches('#').trim();
+            if ht.eq_ignore_ascii_case(heading) {
+                let rest: Vec<&str> = lines.collect();
+                return rest.join("\n");
+            }
+        }
+        break;
+    }
+    content.to_string()
+}
+
 /// 在 body 里替换或追加标题板块。heading 匹配（大小写不敏感）则替换其内容
 /// （到下一个 `#` 标题前）；不存在则末尾追加 level 级新标题 + content。
 pub fn upsert_block(body: &str, heading: &str, content: &str, level: usize) -> String {
+    let content = strip_echoed_heading(content, heading);
     let lines: Vec<&str> = body.lines().collect();
     let mut out: Vec<String> = Vec::new();
     let mut skipping = false;
@@ -278,5 +302,46 @@ mod tests {
         let out = upsert_block(body, "业务描述", "new", 2);
         assert!(out.contains("new"));
         assert!(!out.contains("old"));
+    }
+
+    // ── 2026-08-31 复盘实锤的静默丢知识 bug：content 回显与 heading 同名的
+    //    标题行时，upsert 追加自己的标题构成同名重复，deduplicate 把第二次
+    //    出现的标题连同其后正文一起吞掉，工具却报成功。 ──
+
+    #[test]
+    fn upsert_append_strips_content_echoed_heading() {
+        let body = "# A\nx";
+        let content = "## 苏州团队独立呈现口径（2026-08-31 用户纠正，权威）\n- 用户原话：没有苏州系这种叫法。\n- 苏州三个团队必须独立呈现。";
+        let out = deduplicate(&upsert_block(
+            body,
+            "苏州团队独立呈现口径（2026-08-31 用户纠正，权威）",
+            content,
+            2,
+        ));
+        assert_eq!(out.matches("苏州团队独立呈现口径").count(), 1);
+        assert!(out.contains("用户原话"));
+        assert!(out.contains("独立呈现。"));
+    }
+
+    #[test]
+    fn upsert_update_strips_content_echoed_heading() {
+        let body = "## 团队维度（8/1-29）\n- 旧内容";
+        let content = "## 团队维度（8/1-29）\n- 新内容（用户纠错后重收口）";
+        let out = deduplicate(&upsert_block(body, "团队维度（8/1-29）", content, 2));
+        assert!(out.contains("新内容"));
+        assert!(!out.contains("旧内容"));
+        assert_eq!(out.matches("团队维度（8/1-29）").count(), 1);
+    }
+
+    #[test]
+    fn upsert_keeps_content_own_different_heading() {
+        // content 自带不同名标题（如修订头「（8/31 查询）」）是合法结构，
+        // 不剥离：param 标题下留残桩、正文在自己的标题下，两段都在。
+        let body = "";
+        let content = "## 2026 年 8 月收口实测（8/31 查询）\n- 口径与数字";
+        let out = upsert_block(body, "2026 年 8 月收口实测（8/1-29）", content, 2);
+        assert!(out.contains("（8/1-29）"));
+        assert!(out.contains("（8/31 查询）"));
+        assert!(out.contains("口径与数字"));
     }
 }
