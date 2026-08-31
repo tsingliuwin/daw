@@ -122,6 +122,14 @@ pub fn write(
 ) -> Result<OkfWriteOutcome, String> {
     let dir = category_dir(paths, ws, category);
     fs::create_dir_all(&dir).map_err(|e| format!("创建目录失败: {e}"))?;
+    if looks_like_full_document(new_content) {
+        // fail-loud：模型把整个文件（含 frontmatter）当作板块内容粘贴——
+        // 复盘实锤会在文件里嵌出第二份 frontmatter 和整段重复内容。只接受
+        // 单个板块的正文；整文件重建请逐板块写入。
+        return Err(
+            "content 疑似整个文件（以 frontmatter 开头）。write_okf_knowledge 只接受单个板块的正文：请去掉 frontmatter 与文件级标题，只粘贴该板块的内容；确要整文件重建时逐板块写入。".to_string(),
+        );
+    }
     if heading.trim().eq_ignore_ascii_case("all") {
         // fail-loud："all" 是读取全文的约定（read/load 的 heading 参数值），
         // 不是板块名——模型误传会在文件里落一个字面的「all」垃圾标题
@@ -186,6 +194,31 @@ pub fn write(
         added_lines,
         removed_lines,
     })
+}
+
+/// content 是否是「整文件」形态：以 frontmatter 开头（`---` 起始，块内含
+/// type:/title: 等元数据键，随后闭合）。正常板块正文不会以 frontmatter 开头。
+fn looks_like_full_document(content: &str) -> bool {
+    let mut lines = content.lines().skip_while(|l| l.trim().is_empty());
+    match lines.next() {
+        Some(l) if l.trim() == "---" => {}
+        _ => return false,
+    }
+    let mut has_meta = false;
+    for l in lines {
+        let t = l.trim();
+        if t == "---" {
+            return has_meta;
+        }
+        let lower = t.to_lowercase();
+        if ["type:", "title:", "created_at:", "updated_at:"]
+            .iter()
+            .any(|k| lower.starts_with(k))
+        {
+            has_meta = true;
+        }
+    }
+    false
 }
 
 /// 行级变更统计（多重集近似 diff）：new 相对 old「新增/消失」的内容行数。
@@ -1103,6 +1136,22 @@ mod tests {
         assert!(err.contains("heading 不能用"));
         // 文件不应被创建。
         assert!(!doc_file(&paths, "ws", Category::Concept, "a").exists());
+    }
+
+    #[test]
+    fn write_rejects_full_document_content() {
+        // 复盘实锤：模型把整个文件（含 frontmatter）当板块内容粘贴，文件里
+        // 嵌出第二份 frontmatter 与整段重复。fail-loud 让模型当场只传正文。
+        let tmp = tempfile::tempdir().unwrap();
+        let (paths, ver, clock) = okf(tmp.path());
+        let doc = "---\ntype: User Profile\ntitle: default\n---\n\n# 用户画像\n- 正文";
+        let err = write(&paths, ver.as_ref(), clock.as_ref(), "ws", Category::Concept, "a", "h", doc, None)
+            .unwrap_err();
+        assert!(err.contains("疑似整个文件"));
+        assert!(!doc_file(&paths, "ws", Category::Concept, "a").exists());
+        // 普通正文（哪怕首行是 --- 分隔线、无元数据键）不误伤。
+        let o = write(&paths, ver.as_ref(), clock.as_ref(), "ws", Category::Concept, "b", "h", "---\n正文", None).unwrap();
+        assert!(!o.created == false);
     }
 
     #[test]
