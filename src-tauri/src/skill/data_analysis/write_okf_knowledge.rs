@@ -116,15 +116,30 @@ impl Tool for WriteOkfKnowledgeTool {
                 let scope_cn = o.scope.label();
                 let created_str = if o.created { "（新建文件）" } else { "" };
                 let summary = format!(
-                    "已写入【{}】{}/{} 的「{}」板块{}",
-                    scope_cn, args.category, args.name, args.heading, created_str
+                    "已写入【{}】{}/{} 的「{}」板块{}（+{} −{} 行）",
+                    scope_cn, args.category, args.name, args.heading, created_str,
+                    o.added_lines, o.removed_lines
                 );
+                // 静默丢知识防线的第二道闸（第一道是写入层剥离回显标题）：
+                // 净删多行且一行未增，多半不是有意的改写——当场提醒模型核对，
+                // 而不是等下次复盘从 git 历史里考古。
+                let warning = if !o.created && o.removed_lines >= 5 && o.added_lines == 0 {
+                    format!(
+                        "\n⚠️ 本次写入删除了 {} 行、新增 0 行：若不是有意清空/大幅精简该板块，请立即 load_okf_knowledge 核对文件现状。",
+                        o.removed_lines
+                    )
+                } else {
+                    String::new()
+                };
+                let summary = format!("{summary}{warning}");
                 // detail=写入的内容（前端作"回执"展开显示），payload=结构化位置信息。
                 let detail = Some(args.content.clone());
                 let payload = serde_json::json!({
                     "scope": scope_cn,
                     "file": o.file_path.to_string_lossy(),
                     "created": o.created,
+                    "addedLines": o.added_lines,
+                    "removedLines": o.removed_lines,
                 });
                 emit_tool_result(
                     &self.window, &self.task_id, &call_id, "ok",

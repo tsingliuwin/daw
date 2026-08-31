@@ -21,6 +21,7 @@ import argparse
 import glob
 import json
 import os
+import subprocess
 import sys
 from datetime import datetime
 
@@ -208,6 +209,38 @@ def okf_health():
     else:
         print("  真损失（EOF/同名对撞型空标题）: 0")
     print(f"  无害残桩（正文在模型自带标题下，择机清理）: {debris} 个")
+    okf_git_audit()
+
+
+def okf_git_audit():
+    """知识库 git 审计：okf 仓库本身就是版本库，每次写入由后端自动提交
+    （提交信息含板块名与 +N −M 行变更）。复盘把它摆到面前——改了哪几行、
+    最近谁在动知识、有没有未提交的手工改动导致历史断档。"""
+    home = os.path.expanduser("~/.daw")
+    repos = [os.path.join(home, "okf")] + glob.glob(os.path.join(home, "*", "okf"))
+    for repo in repos:
+        if not os.path.isdir(os.path.join(repo, ".git")):
+            continue
+        label = os.path.relpath(repo, home)
+        print(f"  git 审计（{label}，最近 6 次知识变更）：")
+        try:
+            log = subprocess.run(
+                ["git", "-C", repo, "--no-pager", "log", "-n", "6",
+                 "--date=format:%m-%d %H:%M", "--format=%h %ad %s"],
+                capture_output=True, text=True, timeout=10, check=True,
+            ).stdout.rstrip()
+            for line in log.splitlines():
+                print("    " + line)
+            dirty = subprocess.run(
+                ["git", "-C", repo, "status", "--porcelain"],
+                capture_output=True, text=True, timeout=10, check=True,
+            ).stdout.rstrip()
+            if dirty:
+                print("    ⚠️ 有未提交的变更（手工改完要提交，否则历史断档）：")
+                for line in dirty.splitlines()[:10]:
+                    print("      " + line)
+        except (subprocess.SubprocessError, OSError) as e:
+            print(f"    （git 不可用：{e}）")
 
 
 def main():

@@ -154,23 +154,54 @@ pub fn write(
     };
 
     let level = if category == Category::Concept { 2 } else { 1 };
+    let old_body = body.clone();
     let body = markdown::upsert_block(&body, heading, new_content, level);
     let body = markdown::deduplicate(&body);
+    let (added_lines, removed_lines) = line_delta(&old_body, &body);
 
     let content = frontmatter::join_document(Some(&fm), &body);
     fs::write(&file, content).map_err(|e| format!("写入文件失败: {e}"))?;
     let scope = category.scope();
+    let verb = if created { "Create" } else { "Update" };
+    let cat_dir = category.dir();
+    let short_heading: String = heading.chars().take(40).collect();
     versioner.commit(
         &repo_root(paths, ws, scope),
         &file,
-        &format!("Update OKF: {}/{name}", category.dir()),
+        &format!("{verb} OKF: {cat_dir}/{name}「{short_heading}」(+{added_lines} −{removed_lines})"),
     );
 
     Ok(OkfWriteOutcome {
         scope,
         file_path: file,
         created,
+        added_lines,
+        removed_lines,
     })
+}
+
+/// 行级变更统计（多重集近似 diff）：new 相对 old「新增/消失」的内容行数。
+/// 不求最小编辑距离——审计目的下「哪些行凭空消失了」用计数对比足够，且
+/// O(n) 纯内存无 git 依赖。排除 frontmatter（updated_at 每写必变，纯噪音），
+/// 由调用方只喂 body。
+fn line_delta(old: &str, new: &str) -> (u32, u32) {
+    use std::collections::HashMap;
+    let mut counts: HashMap<String, i64> = HashMap::new();
+    for l in old.lines() {
+        *counts.entry(l.to_string()).or_insert(0) -= 1;
+    }
+    for l in new.lines() {
+        *counts.entry(l.to_string()).or_insert(0) += 1;
+    }
+    let (mut added, mut removed) = (0u32, 0u32);
+    for v in counts.values() {
+        if *v > 0 {
+            added += *v as u32;
+        } else if *v < 0 {
+            removed += (-*v) as u32;
+        }
+    }
+    (added, removed)
 }
 
 // ---------- 删 ----------
@@ -1052,5 +1083,23 @@ mod tests {
         assert!(write(&paths, ver.as_ref(), clock.as_ref(), "ws", Category::Concept, "a", "h", "  \n\t", None).is_err());
         // 拒绝后文件不应被创建（不留半成品）。
         assert!(!doc_file(&paths, "ws", Category::Concept, "a").exists());
+    }
+
+    #[test]
+    fn write_reports_body_line_delta() {
+        // 知识库「代码级」变更追溯：每次写入的 +N −M 行进回执与提交信息，
+        // 静默丢正文（复盘实锤的 P0）在这两个数上无所遁形。
+        let tmp = tempfile::tempdir().unwrap();
+        let (paths, ver, clock) = okf(tmp.path());
+        // 首建：标题行 + 3 行内容，全部是新增。
+        let o1 = write(&paths, ver.as_ref(), clock.as_ref(), "ws", Category::Concept, "co", "口径", "a\nb\nc", None).unwrap();
+        assert!(o1.created);
+        assert_eq!((o1.added_lines, o1.removed_lines), (4, 0));
+        // 更新：替换板块内容 → 新 2 行、旧 3 行（标题行不变不计数）。
+        let o2 = write(&paths, ver.as_ref(), clock.as_ref(), "ws", Category::Concept, "co", "口径", "x\ny", None).unwrap();
+        assert_eq!((o2.added_lines, o2.removed_lines), (2, 3));
+        // 回显同名标题被剥离：content 首行不计入新增。
+        let o3 = write(&paths, ver.as_ref(), clock.as_ref(), "ws", Category::Concept, "co", "口径", "## 口径\np\nq", None).unwrap();
+        assert_eq!((o3.added_lines, o3.removed_lines), (2, 2));
     }
 }

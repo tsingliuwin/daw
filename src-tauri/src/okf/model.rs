@@ -233,6 +233,13 @@ pub struct OkfWriteOutcome {
     pub scope: Scope,
     pub file_path: std::path::PathBuf,
     pub created: bool,
+    /// 本次写入相对旧正文「新增的内容行」数（body 级多重集近似 diff，排除
+    /// frontmatter）。与 removed_lines 一起进工具回执和 git 提交信息，让
+    /// 「改了哪几行」对模型与复盘可见——复盘曾实锤写入报成功、正文却被
+    /// 静默吞掉，对账手段就是这两个数。
+    pub added_lines: u32,
+    /// 本次写入相对旧正文「消失的内容行」数。
+    pub removed_lines: u32,
 }
 
 /// 搜索命中。`rel_path` 形如 `[全局] concepts/foo.md`（scope 已嵌入文本）。
