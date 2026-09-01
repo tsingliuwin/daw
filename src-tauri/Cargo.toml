@@ -1,6 +1,6 @@
 [package]
 name = "daw"
-version = "0.1.9"
+version = "0.1.10"
 description = "Daw — Data Agent Workstation: a customizable conversational workbench for data and tasks"
 authors = ["you"]
 edition = "2021"
