@@ -155,8 +155,24 @@ impl Tool for ExecuteQueryTool {
                     // 远端列名写错（如 pay_time 应为 payment_time）：不要包装成
                     // "表或视图不存在"，否则会诱导 agent 重新注册已存在的表。
                     format!("查询失败：SQL 中引用的列不存在。错误: {msg}\n建议：用 describe_table 查看该表的真实列名，修正 SQL 后重试。")
+                } else if lower.contains("function") && lower.contains("does not exist") {
+                    // 2026-09-01 复盘实测：HEX(text) 在 Hologres 不存在，曾被归入
+                    // "表或视图不存在"诱导模型排查表；实际应换等价函数。
+                    format!("查询失败：SQL 使用了远端不支持的函数。错误: {msg}\n建议：这是函数/方言问题，不是表的问题——不要重注册表，改用远端支持的等价写法（不确定时先小查询采样验证该函数是否存在）。")
+                } else if lower.contains("operator does not exist") {
+                    // 2026-09-01 复盘实测：text 列 = 数字字面量报
+                    // "operator does not exist: text = integer"，不能归入表缺失。
+                    format!("查询失败：运算符两边的类型不匹配。错误: {msg}\n建议：常见于 text 列与数字字面量直接比较（如 is_win = 1）——给字面量加引号（= '1'）或显式 ::text/::numeric 转换后重试。")
                 } else if lower.contains("does not exist") || lower.contains("not found") {
-                    format!("查询失败：表或视图不存在。错误: {msg}\n建议：用 list_tables 确认表名是否正确，或用 list_remote_tables 重新探查。")
+                    // 2026-09-01 复盘实测：一批 3 连失败全是 "default.dwd_xxx" 单段
+                    // 带点引号写法。按是否 postgres_query 下推给对症修法——下推表
+                    // 禁止走短名视图（会拉全表），提示必须区分两种上下文。
+                    let hint = if lower.contains("postgres_query") {
+                        "①若写的是 \"schema.table\" 单段带点引号，必须拆成 \"schema\".\"table\" 两段标识符；②下推内层的表名必须带 schema（如 FROM \"default\".\"dwd_xxx\"，漏 schema 按远端 search_path 解析会失败）。"
+                    } else {
+                        "①已 register_table 的表直接用注册的短名视图（如 v_xxx）查询，不要手拼远程全名；②本地下拉表若写 \"schema.table\"，同样要拆成 \"schema\".\"table\" 两段标识符。"
+                    };
+                    format!("查询失败：表或视图不存在。错误: {msg}\n建议：{hint} ③仍未命中再用 list_remote_tables 确认表名。")
                 } else {
                     format!("SQL 执行出错: {msg}")
                 }

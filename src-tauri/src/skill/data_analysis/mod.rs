@@ -70,6 +70,15 @@ pub(crate) fn classify_sql_error_class(err: &str) -> &'static str {
         && lower.contains("column")
     {
         "column_missing"
+    } else if lower.contains("function") && lower.contains("does not exist") {
+        // 函数不存在（2026-09-01 复盘实测：Hologres 无 hex(text)）。词面含
+        // "does not exist"，若无此分支会被一锅端进 table_missing，诱导模型
+        // 去重注册表——实际应换等价函数。
+        "function_missing"
+    } else if lower.contains("operator does not exist") {
+        // 运算符/类型不匹配（2026-09-01 复盘实测：text 列 = 数字字面量报
+        // "operator does not exist: text = integer"），同样不能归入表缺失。
+        "operator_mismatch"
     } else if lower.contains("does not exist") || lower.contains("not found") {
         "table_missing"
     } else if lower.contains("invalid input syntax") || lower.contains("cast") {
@@ -269,6 +278,28 @@ mod tests {
         let out = decapsulate_copy_error(raw);
         assert!(out.starts_with("invalid input syntax for integer"), "got: {out}");
         assert_eq!(classify_sql_error_class(&out), "cast_error");
+    }
+
+    // ------------------------------------------------------------------
+    // 2026-09-01 复盘：分类器曾把一切 "does not exist" 一锅端进
+    // table_missing，诱导模型去排查/重注册表。两个真实翻车原文：
+    // text 列 = 数字字面量的运算符不匹配、Hologres 无 hex(text)。
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn classifies_operator_type_mismatch_not_table_missing() {
+        let raw = r#"Binder Error: Failed to prepare query "SELECT CASE WHEN is_win = 1 THEN '已转正式单' ELSE '未转化' END AS 转化情况 FROM "default"."dwd_deposit_transform_all_crm"": ERROR:  operator does not exist: text = integer
+LINE 1: SELECT CASE WHEN is_win = 1 THEN '已转正式单' ELSE '未转化' ...
+HINT:  No operator matches the given name and argument types. You might need to add explicit type casts."#;
+        assert_eq!(classify_sql_error_class(raw), "operator_mismatch");
+    }
+
+    #[test]
+    fn classifies_missing_function_not_table_missing() {
+        let raw = r#"Binder Error: Failed to prepare query "SELECT dept_lv2, HEX(dept_lv2) AS hexval FROM "default"."dwd_deposit_transform_all_crm" GROUP BY dept_lv2, HEX(dept_lv2)": ERROR:  function hex(text) does not exist
+LINE 1: SELECT dept_lv2, HEX(dept_lv2) AS hexval,
+HINT:  No function matches the given name and argument types."#;
+        assert_eq!(classify_sql_error_class(raw), "function_missing");
     }
 
     #[test]
